@@ -1,0 +1,12 @@
+{
+  // ===== Agent 运行时配置 =====
+  // [热加载] 修改后自动生效
+
+  "agent": {
+    "chatRoundTimeoutSeconds": 60,
+    "taskDispatchTimeoutSeconds": 24,
+    "pendingAbilityConfirmTimeoutSeconds": 45,
+    "invocationConfirmTimeoutSeconds": 30,
+    "contextConversationRetainCount": 24
+  }
+}

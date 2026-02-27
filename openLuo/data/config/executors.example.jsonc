@@ -1,0 +1,18 @@
+{
+  // ===== Executor 独立配置 =====
+  // 每个 executor 的温度和最大 token 数
+  // [热加载] 修改后自动生效
+  //
+  // NOTE: plannedExecutionTemperature 建议不低于 0.3，
+  // 过低的温度（如 0.1）可能导致模型陷入循环重复。
+
+  "executors": {
+    "plan": { "temperature": 0.2, "maxTokens": 2048 },
+    "plannedExecution": { "temperature": 0.3, "maxTokens": 2048 },
+    "characterResponse": { "temperature": 0.7, "maxTokens": null },
+    "stateUpdate": { "temperature": 0.1, "maxTokens": 2048 },
+    "toolUse": { "temperature": 0.2, "maxTokens": 2048 },
+    "flowRouting": { "temperature": 0.0, "maxTokens": 512 },
+    "giftIntent": { "temperature": 0.0, "maxTokens": 512 }
+  }
+}

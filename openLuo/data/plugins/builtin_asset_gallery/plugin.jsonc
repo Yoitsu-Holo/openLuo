@@ -1,0 +1,11 @@
+{
+  "id": "builtin_asset_gallery",
+  "name": "builtin_asset_gallery",
+  "version": "1.0.0",
+  "description": "资产画廊插件，提供 CG/背景/梦境碎片的查询和展示",
+  "pluginType": "asset",
+  "priority": 200,
+  "hooks": ["onStatusQuery"],
+  "permissions": ["read:asset"],
+  "dependencies": []
+}

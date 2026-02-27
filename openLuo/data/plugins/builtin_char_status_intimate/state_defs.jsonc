@@ -1,0 +1,117 @@
+[
+  {
+    "namespace": "char_status",
+    "key": "shame",
+    "ownerKind": "character",
+    "valueType": "number",
+    "defaultValue": "50",
+    "mutableByLlm": true,
+    "derived": false,
+    "statusGroup": "intimacy",
+    "statusOrder": 120,
+    "hiddenFromStatus": false,
+    "displayFormat": "羞耻：{value}/100",
+    "promptContext": "羞耻度 0-100。低羞耻（<30）：对亲密话题坦然，不易害羞。中羞耻（30-70）：会害羞但可以接受适度亲密话题。高羞耻（>70）：极易害羞，会回避、脸红、支吾，对身体接触和性话题强烈抗拒。",
+    "pluginId": "builtin_char_status_intimate",
+    "metadata": {
+      "name": "羞耻度",
+      "category": "intimacy",
+      "maxDeltaPerTurn": 15
+    },
+    "enumValues": [],
+    "min": "0",
+    "max": "100"
+  },
+  {
+    "namespace": "char_status",
+    "key": "dependency",
+    "ownerKind": "character",
+    "valueType": "number",
+    "defaultValue": "30",
+    "mutableByLlm": true,
+    "derived": false,
+    "statusGroup": "intimacy",
+    "statusOrder": 130,
+    "hiddenFromStatus": false,
+    "displayFormat": "依赖：{value}/100",
+    "promptContext": "依赖度 0-100。低依赖（<30）：独立自主，不需要玩家陪伴。中依赖（30-70）：希望玩家关注但不强求。高依赖（>70）：强烈需要玩家陪伴和支持，分离时会焦虑不安，主动寻求玩家的安慰和认可。",
+    "pluginId": "builtin_char_status_intimate",
+    "metadata": {
+      "name": "依赖度",
+      "category": "intimacy",
+      "maxDeltaPerTurn": 10
+    },
+    "enumValues": [],
+    "min": "0",
+    "max": "100"
+  },
+  {
+    "namespace": "char_status",
+    "key": "possessiveness",
+    "ownerKind": "character",
+    "valueType": "number",
+    "defaultValue": "20",
+    "mutableByLlm": true,
+    "derived": false,
+    "statusGroup": "intimacy",
+    "statusOrder": 140,
+    "hiddenFromStatus": false,
+    "displayFormat": "占有欲：{value}/100",
+    "promptContext": "占有欲 0-100。低占有欲（<30）：不介意玩家与他人互动。中占有欲（30-70）：希望玩家多关注自己但能理解。高占有欲（>70）：强烈介意玩家与他人亲近，会吃醋、质问、要求独占玩家的时间和注意力。",
+    "pluginId": "builtin_char_status_intimate",
+    "metadata": {
+      "name": "占有欲",
+      "category": "intimacy",
+      "maxDeltaPerTurn": 10
+    },
+    "enumValues": [],
+    "min": "0",
+    "max": "100"
+  },
+  {
+    "namespace": "char_status",
+    "key": "lust",
+    "ownerKind": "character",
+    "valueType": "number",
+    "defaultValue": "20",
+    "mutableByLlm": true,
+    "derived": false,
+    "statusGroup": "intimacy",
+    "statusOrder": 170,
+    "hiddenFromStatus": true,
+    "displayFormat": "欲望：{value}/100",
+    "promptContext": "欲望 0-100。低欲望（<30）：对亲密接触冷淡。活跃（30-70）：对亲密接触有正常反应。高欲望（>70）：强烈渴望身体接触，对暧昧暗示敏感，主动寻求亲密机会。",
+    "pluginId": "builtin_char_status_intimate",
+    "metadata": {
+      "name": "欲望",
+      "category": "intimacy",
+      "maxDeltaPerTurn": 10
+    },
+    "enumValues": [],
+    "min": "0",
+    "max": "100"
+  },
+  {
+    "namespace": "char_status",
+    "key": "sexual_intent",
+    "ownerKind": "character",
+    "valueType": "number",
+    "defaultValue": "10",
+    "mutableByLlm": true,
+    "derived": false,
+    "statusGroup": "intimacy",
+    "statusOrder": 180,
+    "hiddenFromStatus": false,
+    "displayFormat": "意愿：{value}/100",
+    "promptContext": "性意愿 0-100。低意愿（<30）：明确拒绝进一步亲密行为。可推进（30-70）：在合适氛围下可能接受。强意愿（>70）：主动暗示或明示希望发生更亲密的关系。",
+    "pluginId": "builtin_char_status_intimate",
+    "metadata": {
+      "name": "性意愿",
+      "category": "intimacy",
+      "maxDeltaPerTurn": 10
+    },
+    "enumValues": [],
+    "min": "0",
+    "max": "100"
+  }
+]

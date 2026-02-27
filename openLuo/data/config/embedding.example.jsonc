@@ -1,0 +1,18 @@
+{
+  // ===== Embedding 配置 =====
+  // [热加载] 修改后自动生效
+  // 拷贝此文件为 embedding.jsonc 并填入你的 apiKey
+
+  "embedding": {
+    "enabled": true,
+    "provider": "Qwen",
+    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+    "apiKey": "",
+    "model": "Qwen3-Embedding-4B",
+    "endpointPath": "embeddings",
+
+    "timeoutSeconds": 8,
+    "maxRetryAttempts": 3,
+    "baseDelayMs": 300
+  }
+}

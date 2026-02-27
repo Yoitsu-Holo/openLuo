@@ -1,0 +1,11 @@
+{
+  "id": "builtin_asset_cg_generator",
+  "name": "builtin_asset_cg_generator",
+  "version": "1.0.0",
+  "description": "CG 场景图资产生成插件，监听叙事节拍并入库 CG 资产",
+  "pluginType": "asset",
+  "priority": 50,
+  "hooks": ["onStartup", "onNarrativeAfter"],
+  "permissions": ["read:state", "write:asset"],
+  "dependencies": []
+}

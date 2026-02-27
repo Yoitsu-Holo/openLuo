@@ -1,0 +1,74 @@
+[
+  {
+    "namespace": "char_status",
+    "key": "affection",
+    "ownerKind": "character",
+    "valueType": "number",
+    "defaultValue": "0",
+    "mutableByLlm": true,
+    "derived": false,
+    "statusGroup": "intimacy",
+    "statusOrder": 100,
+    "hiddenFromStatus": false,
+    "displayFormat": "好感：{value}/1000",
+    "promptContext": "好感度决定关系阶段：0-199=陌生人，200-399=熟人，400-599=朋友，600-799=好友，800-1000=恋人。",
+    "pluginId": "builtin_char_status_relationship",
+    "metadata": {
+      "name": "好感度",
+      "category": "intimacy",
+      "maxDeltaPerTurn": 20
+    },
+    "enumValues": [],
+    "min": "0",
+    "max": "1000"
+  },
+  {
+    "namespace": "char_status",
+    "key": "relationship_stage",
+    "ownerKind": "character",
+    "valueType": "enum",
+    "defaultValue": "陌生人",
+    "mutableByLlm": false,
+    "derived": true,
+    "statusGroup": "intimacy",
+    "statusOrder": 101,
+    "hiddenFromStatus": false,
+    "displayFormat": "关系：{value}",
+    "promptContext": "关系阶段由好感度自动推导。",
+    "pluginId": "builtin_char_status_relationship",
+    "metadata": {
+      "name": "关系阶段",
+      "category": "intimacy"
+    },
+    "enumValues": [
+      "陌生人",
+      "熟人",
+      "朋友",
+      "好友",
+      "恋人"
+    ]
+  },
+  {
+    "namespace": "char_status",
+    "key": "trust",
+    "ownerKind": "character",
+    "valueType": "number",
+    "defaultValue": "50",
+    "mutableByLlm": true,
+    "derived": false,
+    "statusGroup": "intimacy",
+    "statusOrder": 110,
+    "hiddenFromStatus": false,
+    "displayFormat": "信任：{value}/100",
+    "promptContext": "信任度影响角色是否愿意分享秘密、接受建议。",
+    "pluginId": "builtin_char_status_relationship",
+    "metadata": {
+      "name": "信任度",
+      "category": "intimacy",
+      "maxDeltaPerTurn": 10
+    },
+    "enumValues": [],
+    "min": "0",
+    "max": "100"
+  }
+]

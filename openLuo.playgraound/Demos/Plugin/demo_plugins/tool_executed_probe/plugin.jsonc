@@ -1,0 +1,7 @@
+{
+  "id": "demo_tool_executed_probe",
+  "name": "Demo Tool Executed Probe",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onToolExecuted"]
+}

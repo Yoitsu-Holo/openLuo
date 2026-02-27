@@ -1,0 +1,6 @@
+{
+  "id": "builtin_system_commands",
+  "name": "系统指令",
+  "version": "1.0.0",
+  "entry": "main.py"
+}

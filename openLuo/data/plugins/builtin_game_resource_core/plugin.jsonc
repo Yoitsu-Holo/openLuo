@@ -1,0 +1,14 @@
+{
+  "id": "builtin_game_resource_core",
+  "name": "游戏资源核心",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": [
+    "onStartup"
+  ],
+  "states": [
+    "stamina",
+    "gold"
+  ],
+  "pluginType": "state"
+}

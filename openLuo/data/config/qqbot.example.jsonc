@@ -1,0 +1,16 @@
+{
+  // QQbot 独立配置
+  // 仅在 --qq 启动模式下使用
+
+  "enabled": false, // [热加载] true=启用 QQ 机器人入口
+  "baseAddress": "ws://localhost:3010/", // [热加载] Milky WebSocket 地址
+  "targetGroupIds": [], // [热加载] 需要监听的群号列表
+  "targetFriendIds": [], // [热加载] 需要监听的好友 QQ 号列表
+  "adminUsers": [], // [热加载] 允许执行 /command 的 QQ 号列表；为空表示所有用户都无权执行命令
+  "replyOnlyWhenMentioned": true, // [热加载] 群聊仅在被 @ 时回复；好友聊天始终可直接回复
+  "commandPrefixPassthrough": true, // [热加载] 以 / 开头的消息原样透传给命令系统
+  "includeStateSummaryInReply": false, // [热加载] true=将 [状态结算] 一并发到 QQ；false=仅发送对话文本
+  "autoInitializeSession": true, // [热加载] 启动后若无存档则自动初始化
+  "defaultArchetypeId": "builtin-rin", // [热加载] 自动初始化时选择的角色原型
+  "playerName": "群友" // [热加载] 自动初始化时使用的玩家名
+}

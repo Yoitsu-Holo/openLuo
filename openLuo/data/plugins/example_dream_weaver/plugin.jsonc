@@ -1,0 +1,12 @@
+{
+  "id": "example_dream_weaver",
+  "name": "Dream Weaver",
+  "version": "2.1.0",
+  "description": "演示 State API / Asset API 完整入库闭环的模板插件",
+  "author": "example",
+  "entry": "main.py",
+  "runtime": "python",
+  "runtimeVersion": ">=3.11",
+  "hooks": ["onStartup", "onSleep"],
+  "permissions": ["read:state", "write:state", "read:asset", "write:asset"]
+}

@@ -1,0 +1,21 @@
+{
+  // ===== LLM 提供商配置 =====
+  // [热加载] 修改后自动生效
+  // 拷贝此文件为 llm.jsonc 并填入你的 apiKey
+
+  "llm": {
+    "provider": "OpenAI",
+    "baseUrl": "https://api.openai.com/v1/",
+    "apiKey": "",
+    "model": "gpt-4o-mini",
+
+    "temperature": 0.7,
+    "maxTokens": null,
+    "streaming": false,
+
+    "timeoutSeconds": 60,
+    "maxRetryAttempts": 5,
+    "baseDelayMs": 50,
+    "rateLimitPerMinute": 100
+  }
+}

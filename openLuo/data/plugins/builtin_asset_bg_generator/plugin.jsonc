@@ -1,0 +1,11 @@
+{
+  "id": "builtin_asset_bg_generator",
+  "name": "builtin_asset_bg_generator",
+  "version": "1.0.0",
+  "description": "背景图资产生成插件，监听场景切换并入库背景资产",
+  "pluginType": "asset",
+  "priority": 50,
+  "hooks": ["onStartup", "onNarrativeAfter"],
+  "permissions": ["read:state", "write:asset"],
+  "dependencies": []
+}

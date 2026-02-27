@@ -1,0 +1,14 @@
+{
+  // ===== 插件运行时配置 =====
+  // [热加载] 修改后自动生效
+
+  "pluginRuntime": {
+    "defaultCommandTimeoutSeconds": 30,
+    "chatCommandTimeoutSeconds": 120,
+    "hookCallTimeoutSeconds": 120,
+    "rpcDefaultTimeoutSeconds": 5,
+    "rpcHandshakeTimeoutSeconds": 15,
+    "hostRequestDefaultTimeoutSeconds": 30,
+    "processShutdownGraceMs": 500
+  }
+}

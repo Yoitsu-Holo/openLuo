@@ -1,0 +1,13 @@
+{
+  // ===== 日志配置 =====
+  // [热加载] 修改后自动生效
+  //
+  // level: off / error / warn / info / debug
+  // categories: 按模块独立设置日志级别
+
+  "log": {
+    "level": "info",
+    "outputToConsole": false,
+    "categories": {}
+  }
+}

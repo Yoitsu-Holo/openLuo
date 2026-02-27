@@ -1,0 +1,11 @@
+{
+  "id": "builtin_char_status_daily",
+  "name": "日常状态",
+  "version": "1.0.0",
+  "description": "管理心情、压力、疲劳等日常状态",
+  "pluginType": "state",
+  "priority": 90,
+  "hooks": ["onStartup", "onPromptContext", "onStatusQuery"],
+  "dependencies": [],
+  "permissions": ["read:state", "write:state"]
+}

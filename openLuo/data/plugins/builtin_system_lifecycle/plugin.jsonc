@@ -1,0 +1,7 @@
+{
+  "id": "builtin_system_lifecycle",
+  "name": "系统生命周期",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onDayStart"]
+}

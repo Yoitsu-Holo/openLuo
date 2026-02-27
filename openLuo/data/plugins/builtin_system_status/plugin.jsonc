@@ -1,0 +1,7 @@
+{
+  "id": "builtin_system_status",
+  "name": "状态显示",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": []
+}

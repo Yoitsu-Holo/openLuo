@@ -1,0 +1,45 @@
+# Build output
+bin/
+obj/
+publish/
+
+# User config (contains API keys)
+config.json
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ai pilot
+**/.claude/
+**/.omc/
+**/.omx/
+**/.codex
+
+# python
+.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# test / debug artifacts
+TestResults/
+**/TestResults/
+*.trx
+*.coverage
+coverage/
+
+
+# tempfile
+**/*.temp.*

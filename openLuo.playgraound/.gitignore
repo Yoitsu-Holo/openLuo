@@ -1,0 +1,7 @@
+# build output
+bin/
+obj/
+
+# local runtime config
+config/*.ini
+!config/*.example.ini

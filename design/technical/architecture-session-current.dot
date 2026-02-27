@@ -1,0 +1,112 @@
+digraph openluo_current_session_coupling {
+  graph [
+    label="Current Session Coupling (2026-06 — with ISessionGameApi)",
+    labelloc=t,
+    labeljust=l,
+    rankdir=TB,
+    splines=polyline,
+    newrank=true,
+    compound=true,
+    nodesep=0.55,
+    ranksep=0.8,
+    pad=0.25,
+    bgcolor="white",
+    fontname="Helvetica"
+  ];
+
+  node [shape=box, style="rounded,filled", fillcolor="#1971c2", fontcolor="white", color="#0b4f94", fontname="Helvetica"];
+  edge [color="#6c757d", arrowsize=0.7, penwidth=1.1, fontname="Helvetica"];
+
+  subgraph cluster_entry {
+    label="Entry / Presentation";
+    color="#ced4da";
+    style="rounded";
+    program [label="Program.cs\n(parse args → BootstrapAsync)"];
+    bootstrapper [label="OpenLuoBootstrapper\n(config + DI + session open)"];
+  }
+
+  subgraph cluster_presentation {
+    label="Presentation (adapters)";
+    color="#ced4da";
+    style="rounded";
+    cli [label="CliApplication"];
+    tui [label="TuiApplication"];
+    qqbot [label="QqBotApplication"];
+  }
+
+  subgraph cluster_session {
+    label="Session Runtime (unified facade)";
+    color="#ced4da";
+    style="rounded";
+    session_catalog [label="IGameSessionCatalog"];
+    game_session [label="IGameSession\n(per-client session)"];
+    runtime_context [label="OpenLuoRuntimeContext\n(ServiceProvider + Session + Streams + State)"];
+  }
+
+  subgraph cluster_internal {
+    label="Internal Runtime (not directly exposed to presentation)";
+    color="#ced4da";
+    style="rounded";
+    session_runtime [label="IGameSessionRuntime\n(GameSessionRuntime)"];
+    session_api [label="ISessionGameApi\n(SessionScopedGameApi)\n21 methods, no gameId"];
+    game_engine [label="IGameEngine\n(GameEngine)"];
+    agent_hub [label="IAgentRuntimeHub\n(AgentRuntimeHub)"];
+    streams [label="IGameStreams\n(Console/TUI/Null)"];
+    plugin_host [label="IPluginHost\n(McpPluginHost)"];
+    db_init [label="DatabaseInitializer"];
+    appshell [label="AppShell / DI\n(ServiceCollectionExtensions)"];
+  }
+
+  // Program → Bootstrapper
+  program -> bootstrapper [label="BootstrapAsync(mode)"];
+
+  // Bootstrapper internal
+  bootstrapper -> appshell [label="AddOpenLuo(config, baseDir)", style=dashed, color="#adb5bd"];
+  bootstrapper -> streams [label="register per mode\n(Console/Tui/Null)", style=dashed, color="#adb5bd"];
+
+  // Bootstrapper → Session layer
+  bootstrapper -> session_catalog [label="resolve"];
+  bootstrapper -> session_catalog [label="OpenSessionAsync\n(SessionOpenRequest)"];
+
+  // Bootstrapper → RuntimeContext
+  bootstrapper -> runtime_context [label="new OpenLuoRuntimeContext(\n  config, sp, catalog, session, streams, state)"];
+
+  // RuntimeContext → Presentation
+  runtime_context -> cli [label="SessionCatalog\n+ Session\n+ State"];
+  runtime_context -> tui [label="SessionCatalog\n+ Session\n+ Streams\n+ State"];
+  runtime_context -> qqbot [label="SessionCatalog\n+ ServiceProvider\n(for QqBotConfigCenter)"];
+
+  // Presentation → Session (the unified boundary)
+  cli -> game_session [label="SubmitAsync\n(GameSessionInput)"];
+  tui -> game_session [label="SubmitAsync\n(GameSessionInput)"];
+  qqbot -> game_session [label="SubmitAsync\n(Ambient input)"];
+
+  // Presentation → GameSession.Api (data queries, no gameId needed)
+  cli -> game_session [label=".Api.GetStateAsync()\n.Api.ListShopItemsAsync()", style=dashed, color="#0b7285"];
+  tui -> game_session [label=".Api.GetResourceStatusAsync()\n.Api.GetTimeAsync()", style=dashed, color="#0b7285"];
+
+  // game_session → internal
+  game_session -> session_runtime [label="delegates to"];
+  game_session -> session_api [label=".Api property\n(IGameSession.Api)"];
+
+  // SessionApi → Domain Handlers (gameId auto-resolved from SessionHandle)
+  session_api -> game_engine [label="via GameBridge\nhandlers", style=dashed, color="#0b7285"];
+
+  // SessionRuntime → Internal (not visible to presentation)
+  session_runtime -> game_engine [label="ExecuteAsync"];
+  session_runtime -> agent_hub [label="EnsurePartyStarted"];
+  session_runtime -> plugin_host [label="LoadAllAsync\n(startup)"];
+  session_runtime -> db_init [label="InitializeAsync\n(startup)"];
+
+  // Presentation → SessionCatalog (for game list, archetype list)
+  cli -> session_catalog [label="GetAvailableArchetypes\nInitGameAsync"];
+  tui -> session_catalog [label="GetAvailableArchetypes\nGetSessionRoster\nSetActiveCharacter"];
+  qqbot -> session_catalog [label="GetGameIds\nOpenSession"];
+
+  // AppShell registers everything (dashed = DI-time only)
+  appshell -> session_runtime [style=dashed, color="#adb5bd"];
+  appshell -> game_engine [style=dashed, color="#adb5bd"];
+  appshell -> agent_hub [style=dashed, color="#adb5bd"];
+  appshell -> plugin_host [style=dashed, color="#adb5bd"];
+  appshell -> db_init [style=dashed, color="#adb5bd"];
+}

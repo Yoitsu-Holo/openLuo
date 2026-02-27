@@ -1,0 +1,7 @@
+{
+  "id": "builtin_event_date",
+  "name": "约会与回忆",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onScheduleDue"]
+}

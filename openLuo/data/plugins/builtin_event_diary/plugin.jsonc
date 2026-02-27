@@ -1,0 +1,7 @@
+{
+  "id": "builtin_event_diary",
+  "name": "日记系统",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onSleepAfter"]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "builtin_char_status_intimate",
+  "name": "亲密关系状态",
+  "version": "1.0.0",
+  "description": "管理欲望、羞耻、依赖等亲密关系指标（18+）",
+  "pluginType": "state",
+  "priority": 80,
+  "hooks": ["onStartup", "onPromptContext", "onStatusQuery"],
+  "dependencies": [],
+  "permissions": ["read:state", "write:state"],
+  "contentWarning": "此插件包含成人内容，仅适合 18 岁以上玩家"
+}

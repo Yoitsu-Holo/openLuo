@@ -1,0 +1,7 @@
+{
+  "id": "builtin_world_state_core",
+  "name": "世界管理",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onStartup", "onSleepAfter", "onChatBefore", "onPromptContext"]
+}

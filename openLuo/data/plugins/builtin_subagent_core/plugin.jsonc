@@ -1,0 +1,7 @@
+{
+  "id": "builtin_subagent_core",
+  "name": "Built-in SubAgent Core",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": []
+}

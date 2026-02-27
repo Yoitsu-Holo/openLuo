@@ -1,0 +1,7 @@
+{
+  "id": "builtin_skill_core",
+  "name": "Built-in Skill Core",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": []
+}

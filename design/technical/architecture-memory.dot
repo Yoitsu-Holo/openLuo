@@ -1,0 +1,72 @@
+digraph openluo_memory_flow {
+  graph [
+    label="openLuo Memory Flow (2026-05 — actual)",
+    labelloc=t,
+    labeljust=l,
+    rankdir=TB,
+    splines=ortho,
+    nodesep=0.5,
+    ranksep=0.8,
+    pad=0.2,
+    bgcolor="white",
+    fontname="Helvetica"
+  ];
+
+  node [shape=box, style="rounded,filled", fillcolor="#1971c2", fontcolor="white", color="#0b4f94", fontname="Helvetica"];
+  edge [color="#6c757d", arrowsize=0.7, penwidth=1.1, fontname="Helvetica"];
+
+  // Entry points
+  agent [label="Agent Runtime\n(via IAgentMemoryStore)"];
+  flow_nodes [label="Flow Node Executors\n(MemoryRecall, StateUpdate)"];
+
+  // Adapter
+  adapter [label="AgentMemoryStoreAdapter\n(IAgentMemoryStore)"];
+
+  // Core services
+  write_service [label="MemoryCommitCoordinator\n(IMemoryWriteService)"];
+  recall_service [label="MemoryRecallCoordinator\n(IMemoryRecallService)"];
+  write_projector [label="DefaultMemoryWriteProjector\n(IMemoryWriteProjector)"];
+
+  // Retrievers
+  composite_retriever [label="CompositeMemoryRetriever\n(IMemoryRetriever)"];
+  vector_retriever [label="VectorMemoryRetriever", fillcolor="#1864ab"];
+  keyword_retriever [label="KeywordMemoryRetriever", fillcolor="#1864ab"];
+
+  // Storage
+  repository [label="SqliteMemoryRepository\n(IMemoryRepository)"];
+
+  // External
+  llm [label="LlmClient\n(embedding)"];
+  sqlite [shape=cylinder, style="filled", fillcolor="#2b8a3e", color="#2b8a3e", label="SQLite\n(memory rows)"];
+  sqlitevec [shape=cylinder, style="filled", fillcolor="#2f9e44", color="#2f9e44", label="sqlite-vec\n(vector index)"];
+
+  // Agent → Adapter
+  agent -> adapter [label="write / recall"];
+  flow_nodes -> adapter [label="recall memories"];
+
+  // Adapter → Core services
+  adapter -> write_service [label="commit"];
+  adapter -> recall_service [label="recall"];
+
+  // Write path
+  write_service -> write_projector [label="project memory"];
+  write_projector -> repository [label="insert memory row"];
+  write_projector -> llm [label="embed text"];
+
+  // Recall path
+  recall_service -> composite_retriever [label="query"];
+  composite_retriever -> vector_retriever [label="primary: vector search"];
+  composite_retriever -> keyword_retriever [label="fallback: keyword search"];
+
+  // Retrievers → Storage
+  vector_retriever -> sqlitevec [label="vector index lookup"];
+  vector_retriever -> repository [label="resolve records"];
+  keyword_retriever -> repository [label="keyword match"];
+
+  // Storage → persistence
+  repository -> sqlite [label="memory rows"];
+  repository -> sqlitevec [label="vector index"];
+
+  // Embedding
+  vector_retriever -> llm [label="embed query\n(for vector search)"];
+}

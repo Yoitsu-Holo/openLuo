@@ -1,0 +1,7 @@
+{
+  "id": "builtin_inventory_shop",
+  "name": "商店与背包",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": []
+}

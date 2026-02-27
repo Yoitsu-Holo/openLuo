@@ -1,0 +1,7 @@
+{
+  "id": "builtin_system_work",
+  "name": "工作与休息",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": []
+}

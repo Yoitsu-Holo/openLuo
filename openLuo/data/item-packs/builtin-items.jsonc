@@ -1,0 +1,24 @@
+{
+  "id": "builtin-items",
+  "name": "内置物品",
+  "items": [
+    { "id": "ribbon",     "name": "蝴蝶结发带", "description": "精致的蕾丝发带，少女风格。",         "price": 120, "tags": ["clothing","accessory"], "affectionDelta": 8,  "moodEffect": "Happy" },
+    { "id": "scarf",      "name": "羊毛围巾",   "description": "柔软保暖，冬日必备。",               "price": 200, "tags": ["clothing"],            "affectionDelta": 6  },
+    { "id": "hairpin",    "name": "樱花发夹",   "description": "粉色樱花造型，清新可爱。",           "price": 80,  "tags": ["clothing","accessory"], "affectionDelta": 5  },
+    { "id": "gloves",     "name": "针织手套",   "description": "手工编织，温暖心意。",               "price": 150, "tags": ["clothing"],            "affectionDelta": 7  },
+    { "id": "flowers",    "name": "玫瑰花束",   "description": "鲜艳的红玫瑰，传递心意。",           "price": 180, "tags": ["gift","flower"],       "affectionDelta": 12, "moodEffect": "Happy" },
+    { "id": "chocolate",  "name": "手工巧克力", "description": "精心制作的黑巧克力礼盒。",           "price": 100, "tags": ["gift","food"],         "affectionDelta": 9,  "moodEffect": "Happy" },
+    { "id": "plushie",    "name": "小熊玩偶",   "description": "软绵绵的棕色小熊，治愈系。",         "price": 250, "tags": ["gift","toy"],          "affectionDelta": 10 },
+    { "id": "music_box",  "name": "八音盒",     "description": "播放悠扬旋律的精致木盒。",           "price": 380, "tags": ["gift","special"],      "affectionDelta": 15, "moodEffect": "Happy", "rarity": "Uncommon" },
+    { "id": "novel",      "name": "浪漫小说",   "description": "畅销言情小说，引人入胜。",           "price": 60,  "tags": ["book"],                "affectionDelta": 4  },
+    { "id": "cookbook",   "name": "料理食谱",   "description": "收录各式家常菜谱。",                 "price": 80,  "tags": ["book","food"],         "affectionDelta": 5  },
+    { "id": "photo_album","name": "精装相册",   "description": "可以一起填满回忆的空白相册。",       "price": 120, "tags": ["book","memory"],       "affectionDelta": 8  },
+    { "id": "manga",      "name": "限定漫画",   "description": "绝版限定版漫画，收藏价值极高。",     "price": 200, "tags": ["book"],                "affectionDelta": 6,  "rarity": "Uncommon" },
+    { "id": "cake",       "name": "草莓蛋糕",   "description": "新鲜草莓奶油蛋糕，甜蜜可口。",       "price": 90,  "tags": ["food","sweet"],        "affectionDelta": 7,  "moodEffect": "Happy" },
+    { "id": "tea_set",    "name": "精品茶叶",   "description": "来自高山的有机绿茶礼盒。",           "price": 150, "tags": ["food","drink"],        "affectionDelta": 6  },
+    { "id": "bento",      "name": "手作便当",   "description": "亲手制作的爱心便当，满满心意。",     "price": 50,  "tags": ["food"],                "affectionDelta": 10, "moodEffect": "Happy" },
+    { "id": "letter",     "name": "手写信",     "description": "亲笔书写的真情告白信。",             "price": 30,  "tags": ["special","letter"],    "affectionDelta": 18, "moodEffect": "Happy", "rarity": "Special" },
+    { "id": "ring",       "name": "银戒指",     "description": "简约银质戒指，象征约定。",           "price": 500, "tags": ["special","jewelry"],   "affectionDelta": 25, "moodEffect": "Happy", "rarity": "Rare" },
+    { "id": "pendant",    "name": "星空项链",   "description": "镶嵌蓝宝石的精致项链。",             "price": 680, "tags": ["special","jewelry"],   "affectionDelta": 22, "moodEffect": "Happy", "rarity": "Rare" }
+  ]
+}
