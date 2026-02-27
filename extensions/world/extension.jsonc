@@ -1,0 +1,9 @@
+{
+  "id": "world",
+  "version": "1.0.0",
+  "displayName": "World",
+  "description": "Subject state, inventory, shop, schedule, and gifts.",
+  "assembly": "openLuo.Extension.World.dll",
+  "entryType": "OpenLuo.Extensions.World.WorldExtension",
+  "dataDir": "data"
+}

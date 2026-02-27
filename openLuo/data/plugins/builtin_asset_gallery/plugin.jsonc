@@ -1,0 +1,18 @@
+{
+  "id": "builtin_asset_gallery",
+  "name": "资产画廊",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onStatusQuery"],
+  "tools": [
+    {
+      "name": "galleryList",
+      "aliases": [],
+      "description": "查询已解锁的 CG / 背景 / 梦境资产",
+      "category": "command",
+      "helpShort": "查询已解锁的资产",
+      "riskLevel": "low",
+      "needsConfirm": false
+    }
+  ]
+}

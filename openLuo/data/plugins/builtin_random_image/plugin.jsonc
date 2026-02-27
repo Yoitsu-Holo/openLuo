@@ -1,0 +1,20 @@
+{
+  "id": "builtin_random_image",
+  "name": "随机图片",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": [],
+  "tools": [
+    {
+      "name": "fetch_random_image",
+      "aliases": ["random_image", "get_random_image", "send_image"],
+      "description": "获取一张随机图片并返回媒体结果，适合来张图、随机图片等请求",
+      "category": "tool",
+      "helpShort": "获取一张随机图片，例：/fetch_random_image",
+      "riskLevel": "low",
+      "needsConfirm": false,
+      "timeoutSeconds": 120,
+      "capabilities": ["image", "media", "random-image"]
+    }
+  ]
+}

@@ -1,0 +1,205 @@
+digraph openluo_overview {
+  graph [
+    label="openLuo Architecture Overview (2026-06 — current)",
+    labelloc=t,
+    labeljust=l,
+    rankdir=LR,
+    splines=polyline,
+    newrank=true,
+    compound=true,
+    nodesep=0.55,
+    ranksep=1.1,
+    pad=0.25,
+    bgcolor="white",
+    fontname="Helvetica"
+  ];
+
+  node [
+    shape=box,
+    style="rounded,filled",
+    fillcolor="#1971c2",
+    fontcolor="white",
+    color="#0b4f94",
+    fontname="Helvetica",
+    margin="0.14,0.09"
+  ];
+
+  edge [
+    color="#6c757d",
+    arrowsize=0.7,
+    penwidth=1.1,
+    fontname="Helvetica"
+  ];
+
+  player [shape=box, style="rounded,filled", fillcolor="#0b7285", color="#0b7285", label="Player"];
+
+  subgraph cluster_layer_entry {
+    label="Entry Layer";
+    color="#ced4da";
+    style="rounded";
+    program [label="Program.cs\n+ Bootstrapper"];
+    cli [label="CLI Application"];
+    tui [label="TUI Application"];
+    qqbot [label="QQBot Application"];
+  }
+
+  subgraph cluster_layer_session {
+    label="Session Runtime Layer";
+    color="#ced4da";
+    style="rounded";
+    session_catalog [label="IGameSessionCatalog\n(GameSessionCatalog)"];
+    game_session [label="IGameSession\n(RuntimeBackedGameSession)"];
+    session_api [label="ISessionGameApi\n(SessionScopedGameApi)\n21 methods, auto-inject gameId"];
+    session_runtime [label="IGameSessionRuntime\n(GameSessionRuntime)"];
+    input_router [label="IInputRouter\n(DefaultInputRouter)"];
+    output_bus [label="IOutputEventBus\n(InMemoryOutputEventBus)"];
+  }
+
+  subgraph cluster_layer_domain {
+    label="Domain Orchestration Layer";
+    color="#ced4da";
+    style="rounded";
+    gameplay [label="Gameplay\n(GameEngine)"];
+    agent [label="Agent Runtime\n(AgentRuntimeHub)"];
+    appshell [label="AppShell\n(DI Assembly)"];
+  }
+
+  subgraph cluster_layer_support {
+    label="Support Services Layer";
+    color="#ced4da";
+    style="rounded";
+    executor [label="Executor"];
+    worldstate [label="WorldState"];
+    assets [label="Assets"];
+    memory [label="Memory"];
+    content [label="Content"];
+    llm [label="LLM Integration"];
+    embedding [label="Embedding"];
+    pluginruntime [label="Plugin Runtime\n(IPluginHost)"];
+    gamebridge [label="GameBridge\n([GameApi] dispatch\n+ GameApiDispatcher)"];
+    commanding [label="Commanding"];
+    agentcaps [label="Agent\nCapabilities"];
+    interagent [label="InterAgent"];
+  }
+
+  subgraph cluster_layer_resources {
+    label="Static Content / External";
+    color="#ced4da";
+    style="rounded";
+    archetypes [label="Character\nArchetypes", fillcolor="#1864ab"];
+    itempacks [label="Item Packs", fillcolor="#1864ab"];
+    plugins [label="Python Plugins\n(MCP stdio)", fillcolor="#1864ab"];
+    skills [label="Skill/Tool Docs", fillcolor="#1864ab"];
+  }
+
+  subgraph cluster_layer_data {
+    label="Persistence Layer";
+    color="#ced4da";
+    style="rounded";
+    sqlite [shape=cylinder, style="filled", fillcolor="#2b8a3e", color="#2b8a3e", label="SQLite"];
+    sqlitevec [shape=cylinder, style="filled", fillcolor="#2f9e44", color="#2f9e44", label="sqlite-vec"];
+  }
+
+  // Invisible rank constraints for layering
+  program -> session_runtime [style=invis, weight=20];
+  session_runtime -> gameplay [style=invis, weight=20];
+  gameplay -> executor [style=invis, weight=20];
+  executor -> archetypes [style=invis, weight=20];
+  archetypes -> sqlite [style=invis, weight=20];
+
+  // ── Player ──────────────────────────────────────────────────────────
+  player -> program [label="launch / interact"];
+
+  // ── Entry → Session layer ───────────────────────────────────────────
+  program -> session_catalog [label="OpenSessionAsync\n→ returns IGameSession"];
+  program -> cli [label="default mode"];
+  program -> tui [label="--tui"];
+  program -> qqbot [label="--qqbot"];
+
+  // ── CLI/TUI/QQBot → Session (two paths now) ───────────────────────
+
+  // Path A: commands/dialogue
+  cli -> game_session [label="SubmitAsync\n(SessionInput)"];
+  tui -> game_session [label="SubmitAsync\n(SessionInput)"];
+  qqbot -> game_session [label="SubmitAsync\n(Ambient input)"];
+
+  // Path B: data queries (NEW — no gameId needed)
+  cli -> game_session [label=".Api.GetStateAsync()\n.Api.ListShopItemsAsync()", style=dashed, color="#0b7285"];
+  tui -> game_session [label=".Api.GetResourceStatusAsync()\n.Api.GetTimeAsync()", style=dashed, color="#0b7285"];
+
+  // SessionCatalog → construct IGameSession + ISessionGameApi
+  session_catalog -> game_session [label="per-session\n(factory creates\nSessionScopedGameApi)"];
+
+  // game_session → internal delegation
+  game_session -> session_runtime [label="delegates\nSubmitAsync"];
+  game_session -> session_api [label=".Api property\nexposes"];
+
+  // SessionRuntime → internal
+  session_runtime -> input_router [label="route input"];
+  session_runtime -> output_bus [label="publish events"];
+  session_runtime -> gameplay [label="ExecuteAsync"];
+  session_runtime -> agent [label="EnsurePartyStarted"];
+
+  // ── SessionApi → GameBridge (frontend data path) ────────────────────
+  session_api -> gamebridge [label="auto-injects\ngameId → handlers", style=dashed, color="#0b7285"];
+
+  // ── AppShell (DI) ───────────────────────────────────────────────────
+  program -> appshell [label="AddOpenLuo + DI", style=dashed, color="#adb5bd"];
+  appshell -> session_runtime [style=dashed, color="#adb5bd", label="register"];
+  appshell -> session_api [style=dashed, color="#adb5bd", label="factory"];
+  appshell -> gameplay [style=dashed, color="#adb5bd", label="register"];
+  appshell -> agent [style=dashed, color="#adb5bd", label="register"];
+  appshell -> executor [style=dashed, color="#adb5bd", label="register"];
+  appshell -> worldstate [style=dashed, color="#adb5bd", label="register"];
+  appshell -> assets [style=dashed, color="#adb5bd", label="register"];
+  appshell -> memory [style=dashed, color="#adb5bd", label="register"];
+  appshell -> content [style=dashed, color="#adb5bd", label="register"];
+  appshell -> llm [style=dashed, color="#adb5bd", label="register"];
+  appshell -> embedding [style=dashed, color="#adb5bd", label="register"];
+  appshell -> pluginruntime [style=dashed, color="#adb5bd", label="register"];
+  appshell -> gamebridge [style=dashed, color="#adb5bd", label="register"];
+  appshell -> sqlite [style=dashed, color="#adb5bd", label="db init"];
+
+  // ── Gameplay → downstream ───────────────────────────────────────────
+  gameplay -> agent [label="InvocationRouter"];
+  gameplay -> commanding [label="command parse"];
+  gameplay -> worldstate [label="state/bootstrap"];
+  gameplay -> content [label="archetypes"];
+
+  // ── Agent → downstream ──────────────────────────────────────────────
+  agent -> executor [label="flow nodes"];
+  agent -> memory [label="recall/write"];
+  agent -> agentcaps [label="capabilities"];
+  agent -> interagent [label="character\nmessaging"];
+  agent -> sqlite [label="context/tasks"];
+
+  // ── Executor → downstream ───────────────────────────────────────────
+  executor -> llm [label="structured\nLLM calls"];
+  executor -> content [label="prompt\ncontext"];
+
+  // ── Memory → downstream ─────────────────────────────────────────────
+  memory -> sqlite [label="memory rows"];
+  memory -> sqlitevec [label="vector index"];
+  memory -> llm [label="embed"];
+
+  // ── Content → resources ─────────────────────────────────────────────
+  content -> archetypes [label="load JSONC"];
+  content -> itempacks [label="load JSONC"];
+  content -> skills [label="load docs"];
+
+  // ── Plugin Runtime ──────────────────────────────────────────────────
+  pluginruntime -> plugins [label="JSON-RPC stdio"];
+  pluginruntime -> gamebridge [label="forward\ngame/*"];
+  pluginruntime -> agent [label="register\nflows/commands"];
+
+  // ── GameBridge → domain (now via [GameApi] + GameApiDispatcher) ─────
+  gamebridge -> gameplay [label="session/char/\nshop/gift/lifecycle"];
+  gamebridge -> worldstate [label="state/time/\ntimeline/resource"];
+  gamebridge -> assets [label="asset ops"];
+
+  // ── WorldState → persistence ────────────────────────────────────────
+  worldstate -> sqlite [label="state/timeline"];
+
+  // ── Assets → persistence ────────────────────────────────────────────
+  assets -> sqlite [label="asset store"];
+}

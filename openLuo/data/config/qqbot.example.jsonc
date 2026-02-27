@@ -1,0 +1,14 @@
+{
+  // QQbot 独立配置
+  // 仅在 --qq 启动模式下使用
+
+  "enabled": false, // [热加载] true=启用 QQ 机器人入口
+  "baseAddress": "ws://localhost:3010/", // [热加载] Milky WebSocket/HTTP API 地址
+  "requestTimeoutSeconds": 120, // [热加载] Milky HTTP API 请求超时；需大于默认 HttpClient 100s 才能避免启动握手被默认值截断
+  "targetGroupIds": [], // [热加载] 需要监听的群号列表
+  "targetFriendIds": [], // [热加载] 需要监听的好友 QQ 号列表
+  "adminUsers": [], // [热加载] 允许执行 /command 的 QQ 号列表；为空表示所有用户都无权执行命令
+  "replyOnlyWhenMentioned": true, // [热加载] 群聊仅在被 @ 时回复；好友聊天始终可直接回复
+  "defaultAgentId": "companion", // [热加载] 会话使用的 Agent；companion=内核自带陪伴 Agent
+  "defaultSubjectId": "builtin-rin" // [热加载] 会话使用的角色原型 id（见 data/archetypes/*.jsonc）
+}

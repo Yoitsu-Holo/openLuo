@@ -1,0 +1,18 @@
+{
+  "id": "builtin_system_status",
+  "name": "状态显示",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": [],
+  "tools": [
+    {
+      "name": "status",
+      "aliases": [],
+      "description": "显示当前状态面板（金币、体力、好感度、心情）",
+      "category": "command",
+      "helpShort": "显示当前状态面板",
+      "riskLevel": "low",
+      "needsConfirm": false
+    }
+  ]
+}

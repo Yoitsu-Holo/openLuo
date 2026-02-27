@@ -1,0 +1,11 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="extensions/memory/openLuo.Extension.Memory.csproj" />
+  <Project Path="extensions/companion/openLuo.Extension.Companion.csproj" />
+  <Project Path="extensions/world/openLuo.Extension.World.csproj" />
+  <Project Path="extensions/party/openLuo.Extension.Party.csproj" />
+</Solution>

@@ -1,0 +1,51 @@
+[
+  {
+    "namespace": "game_resource",
+    "key": "stamina",
+    "ownerKind": "game",
+    "valueType": "number",
+    "defaultValue": "100",
+    "mutableByLlm": false,
+    "derived": false,
+    "statusOrder": 0,
+    "hiddenFromStatus": false,
+    "displayFormat": "体力：{value}/{max}",
+    "promptContext": "体力代表行动能量，范围 0-100。归零时无法进行体力消耗类活动（工作、约会），但聊天和外出（在聊天链内）不受阻断，仅在链末清算。变化量参考：纯对话=0，步行附近=−3，乘车跨区=−8，逛展活动=−10，剧烈体力活动=−15。",
+    "pluginId": "builtin_game_resource_core",
+    "metadata": {
+      "name": "体力",
+      "category": "stat",
+      "canGoNegative": false,
+      "displayIn": [
+        "status"
+      ]
+    },
+    "enumValues": [],
+    "min": "0",
+    "max": "100"
+  },
+  {
+    "namespace": "game_resource",
+    "key": "gold",
+    "ownerKind": "game",
+    "valueType": "number",
+    "defaultValue": "500",
+    "mutableByLlm": false,
+    "derived": false,
+    "statusOrder": 0,
+    "hiddenFromStatus": false,
+    "displayFormat": "金币：{value} G",
+    "promptContext": "金币用于购物和约会消费。",
+    "pluginId": "builtin_game_resource_core",
+    "metadata": {
+      "name": "金币",
+      "category": "stat",
+      "canGoNegative": false,
+      "displayIn": [
+        "status"
+      ]
+    },
+    "enumValues": [],
+    "min": "0"
+  }
+]

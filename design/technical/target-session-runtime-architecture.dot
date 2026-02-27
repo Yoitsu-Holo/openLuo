@@ -1,0 +1,158 @@
+digraph openluo_target_session_runtime {
+  graph [
+    label="openLuo Target Session Runtime Architecture (2026-05 — largely achieved, remaining targets marked)",
+    labelloc=t,
+    labeljust=l,
+    rankdir=TB,
+    splines=polyline,
+    newrank=true,
+    compound=true,
+    nodesep=0.55,
+    ranksep=0.8,
+    pad=0.25,
+    bgcolor="white",
+    fontname="Helvetica"
+  ];
+
+  node [
+    shape=box,
+    style="rounded,filled",
+    fillcolor="#1971c2",
+    fontcolor="white",
+    color="#0b4f94",
+    fontname="Helvetica",
+    margin="0.14,0.09"
+  ];
+
+  edge [
+    color="#6c757d",
+    arrowsize=0.7,
+    penwidth=1.1,
+    fontname="Helvetica"
+  ];
+
+  player [shape=box, style="rounded,filled", fillcolor="#0b7285", color="#0b7285", label="Player / External Systems"];
+
+  // Presentation adapters
+  subgraph cluster_adapters {
+    label="Presentation Adapters";
+    color="#ced4da";
+    style="rounded";
+    cli_adapter [label="CLI Adapter\n✅ CliApplication"];
+    tui_adapter [label="TUI Adapter\n✅ TuiApplication"];
+    qqbot_adapter [label="QQBot Adapter\n✅ QqBotApplication"];
+    gui_adapter [label="GUI Adapter\n⬜ future", fillcolor="#868e96", fontcolor="#dee2e6"];
+    http_adapter [label="HTTP Adapter\n⬜ future", fillcolor="#868e96", fontcolor="#dee2e6"];
+    ws_adapter [label="WebSocket Adapter\n⬜ future", fillcolor="#868e96", fontcolor="#dee2e6"];
+  }
+
+  // Session Runtime
+  subgraph cluster_session_runtime {
+    label="Session Runtime (Application Layer)";
+    color="#ced4da";
+    style="rounded";
+    session_facade [label="IGameSessionRuntime\n✅ GameSessionRuntime", fillcolor="#2f9e44", color="#2f9e44"];
+    session_registry [label="ISessionRegistry\n✅ InMemorySessionRegistry"];
+    input_router [label="IInputRouter\n✅ DefaultInputRouter"];
+    output_bus [label="IOutputEventBus\n✅ InMemoryOutputEventBus"];
+    session_bootstrapper [label="ISessionBootstrapper\n✅ ContentRegistrySessionBootstrapper"];
+    lifecycle [label="Game Lifecycle\n✅ (in GameSessionRuntime)"];
+    session_catalog [label="IGameSessionCatalog\n✅ GameSessionCatalog"];
+    game_session [label="IGameSession\n✅ RuntimeBackedGameSession"];
+  }
+
+  // Domain / Engine
+  subgraph cluster_domain {
+    label="Domain / Engine";
+    color="#ced4da";
+    style="rounded";
+    gameplay [label="Gameplay ✅"];
+    agent [label="Agent Runtime ✅"];
+    pluginruntime [label="Plugin Runtime ✅"];
+    gamebridge [label="GameBridge ✅"];
+    executor [label="Executor ✅"];
+    worldstate [label="WorldState ✅"];
+    assets [label="Assets ✅"];
+    memory [label="Memory ✅"];
+    llm [label="LLM Integration ✅"];
+    content [label="Content ✅"];
+  }
+
+  // Persistence
+  sqlite [shape=cylinder, style="filled", fillcolor="#2b8a3e", color="#2b8a3e", label="SQLite ✅"];
+  sqlitevec [shape=cylinder, style="filled", fillcolor="#2f9e44", color="#2f9e44", label="sqlite-vec ✅"];
+
+  // Player → Adapters
+  player -> cli_adapter;
+  player -> tui_adapter;
+  player -> qqbot_adapter;
+  player -> gui_adapter [style=dashed, color="#adb5bd"];
+  player -> http_adapter [style=dashed, color="#adb5bd"];
+  player -> ws_adapter [style=dashed, color="#adb5bd"];
+
+  // Adapters → Session (via SessionInput / GameEvent)
+  cli_adapter -> session_facade [label="SessionInput / GameEvent"];
+  tui_adapter -> session_facade [label="SessionInput / GameEvent"];
+  qqbot_adapter -> session_facade [label="SessionInput\n(Ambient) / GameEvent"];
+  gui_adapter -> session_facade [label="SessionInput / GameEvent", style=dashed, color="#adb5bd"];
+  http_adapter -> session_facade [label="SessionInput / GameEvent", style=dashed, color="#adb5bd"];
+  ws_adapter -> session_facade [label="SessionInput / GameEvent", style=dashed, color="#adb5bd"];
+
+  // Session facade → internal session components
+  session_facade -> session_registry [label="sessions / channels"];
+  session_facade -> session_catalog [label="game list / open"];
+  session_facade -> game_session [label="per-client session"];
+  session_facade -> input_router [label="route input"];
+  session_facade -> output_bus [label="stream events"];
+  session_facade -> session_bootstrapper [label="new / resume game"];
+  session_facade -> lifecycle [label="open / close"];
+
+  // Session bootstrapper → Domain
+  session_bootstrapper -> gameplay [label="InitializeAsync"];
+  session_bootstrapper -> agent [label="EnsurePartyStarted"];
+  session_bootstrapper -> pluginruntime [label="LoadAllAsync"];
+  session_bootstrapper -> content [label="archetypes / items"];
+
+  // Input router → Domain
+  input_router -> gameplay [label="player commands"];
+  input_router -> agent [label="agent / chat / task"];
+  input_router -> pluginruntime [label="plugin commands"];
+
+  // Domain → Output bus
+  gameplay -> output_bus [label="CommandResult\n→ GameEvent"];
+  agent -> output_bus [label="agent output /\ntask / trace"];
+  pluginruntime -> output_bus [label="plugin stream /\nnotices"];
+
+  // Domain internal
+  gameplay -> worldstate [label="state"];
+  gameplay -> content [label="content"];
+  gameplay -> sqlite [label="state persist"];
+
+  agent -> memory [label="recall/write"];
+  agent -> executor [label="flow nodes"];
+  agent -> sqlite [label="context/tasks"];
+
+  pluginruntime -> gamebridge [label="game/*"];
+  gamebridge -> gameplay [label="host APIs"];
+  gamebridge -> worldstate [label="state/resource/\ntimeline"];
+  gamebridge -> assets [label="asset APIs"];
+
+  executor -> llm [label="LLM calls"];
+  executor -> content [label="prompt\ncontext"];
+
+  memory -> sqlite [label="memory rows"];
+  memory -> sqlitevec [label="vector index"];
+  memory -> llm [label="embed"];
+
+  worldstate -> sqlite [label="state/timeline"];
+  assets -> sqlite [label="asset store"];
+
+  // Legend
+  subgraph cluster_legend {
+    label="Status Legend";
+    color="#ced4da";
+    style="rounded";
+    done [label="✅ Implemented", fillcolor="#2f9e44", color="#2f9e44", shape=box, style="rounded,filled", fontcolor="white"];
+    future [label="⬜ Future", fillcolor="#868e96", color="#868e96", shape=box, style="rounded,filled", fontcolor="#dee2e6"];
+  }
+}

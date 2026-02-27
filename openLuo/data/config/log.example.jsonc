@@ -1,0 +1,18 @@
+{
+  // ===== 日志配置 =====
+  // [热加载] 修改后自动生效
+  //
+  // level: off / error / warn / info / debug
+  // categories: 按模块独立设置日志级别
+
+  "log": {
+    "level": "info",
+    "outputToConsole": false,
+    "categories": {
+      // 工具调度（能力调度器）：[tool] start / ok / failed / batch rejected / batch done
+      "agent/dispatch": "info",
+      // QQ bot 消息收发：[recv] 收到的消息 / [send] 发出的回复
+      "qq": "info"
+    }
+  }
+}

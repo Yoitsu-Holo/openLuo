@@ -1,0 +1,158 @@
+digraph openluo_agent_flow {
+  graph [
+    label="openLuo Agent Flow (2026-05 — actual)",
+    labelloc=t,
+    labeljust=l,
+    rankdir=TB,
+    splines=ortho,
+    newrank=true,
+    compound=true,
+    nodesep=0.45,
+    ranksep=0.7,
+    pad=0.2,
+    bgcolor="white",
+    fontname="Helvetica"
+  ];
+
+  node [shape=box, style="rounded,filled", fillcolor="#1971c2", fontcolor="white", color="#0b4f94", fontname="Helvetica"];
+  edge [color="#6c757d", arrowsize=0.7, penwidth=1.1, fontname="Helvetica"];
+
+  player [shape=box, style="rounded,filled", fillcolor="#0b7285", color="#0b7285", label="Player\n(SessionInput)"];
+
+  // Session → Engine
+  game_engine [label="GameEngine\n(ExecuteAsync)"];
+  agent_router [label="AgentInvocationRouter\n(3-way dispatch)"];
+
+  // Three dispatch targets
+  player_chat [label="PlayerChatDispatcher\n(chat commands)"];
+  multi_char [label="MultiCharacterOrchestrator\n(/task, /switch)"];
+  cmd_bridge [label="PluginAgentCommandBridge\n(plugin commands)"];
+
+  // Agent runtime chain
+  runtime_hub [label="AgentRuntimeHub"];
+  dispatcher [label="AgentDispatcher"];
+  msg_handler [label="DefaultAgentMessageHandler"];
+
+  // Flow-based turn execution
+  character_agent [label="CharacterAgent\n(RunTurnAsync)"];
+  flow_runner [label="IAgentFlowRunner\n(DefaultAgentFlowRunner)"];
+
+  // Flow nodes
+  subgraph cluster_flow_nodes {
+    label="Flow Node Executors";
+    color="#ced4da";
+    style="rounded";
+    memory_recall [label="MemoryRecall\nFlowNodeExecutor", fillcolor="#1864ab"];
+    plan [label="Plan\nFlowNodeExecutor", fillcolor="#1864ab"];
+    planned_exec [label="PlannedExecution\nFlowNodeExecutor", fillcolor="#1864ab"];
+    tool_use [label="ToolUse\nFlowNodeExecutor", fillcolor="#1864ab"];
+    response [label="Response\nFlowNodeExecutor", fillcolor="#1864ab"];
+    state_update [label="StateUpdate\nFlowNodeExecutor", fillcolor="#1864ab"];
+    finalize [label="FinalizeReply\nFlowNodeExecutor", fillcolor="#1864ab"];
+    subgraph [label="Subgraph\nFlowNodeExecutor", fillcolor="#1864ab"];
+  }
+
+  // Chat hook chain
+  subgraph cluster_chat_hooks {
+    label="Chat Hook Stages (ordered)";
+    color="#ced4da";
+    style="rounded";
+    qqbot_hook [label="QqBotReplyStyle\nChatHook", fillcolor="#0b7285"];
+    plugin_hook [label="PluginChatHookStage\n(onPromptContext)", fillcolor="#0b7285"];
+    gift_hook [label="GiftIntentChatHook", fillcolor="#0b7285"];
+    state_eval_hook [label="PostChatState\nEvaluationHook", fillcolor="#0b7285"];
+  }
+
+  // Support
+  executor [label="Executor\n(IExecutor<TIn,TOut>)"];
+  memory [label="Memory"];
+  capability_registry [label="IAgentCapabilityRegistry\n(UnifiedAgentCapabilityRegistry)"];
+  capability_executor [label="IAgentCapabilityExecutor\n(UnifiedAgentCapabilityExecutor)"];
+  interagent [label="InterAgent\n(InterAgentMessenger)"];
+  plugin_host [label="McpPluginHost\n(IPluginHost)"];
+  context_store [label="SqliteAgentContextStore\n(IAgentContextStore)"];
+  party_task_repo [label="PartyTaskRepository\n(IPartyTaskRepository)"];
+  sqlite [shape=cylinder, style="filled", fillcolor="#2b8a3e", color="#2b8a3e", label="SQLite"];
+  llm [label="LlmClient"];
+
+  // Player → Engine
+  player -> game_engine [label="via SessionRuntime\nSubmitAsync"];
+
+  // Engine → Router
+  game_engine -> agent_router [label="ExecuteAsync\n(parsed command)"];
+
+  // Router → Three targets
+  agent_router -> player_chat [label="/chat, text"];
+  agent_router -> multi_char [label="/task, /switch"];
+  agent_router -> cmd_bridge [label="/$@& plugin\ncommands"];
+  agent_router -> party_task_repo [label="task records\n(skill/tool/subagent)"];
+
+  // PlayerChat → Runtime
+  player_chat -> runtime_hub [label="dispatch chat"];
+
+  // MultiChar → Runtime + TaskRepo
+  multi_char -> runtime_hub [label="delegate"];
+  multi_char -> party_task_repo [label="task CRUD"];
+
+  // CmdBridge → PluginHost
+  cmd_bridge -> plugin_host [label="tools/call"];
+
+  // Runtime Hub → Dispatcher → Handler
+  runtime_hub -> dispatcher [label="request/register"];
+  dispatcher -> msg_handler [label="deliver message"];
+
+  // Handler → CharacterAgent
+  msg_handler -> character_agent [label="turn request"];
+
+  // CharacterAgent → FlowRunner
+  character_agent -> flow_runner [label="RunAsync(flowId)"];
+
+  // FlowRunner → FlowNodes
+  flow_runner -> memory_recall [label="step 1"];
+  flow_runner -> plan [label="step 2"];
+  flow_runner -> planned_exec [label="step 3"];
+  flow_runner -> tool_use [label="step 4"];
+  flow_runner -> response [label="step 5"];
+  flow_runner -> state_update [label="step 6"];
+  flow_runner -> finalize [label="step 7"];
+  flow_runner -> subgraph [label="nested flows"];
+
+  // Flow nodes → dependencies
+  memory_recall -> memory [label="recall"];
+  plan -> executor [label="plan LLM"];
+  planned_exec -> executor [label="exec LLM"];
+  tool_use -> executor [label="tool LLM"];
+  tool_use -> capability_registry [label="snapshot"];
+  tool_use -> capability_executor [label="execute"];
+  response -> executor [label="response LLM"];
+  state_update -> executor [label="state LLM"];
+
+  // Chat hooks (PlayerChatDispatcher → ordered chain)
+  player_chat -> qqbot_hook [label="stage 1"];
+  qqbot_hook -> plugin_hook [label="stage 2", style=dashed, color="#adb5bd"];
+  plugin_hook -> gift_hook [label="stage 3", style=dashed, color="#adb5bd"];
+  gift_hook -> state_eval_hook [label="stage 4", style=dashed, color="#adb5bd"];
+
+  // Hook dependencies
+  plugin_hook -> plugin_host [label="hooks/call\nonPromptContext"];
+  state_eval_hook -> executor [label="evaluate"];
+
+  // Executor → LLM
+  executor -> llm [label="structured LLM calls"];
+
+  // Capabilities
+  capability_registry -> plugin_host [label="plugin abilities"];
+  capability_registry -> interagent [label="inter-agent\nabilities"];
+  capability_executor -> plugin_host [label="plugin call"];
+  capability_executor -> interagent [label="ask/session"];
+
+  // InterAgent → Runtime
+  interagent -> runtime_hub [label="ensure online"];
+
+  // Context store
+  msg_handler -> context_store [label="load/save context"];
+  context_store -> sqlite [label="persist"];
+
+  // Party tasks
+  party_task_repo -> sqlite [label="persist"];
+}

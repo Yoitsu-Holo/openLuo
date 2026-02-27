@@ -1,0 +1,8 @@
+{
+  "id": "builtin_char_status_relationship",
+  "name": "核心关系状态",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onStartup", "onPromptContext", "onStatusQuery"],
+  "tools": []
+}

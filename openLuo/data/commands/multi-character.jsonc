@@ -1,0 +1,52 @@
+{
+  "id": "multi-character-commands",
+  "name": "Multi-character collaboration commands",
+  "items": [
+    {
+      "name": "task",
+      "aliases": ["party"],
+      "category": "command",
+      "prefix": "/",
+      "helpShort": "发起多角色协作任务",
+      "usage": "/task <任务描述> [--team 角色1,角色2]",
+      "providerId": "core_multi_character",
+      "riskLevel": "medium",
+      "needsConfirm": false,
+      "capabilities": ["dispatch", "multi-agent"]
+    },
+    {
+      "name": "task_status",
+      "aliases": ["taskstatus"],
+      "category": "command",
+      "prefix": "/",
+      "helpShort": "查看协作任务状态与步骤结果",
+      "usage": "/task_status [任务ID]",
+      "providerId": "core_multi_character",
+      "riskLevel": "low",
+      "needsConfirm": false,
+      "capabilities": ["task-query"]
+    },
+    {
+      "name": "characters",
+      "category": "command",
+      "prefix": "/",
+      "helpShort": "列出当前存档可用角色",
+      "usage": "/characters",
+      "providerId": "core_multi_character",
+      "riskLevel": "low",
+      "needsConfirm": false,
+      "capabilities": ["character-query"]
+    },
+    {
+      "name": "switch",
+      "category": "command",
+      "prefix": "/",
+      "helpShort": "切换当前角色",
+      "usage": "/switch <角色名|角色ID>",
+      "providerId": "core_multi_character",
+      "riskLevel": "low",
+      "needsConfirm": false,
+      "capabilities": ["character-switch"]
+    }
+  ]
+}

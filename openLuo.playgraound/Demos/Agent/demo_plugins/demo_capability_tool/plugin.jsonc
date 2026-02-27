@@ -1,0 +1,20 @@
+{
+  "id": "demo_capability_tool",
+  "name": "Demo Capability Tool",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": [],
+  "tools": [
+    {
+      "name": "demo_generate_image",
+      "aliases": ["demo_image"],
+      "description": "生成一张演示图片（内嵌 1x1 红色 PNG），用于展示原生 tool_calls 链路的媒体回填",
+      "category": "tool",
+      "helpShort": "生成一张演示图片",
+      "riskLevel": "low",
+      "needsConfirm": false,
+      "timeoutSeconds": 15,
+      "capabilities": ["image", "media", "demo"]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "builtin_event_diary",
+  "name": "日记系统",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onSleepAfter"],
+  "tools": [
+    {
+      "name": "diary",
+      "aliases": [],
+      "description": "查看日记",
+      "category": "command",
+      "helpShort": "查看日记",
+      "riskLevel": "low",
+      "needsConfirm": false
+    }
+  ]
+}

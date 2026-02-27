@@ -1,0 +1,8 @@
+{
+  "id": "builtin_char_status_daily",
+  "name": "日常状态系统",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onStartup", "onPromptContext", "onStatusQuery"],
+  "tools": []
+}

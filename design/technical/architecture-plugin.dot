@@ -1,0 +1,135 @@
+digraph openluo_plugin_flow {
+  graph [
+    label="openLuo Plugin and GameBridge Flow (2026-06 — after [GameApi] refactor)",
+    labelloc=t,
+    labeljust=l,
+    rankdir=TB,
+    splines=ortho,
+    newrank=true,
+    compound=true,
+    nodesep=0.45,
+    ranksep=0.7,
+    pad=0.2,
+    bgcolor="white",
+    fontname="Helvetica"
+  ];
+
+  node [shape=box, style="rounded,filled", fillcolor="#1971c2", fontcolor="white", color="#0b4f94", fontname="Helvetica"];
+  edge [color="#6c757d", arrowsize=0.7, penwidth=1.1, fontname="Helvetica"];
+
+  // Plugin host layer
+  plugin_host [label="McpPluginHost\n(IPluginHost)"];
+  plugin_process [label="PluginProcess\n(JSON-RPC stdio)"];
+  python_plugins [label="Python Plugins\n(data/plugins/*)"];
+
+  // Frontend access layer (NEW)
+  subgraph cluster_frontend {
+    label="Frontend Access (NEW)";
+    color="#ced4da";
+    style="rounded";
+    fontcolor="#495057";
+    frontend_apps [label="CLI / TUI / QQBot", fillcolor="#0b7285"];
+    igame_session [label="IGameSession\n.Api → ISessionGameApi", fillcolor="#0b7285"];
+    session_api [label="SessionScopedGameApi\n(21 methods, no gameId)\nauto-resolve from SessionHandle", fillcolor="#0b7285"];
+  }
+
+  // GameBridge layer
+  subgraph cluster_gamebridge {
+    label="GameBridge (attribute-driven dispatch)";
+    color="#ced4da";
+    style="rounded";
+    fontcolor="#495057";
+
+    game_api [label="GameApiHandler\n(IGameApiMediator)\n~70 lines, thin proxy", fillcolor="#e8590c"];
+    dispatcher [label="GameApiDispatcher\n(startup: scan [GameApi] attrs\nruntime: bind params + invoke)", fillcolor="#e8590c"];
+
+    // API handlers — now marked with [GameApi]
+    subgraph cluster_handlers {
+      label="[GameApi]-annotated Handlers (10 classes, 44 routes)";
+      color="#adb5bd";
+      style="rounded";
+      fontcolor="#495057";
+      state_handler [label="GameStateApiHandler\nsession / time (4)", fillcolor="#1864ab"];
+      player_handler [label="PlayerApiHandler\ncharacter / inventory (7)", fillcolor="#1864ab"];
+      shop_handler [label="ShopApiHandler\nshop (3)", fillcolor="#1864ab"];
+      gift_handler [label="GiftApiHandler\ngift (1)", fillcolor="#1864ab"];
+      host_bridge [label="HostBridgeApiHandler\ncommands / log / ui (5)", fillcolor="#1864ab"];
+      lifecycle_handler [label="LifecycleApiHandler\nsleep / diary (3)", fillcolor="#1864ab"];
+      new_state_handler [label="StateApiHandler\nstate register/query/apply (4)", fillcolor="#1864ab"];
+      resource_handler [label="ResourceApiHandler\nresource views (4)", fillcolor="#1864ab"];
+      asset_handler [label="AssetApiHandler\nasset CRUD / blob (8)", fillcolor="#1864ab"];
+      timeline_handler [label="TimelineApiHandler\ntimeline events (5)", fillcolor="#1864ab"];
+    }
+  }
+
+  // Domain
+  gameplay [label="Gameplay\n(GameEngine)"];
+  worldstate [label="WorldState\n(State / Time / Resource)"];
+  assets_mod [label="Assets\n(Store / Blob / Meta)"];
+  memory [label="Memory"];
+  agent_flow [label="Agent Flow\n(IAgentFlowRegistry)"];
+
+  // Persistence
+  sqlite [shape=cylinder, style="filled", fillcolor="#2b8a3e", color="#2b8a3e", label="SQLite"];
+
+  // ── Plugin flow ────────────────────────────────────────────────────
+
+  plugin_host -> plugin_process [label="spawn / bridge"];
+  plugin_process -> python_plugins [label="JSON-RPC stdio"];
+  plugin_host -> agent_flow [label="register flows\n(onStartup)"];
+
+  // Plugin process → GameApiHandler (thin proxy)
+  plugin_process -> game_api [label="game/* requests"];
+
+  // GameApiHandler → GameApiDispatcher (NEW dispatch path)
+  game_api -> dispatcher [label="DispatchAsync\n(method, params, ctx)"];
+
+  // GameApiDispatcher → individual handlers (auto-resolved by route)
+  dispatcher -> state_handler [label="game/session/*\ngame/time/*"];
+  dispatcher -> player_handler [label="game/character/*\ngame/inventory/*\ngame/items/*"];
+  dispatcher -> shop_handler [label="game/shop/*"];
+  dispatcher -> gift_handler [label="game/gift/*\ngame/affection/*"];
+  dispatcher -> host_bridge [label="game/commands/*\ngame/ui/*\ngame/log"];
+  dispatcher -> lifecycle_handler [label="game/lifecycle/*\ngame/diary/*"];
+  dispatcher -> new_state_handler [label="game/state/*"];
+  dispatcher -> resource_handler [label="game/resource/*"];
+  dispatcher -> asset_handler [label="game/asset/*"];
+  dispatcher -> timeline_handler [label="game/timeline/*"];
+
+  // ── Frontend flow (NEW) ────────────────────────────────────────────
+
+  frontend_apps -> igame_session [label="session.Api.*"];
+  igame_session -> session_api [label="delegates\n(no gameId params)"];
+  session_api -> state_handler [label="GetStateAsync()\n→ GetGameStateAsync(gameId)", style=dashed, color="#0b7285"];
+  session_api -> player_handler [label="GetCharacterAsync()\n→ GetPlayerCharacterAsync(gameId)", style=dashed, color="#0b7285"];
+  session_api -> shop_handler [label="BuyShopItemAsync(...)\n→ BuyShopItemAsync(gameId,...)", style=dashed, color="#0b7285"];
+  session_api -> resource_handler [label="GetResourceStatusAsync(...)\n→ GetResourceStatusAsync(gameId,...)", style=dashed, color="#0b7285"];
+  session_api -> asset_handler [label="GetAssetAsync(...)\n→ GetGameAssetAsync(...)", style=dashed, color="#0b7285"];
+  session_api -> lifecycle_handler [label="WriteDiaryAsync(...)\n→ WriteGameDiaryAsync(gameId,...)", style=dashed, color="#0b7285"];
+
+  // ── Handlers → Domain ──────────────────────────────────────────────
+
+  state_handler -> gameplay [label="session state"];
+  state_handler -> worldstate [label="time"];
+  player_handler -> gameplay [label="character / inventory"];
+  shop_handler -> gameplay [label="shop"];
+  gift_handler -> gameplay [label="gift"];
+  host_bridge -> gameplay [label="commands / confirm / execute"];
+  lifecycle_handler -> gameplay [label="sleep / diary"];
+  new_state_handler -> worldstate [label="state ops"];
+  resource_handler -> worldstate [label="resource views"];
+  asset_handler -> assets_mod [label="asset ops"];
+  timeline_handler -> worldstate [label="timeline ops"];
+
+  // Plugin host ← GameApiHandler (reverse ref for SetPluginHost)
+  game_api -> plugin_host [label="SetPluginHost\n(lifecycle / host bridge\nneed plugin ref)", style=dashed, color="#adb5bd", dir=both];
+
+  // Persistence
+  gameplay -> sqlite;
+  worldstate -> sqlite;
+  assets_mod -> sqlite;
+  memory -> sqlite;
+
+  // Plugin host also serves hooks/call back to agent
+  plugin_host -> gameplay [label="registered\ncommands", style=dashed, color="#adb5bd"];
+}

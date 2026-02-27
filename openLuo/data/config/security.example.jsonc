@@ -1,0 +1,11 @@
+{
+  // ===== 安全配置 =====
+  // [热加载] 修改后自动生效
+
+  "security": {
+    "rateLimitPerMinute": 10,
+    "maxInputLength": 1000,
+    "burstLimit": 5,
+    "promptBreakCharLimit": 10
+  }
+}

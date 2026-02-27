@@ -1,0 +1,9 @@
+{
+  "id": "memory",
+  "version": "1.0.0",
+  "displayName": "Memory",
+  "description": "Long-term memory recall and persistence.",
+  "assembly": "openLuo.Extension.Memory.dll",
+  "entryType": "OpenLuo.Extensions.Memory.MemoryExtension",
+  "dataDir": "data"
+}

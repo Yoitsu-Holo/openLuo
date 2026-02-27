@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>openLuo</RootNamespace>
+    <AssemblyName>openLuo.AgentContext</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\openLuo.Foundation\openLuo.Foundation.csproj" />
+    <ProjectReference Include="..\openLuo.Capabilities\openLuo.Capabilities.csproj" />
+  </ItemGroup>
+
+</Project>
