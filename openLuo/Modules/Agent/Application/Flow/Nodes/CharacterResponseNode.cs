@@ -35,7 +35,8 @@ public sealed class CharacterResponseNode
             ToolResults = BuildToolResults(toolResult),
             ExtraContexts = BuildExtraContexts(context.PromptContext.ExtraContexts),
             Conversation = context.PromptContext.Conversation.Select(ToChatMessage).ToList(),
-            PlayerInput = context.PromptContext.PlayerInput
+            PlayerInput = context.PromptContext.PlayerInput,
+            PlayerBlocks = context.PromptContext.PlayerBlocks
         }, ct);
 
         if (response.Success && !string.IsNullOrWhiteSpace(response.Output))

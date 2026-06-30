@@ -5,6 +5,7 @@ using openLuo.Modules.Agent.Core.Models;
 using openLuo.Modules.AgentCapabilities.Core.Interfaces;
 using openLuo.Modules.AgentCapabilities.Core.Models;
 using openLuo.Modules.AppShell.Application;
+using openLuo.Modules.Assets.Core.Interfaces;
 using openLuo.Modules.Commanding.Core.Models;
 using openLuo.Modules.PluginRuntime.Core.Interfaces;
 using openLuo.Modules.PluginRuntime.Core.Models.HookContexts;
@@ -23,6 +24,7 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
     private readonly IRuntimeConfigCenter? _configCenter;
     private readonly ISessionExecutionContextAccessor? _executionContextAccessor;
     private readonly IPluginHost? _pluginHost;
+    private readonly IAssetBlobStore? _assetBlobStore;
 
     private TimeSpan ChatAgentStepTimeout => TimeSpan.FromSeconds(Math.Max(1, _configCenter?.GetSnapshot().Agent.ChatRoundTimeoutSeconds ?? 60));
     private int PendingAbilityConfirmTimeoutSeconds => Math.Max(5, _configCenter?.GetSnapshot().Agent.PendingAbilityConfirmTimeoutSeconds ?? 45);
@@ -35,7 +37,8 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
         IGameLogger? logger = null,
         IRuntimeConfigCenter? configCenter = null,
         ISessionExecutionContextAccessor? executionContextAccessor = null,
-        IPluginHost? pluginHost = null)
+        IPluginHost? pluginHost = null,
+        IAssetBlobStore? assetBlobStore = null)
     {
         _runtimeHub = runtimeHub;
         _capabilityExecutor = capabilityExecutor;
@@ -45,6 +48,7 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
         _configCenter = configCenter;
         _executionContextAccessor = executionContextAccessor;
         _pluginHost = pluginHost;
+        _assetBlobStore = assetBlobStore;
     }
 
     public bool CanHandle(ParsedCommand command) =>
@@ -62,6 +66,7 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
 
         await _runtimeHub.EnsurePartyStartedAsync(request.State.Id, ct);
         var execCtx = _executionContextAccessor?.Current;
+        var imageBlocks = await ResolveImageBlocksAsync(execCtx, ct);
         var turnContext = new AgentChatTurnContext
         {
             GameId = request.State.Id,
@@ -86,7 +91,7 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
             payloadLen = msg.Length
         });
 
-        var loopOutcome = await RunPlayerChatLoopAsync(request, targetCharacterId, msg, correlationId, beforeHook, sessionMetadata, ct);
+        var loopOutcome = await RunPlayerChatLoopAsync(request, targetCharacterId, msg, correlationId, beforeHook, imageBlocks, sessionMetadata, ct);
         var finalReply = loopOutcome.FinalReplyMessage?.Payload;
 
         _logger?.Info("agent/chat", "player chat dispatch finished", new
@@ -143,6 +148,61 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
         return commandResult;
     }
 
+    private async Task<IReadOnlyList<Block>?> ResolveImageBlocksAsync(SessionExecutionContext? execCtx, CancellationToken ct)
+    {
+        if (execCtx?.Attachments is not { Count: > 0 })
+            return null;
+
+        var imageAttachments = execCtx.Attachments
+            .Where(a => a.Kind == SessionContentKind.Binary &&
+                        a.MediaType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true &&
+                        !string.IsNullOrWhiteSpace(a.AssetId))
+            .ToList();
+
+        if (imageAttachments.Count == 0)
+            return null;
+
+        var blocks = new List<Block>(imageAttachments.Count);
+        foreach (var a in imageAttachments)
+        {
+            byte[]? data = null;
+            var mimeType = a.MediaType ?? "image/jpeg";
+
+            if (_assetBlobStore is not null)
+            {
+                try
+                {
+                    var blobs = await _assetBlobStore.GetInfoByAssetIdAsync(a.AssetId!);
+                    var primaryBlob = blobs.FirstOrDefault(b => b.IsPrimary)
+                                   ?? blobs.FirstOrDefault(b => string.Equals(b.BlobRole, "primary", StringComparison.OrdinalIgnoreCase))
+                                   ?? blobs.FirstOrDefault();
+
+                    if (primaryBlob is not null)
+                    {
+                        data = await _assetBlobStore.GetDataAsync(primaryBlob.Id);
+                        if (data is { Length: > 0 })
+                            mimeType = primaryBlob.MimeType;
+                    }
+                }
+                catch
+                {
+                    // Blob load failed; fall through to create ImageBlock without Data
+                }
+            }
+
+            blocks.Add(new ImageBlock
+            {
+                Kind = BlockKind.Image,
+                AssetId = a.AssetId!,
+                MimeType = mimeType,
+                Data = data,
+                Name = a.Name
+            });
+        }
+
+        return blocks.Count > 0 ? blocks : null;
+    }
+
     private async Task<IReadOnlyList<string>> CallPluginChatAfterAsync(
         AgentChatTurnContext turnContext,
         string finalReply,
@@ -189,6 +249,7 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
         string initialPayload,
         string correlationId,
         AgentChatTurnBeforeResult beforeHook,
+        IReadOnlyList<Block>? imageBlocks,
         IReadOnlyDictionary<string, string>? sessionMetadata,
         CancellationToken ct)
     {
@@ -218,6 +279,7 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
                 timeout: ChatAgentStepTimeout,
                 executionContext: executionContext,
                 contextBlocks: round == 1 ? beforeHook.ExtraContexts : null,
+                blocks: round == 1 ? imageBlocks : null,
                 metadata: sessionMetadata,
                 ct: ct);
 

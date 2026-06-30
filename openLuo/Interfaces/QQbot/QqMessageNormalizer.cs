@@ -3,6 +3,12 @@ using Milky.Net.Model;
 
 namespace openLuo.Interfaces.QQbot;
 
+internal readonly record struct QqImagePart(
+    string TempUrl, string? Summary, int Width, int Height);
+
+internal readonly record struct QqNormalizedMessage(
+    string Text, IReadOnlyList<QqImagePart> Images);
+
 internal static class QqMessageNormalizer
 {
     public static string Normalize(GroupIncomingMessage message, long botUserId)
@@ -10,6 +16,28 @@ internal static class QqMessageNormalizer
 
     public static string Normalize(FriendIncomingMessage message)
         => NormalizeSegments(message.Segments, null);
+
+    public static QqNormalizedMessage NormalizeWithImages(GroupIncomingMessage message, long botUserId)
+    {
+        var text = Normalize(message, botUserId);
+        var images = message.Segments
+            .OfType<IncomingSegment<ImageIncomingSegmentData>>()
+            .Select(seg => new QqImagePart(
+                seg.Data.TempUrl, seg.Data.Summary, seg.Data.Width, seg.Data.Height))
+            .ToList();
+        return new QqNormalizedMessage(text, images);
+    }
+
+    public static QqNormalizedMessage NormalizeWithImages(FriendIncomingMessage message)
+    {
+        var text = Normalize(message);
+        var images = message.Segments
+            .OfType<IncomingSegment<ImageIncomingSegmentData>>()
+            .Select(seg => new QqImagePart(
+                seg.Data.TempUrl, seg.Data.Summary, seg.Data.Width, seg.Data.Height))
+            .ToList();
+        return new QqNormalizedMessage(text, images);
+    }
 
     private static string NormalizeSegments(IEnumerable<IncomingSegment> segments, long? botUserId)
     {

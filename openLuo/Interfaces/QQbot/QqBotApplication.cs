@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Milky.Net.Client;
 using Milky.Net.Model;
@@ -99,15 +100,17 @@ public sealed class QqBotApplication
         QqBotConfig config,
         CancellationToken ct)
     {
-        var normalized = QqMessageNormalizer.Normalize(message, botUserId);
+        var normalizedWithImages = QqMessageNormalizer.NormalizeWithImages(message, botUserId);
+        var normalized = normalizedWithImages.Text;
         var mentioned = QqMessageNormalizer.MentionsBot(message, botUserId);
         var routedInput = RouteGroupInput(normalized, mentioned, config);
+        var imageParts = config.EnableImageToLlm ? await DownloadImagePartsAsync(normalizedWithImages.Images, ct) : [];
 
         if (routedInput.IsEmpty)
         {
             if (!mentioned && ShouldRecordAmbientGroupMessage(normalized))
             {
-                var session = await GetOrCreateTargetSessionAsync("group", message.Group.GroupId.ToString(System.Globalization.CultureInfo.InvariantCulture), config, ct);
+                var session = await GetOrCreateTargetSessionAsync("group", message.Group.GroupId.ToString(CultureInfo.InvariantCulture), config, ct);
                 await session.SubmitAsync(new GameSessionInput
                 {
                     SourceId = "qqbot",
@@ -115,10 +118,11 @@ public sealed class QqBotApplication
                     ActorId = $"qq:{message.GroupMember.UserId}",
                     Kind = SessionInputKind.Ambient,
                     Text = normalized,
+                    Parts = imageParts,
                     Origin = BuildOrigin(
                         scene: "group",
-                        conversationId: message.Group.GroupId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        userId: message.GroupMember.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        conversationId: message.Group.GroupId.ToString(CultureInfo.InvariantCulture),
+                        userId: message.GroupMember.UserId.ToString(CultureInfo.InvariantCulture),
                         userDisplayName: message.GroupMember.Nickname,
                         mentioned: false,
                         isDirectMessage: false),
@@ -126,8 +130,8 @@ public sealed class QqBotApplication
                     Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                     {
                         ["platform"] = "qq",
-                        ["qq.groupId"] = message.Group.GroupId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        ["qq.userId"] = message.GroupMember.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ["qq.groupId"] = message.Group.GroupId.ToString(CultureInfo.InvariantCulture),
+                        ["qq.userId"] = message.GroupMember.UserId.ToString(CultureInfo.InvariantCulture),
                         ["qq.nickname"] = message.GroupMember.Nickname ?? string.Empty
                     }
                 }, ct);
@@ -147,7 +151,7 @@ public sealed class QqBotApplication
 
             if (IsCommandDenied(routedInput, message.GroupMember.UserId, config))
             {
-                MirrorReplyToConsole("group", message.Group.GroupId.ToString(System.Globalization.CultureInfo.InvariantCulture), "Permission Denied");
+                MirrorReplyToConsole("group", message.Group.GroupId.ToString(CultureInfo.InvariantCulture), "Permission Denied");
                 await milky.Message.SendGroupMessageAsync(
                     new SendGroupMessageRequest(
                         message.Group.GroupId,
@@ -161,7 +165,7 @@ public sealed class QqBotApplication
                 return;
             }
 
-            var session = await GetOrCreateTargetSessionAsync("group", message.Group.GroupId.ToString(System.Globalization.CultureInfo.InvariantCulture), config, ct);
+            var session = await GetOrCreateTargetSessionAsync("group", message.Group.GroupId.ToString(CultureInfo.InvariantCulture), config, ct);
             var result = await session.SubmitAsync(new GameSessionInput
             {
                 SourceId = "qqbot",
@@ -170,10 +174,11 @@ public sealed class QqBotApplication
                 Kind = routedInput.Kind,
                 Text = routedInput.Text,
                 Command = routedInput.Command,
+                Parts = imageParts,
                 Origin = BuildOrigin(
                     scene: "group",
-                    conversationId: message.Group.GroupId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    userId: message.GroupMember.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    conversationId: message.Group.GroupId.ToString(CultureInfo.InvariantCulture),
+                    userId: message.GroupMember.UserId.ToString(CultureInfo.InvariantCulture),
                     userDisplayName: message.GroupMember.Nickname,
                     mentioned: mentioned,
                     isDirectMessage: false),
@@ -181,8 +186,8 @@ public sealed class QqBotApplication
                 Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
                     ["platform"] = "qq",
-                    ["qq.groupId"] = message.Group.GroupId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["qq.userId"] = message.GroupMember.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["qq.groupId"] = message.Group.GroupId.ToString(CultureInfo.InvariantCulture),
+                    ["qq.userId"] = message.GroupMember.UserId.ToString(CultureInfo.InvariantCulture),
                     ["qq.nickname"] = message.GroupMember.Nickname ?? string.Empty
                 }
             }, ct);
@@ -191,7 +196,7 @@ public sealed class QqBotApplication
             if (outbound.Segments.Count == 0)
                 return;
 
-            MirrorReplyToConsole("group", message.Group.GroupId.ToString(System.Globalization.CultureInfo.InvariantCulture), outbound.ConsoleText);
+            MirrorReplyToConsole("group", message.Group.GroupId.ToString(CultureInfo.InvariantCulture), outbound.ConsoleText);
 
             List<OutgoingSegment> segments =
             [
@@ -220,8 +225,10 @@ public sealed class QqBotApplication
         QqBotConfig config,
         CancellationToken ct)
     {
-        var normalized = QqMessageNormalizer.Normalize(message);
+        var normalizedWithImages = QqMessageNormalizer.NormalizeWithImages(message);
+        var normalized = normalizedWithImages.Text;
         var routedInput = RouteFriendInput(normalized, config);
+        var imageParts = config.EnableImageToLlm ? await DownloadImagePartsAsync(normalizedWithImages.Images, ct) : [];
 
         if (routedInput.IsEmpty)
             return;
@@ -237,7 +244,7 @@ public sealed class QqBotApplication
 
             if (IsCommandDenied(routedInput, message.SenderId, config))
             {
-                MirrorReplyToConsole("friend", message.Friend.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture), "Permission Denied");
+                MirrorReplyToConsole("friend", message.Friend.UserId.ToString(CultureInfo.InvariantCulture), "Permission Denied");
                 await milky.Message.SendPrivateMessageAsync(
                     new SendPrivateMessageRequest(
                         message.Friend.UserId,
@@ -249,7 +256,7 @@ public sealed class QqBotApplication
                 return;
             }
 
-            var session = await GetOrCreateTargetSessionAsync("friend", message.Friend.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture), config, ct);
+            var session = await GetOrCreateTargetSessionAsync("friend", message.Friend.UserId.ToString(CultureInfo.InvariantCulture), config, ct);
             var result = await session.SubmitAsync(new GameSessionInput
             {
                 SourceId = "qqbot",
@@ -258,10 +265,11 @@ public sealed class QqBotApplication
                 Kind = routedInput.Kind,
                 Text = routedInput.Text,
                 Command = routedInput.Command,
+                Parts = imageParts,
                 Origin = BuildOrigin(
                     scene: "friend",
-                    conversationId: message.Friend.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    userId: message.SenderId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    conversationId: message.Friend.UserId.ToString(CultureInfo.InvariantCulture),
+                    userId: message.SenderId.ToString(CultureInfo.InvariantCulture),
                     userDisplayName: message.Friend.Nickname,
                     mentioned: true,
                     isDirectMessage: true),
@@ -270,8 +278,8 @@ public sealed class QqBotApplication
                 {
                     ["platform"] = "qq",
                     ["qq.scene"] = "friend",
-                    ["qq.userId"] = message.Friend.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["qq.senderId"] = message.SenderId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["qq.userId"] = message.Friend.UserId.ToString(CultureInfo.InvariantCulture),
+                    ["qq.senderId"] = message.SenderId.ToString(CultureInfo.InvariantCulture),
                     ["qq.nickname"] = message.Friend.Nickname ?? string.Empty
                 }
             }, ct);
@@ -280,7 +288,7 @@ public sealed class QqBotApplication
             if (outbound.Segments.Count == 0)
                 return;
 
-            MirrorReplyToConsole("friend", message.Friend.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture), outbound.ConsoleText);
+            MirrorReplyToConsole("friend", message.Friend.UserId.ToString(CultureInfo.InvariantCulture), outbound.ConsoleText);
 
             await milky.Message.SendPrivateMessageAsync(
                 new SendPrivateMessageRequest(message.Friend.UserId, [.. outbound.Segments]),
@@ -294,6 +302,52 @@ public sealed class QqBotApplication
         {
             _requestLock.Release();
         }
+    }
+
+    private static async Task<IReadOnlyList<SessionInputPart>> DownloadImagePartsAsync(
+        IReadOnlyList<QqImagePart> images,
+        CancellationToken ct)
+    {
+        if (images.Count == 0)
+            return [];
+
+        var parts = new List<SessionInputPart>(images.Count);
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        var logger = BootstrapLogger.Create<QqBotApplication>();
+
+        foreach (var img in images)
+        {
+            byte[]? data = null;
+            try
+            {
+                data = await http.GetByteArrayAsync(img.TempUrl, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "QQ image download failed: {Url}", img.TempUrl);
+                continue;
+            }
+
+            if (data is { Length: > 0 })
+            {
+                parts.Add(new SessionInputPart
+                {
+                    Kind = SessionContentKind.Binary,
+                    Name = img.Summary ?? "qq_image",
+                    MediaType = "image/jpeg",
+                    Data = data,
+                    Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["source"] = "qq_image",
+                        ["tempUrl"] = img.TempUrl,
+                        ["width"] = img.Width.ToString(CultureInfo.InvariantCulture),
+                        ["height"] = img.Height.ToString(CultureInfo.InvariantCulture)
+                    }
+                });
+            }
+        }
+
+        return parts;
     }
 
     private static SessionInputDescriptor RouteGroupInput(string normalized, bool mentioned, QqBotConfig config)

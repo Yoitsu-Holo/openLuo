@@ -1,3 +1,4 @@
+using openLuo.Core.Models;
 using openLuo.Modules.Executor.Core.Interfaces;
 using openLuo.Modules.Executor.Core.Models;
 using openLuo.Modules.Llm.Core.Models;
@@ -62,8 +63,20 @@ public sealed class CharacterResponsePromptBuilder : IExecutorPromptBuilder<Char
 
         messages.AddRange(input.Conversation.Where(message => !string.IsNullOrWhiteSpace(message.Content)));
 
-        if (!string.IsNullOrWhiteSpace(input.PlayerInput))
-            messages.Add(new ChatMessage(ChatMessageRole.User, input.PlayerInput.Trim()));
+                if (input.PlayerBlocks is { Count: > 0 })
+        {
+            var blocks = new List<Block>(input.PlayerBlocks.Count + 1);
+                        if (!string.IsNullOrWhiteSpace(input.PlayerInput))
+            {
+                var cleanedInput = input.PlayerInput.Trim()
+                    .Replace("[图片]", "")
+                    .Trim();
+                if (cleanedInput.Length > 0)
+                    blocks.Add(new TextBlock { Kind = BlockKind.Text, Text = cleanedInput });
+            }
+            blocks.AddRange(input.PlayerBlocks);
+            messages.Add(new ChatMessage(ChatMessageRole.User, blocks));
+        }
 
         return new ExecutorPrompt
         {

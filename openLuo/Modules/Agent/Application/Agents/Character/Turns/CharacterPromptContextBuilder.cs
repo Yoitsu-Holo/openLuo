@@ -1,3 +1,4 @@
+using openLuo.Core.Models;
 using openLuo.Modules.Agent.Core.Interfaces;
 using openLuo.Modules.AgentCapabilities.Core.Models;
 using openLuo.Modules.Llm.Core.Models;
@@ -47,7 +48,8 @@ public sealed class CharacterPromptContextBuilder : ICharacterPromptContextBuild
                 .ToList(),
             Conversation = BuildConversation(request, timeSnapshot),
             ExtraContexts = extraContexts,
-            PlayerInput = request.Message.Payload
+            PlayerInput = request.Message.Payload,
+            PlayerBlocks = request.Message.Blocks
         };
     }
 
