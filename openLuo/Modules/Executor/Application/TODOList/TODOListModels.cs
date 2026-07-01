@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using openLuo.Core.Models;
 
 namespace openLuo.Modules.Executor.Application.TODOList;
 
@@ -14,6 +15,7 @@ public sealed class TODOListInput
     public IReadOnlyList<string> ToolCapabilities { get; init; } = [];
     public IReadOnlyList<string> Conversation { get; init; } = [];
     public string PlayerInput { get; init; } = string.Empty;
+    public IReadOnlyList<Block>? PlayerBlocks { get; init; }
     public float? Temperature { get; init; }
     public int? MaxTokens { get; init; }
 }

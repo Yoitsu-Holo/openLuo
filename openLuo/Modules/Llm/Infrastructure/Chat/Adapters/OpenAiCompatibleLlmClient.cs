@@ -355,14 +355,18 @@ public class OpenAiCompatibleLlmClient : MicrosoftAiLlmClient
 
     private static string ResolveImageUrl(ImageBlock image)
     {
+        // If the DataUri was already resolved upstream, use it directly.
+        if (!string.IsNullOrWhiteSpace(image.DataUri))
+            return image.DataUri;
+
         // AssetId might be a URL (http/https), a data URI, or an internal asset reference.
-        // Internal asset references need to be resolved through the asset store at a higher level.
+        // Internal asset references should have been resolved to DataUri by the image resolution pipeline.
         if (image.AssetId.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
             image.AssetId.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
             image.AssetId.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
             return image.AssetId;
 
-        // Fallback: construct a data URI placeholder. Real resolution requires IAssetStore.
+        // Fallback: unresolved internal asset reference.
         return $"asset://{image.AssetId}";
     }
 }

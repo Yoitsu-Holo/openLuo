@@ -178,10 +178,12 @@ public sealed class OllamaLlmClient : MicrosoftAiLlmClient
             ["type"] = "image_url",
             ["image_url"] = new Dictionary<string, object?>
             {
-                ["url"] = image.AssetId.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                          || image.AssetId.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
-                    ? image.AssetId
-                    : $"asset://{image.AssetId}"
+                ["url"] = !string.IsNullOrWhiteSpace(image.DataUri)
+                    ? image.DataUri
+                    : image.AssetId.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                      || image.AssetId.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                        ? image.AssetId
+                        : $"asset://{image.AssetId}"
             }
         },
         _ => null

@@ -21,6 +21,7 @@ public class LlmConfig
     public int BaseDelayMs { get; set; } = 50;
     public int RateLimitPerMinute { get; set; } = 100;
     public bool Streaming { get; set; } = false;
+    public bool SupportsVision { get; set; } = false;
 
     public LlmConfig Clone() => new()
     {
@@ -34,7 +35,8 @@ public class LlmConfig
         MaxRetryAttempts = MaxRetryAttempts,
         BaseDelayMs = BaseDelayMs,
         RateLimitPerMinute = RateLimitPerMinute,
-        Streaming = Streaming
+        Streaming = Streaming,
+        SupportsVision = SupportsVision
     };
 }
 
@@ -171,13 +173,23 @@ public class SecurityRuntimeConfig
     public int MaxInputLength { get; set; } = 1000;
     public int BurstLimit { get; set; } = 5;
     public int PromptBreakCharLimit { get; set; } = 10;
+    public int MaxImageSizeBytes { get; set; } = 10_485_760;
+    public string AllowedImageMimeTypes { get; set; } = "image/png,image/jpeg,image/gif,image/webp";
+    public int MaxBase64PromptLength { get; set; } = 1_048_576;
+    public int ImageDownloadTimeoutSeconds { get; set; } = 15;
+    public int ImageDownloadMaxRetries { get; set; } = 3;
 
     public SecurityRuntimeConfig Clone() => new()
     {
         RateLimitPerMinute = RateLimitPerMinute,
         MaxInputLength = MaxInputLength,
         BurstLimit = BurstLimit,
-        PromptBreakCharLimit = PromptBreakCharLimit
+        PromptBreakCharLimit = PromptBreakCharLimit,
+        MaxImageSizeBytes = MaxImageSizeBytes,
+        AllowedImageMimeTypes = AllowedImageMimeTypes,
+        MaxBase64PromptLength = MaxBase64PromptLength,
+        ImageDownloadTimeoutSeconds = ImageDownloadTimeoutSeconds,
+        ImageDownloadMaxRetries = ImageDownloadMaxRetries
     };
 }
 

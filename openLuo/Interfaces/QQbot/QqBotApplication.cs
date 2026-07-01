@@ -105,7 +105,7 @@ public sealed class QqBotApplication
 
         if (routedInput.IsEmpty)
         {
-            if (!mentioned && ShouldRecordAmbientGroupMessage(normalized))
+            if (!mentioned && ShouldRecordAmbientGroupMessage(normalized.Text))
             {
                 var session = await GetOrCreateTargetSessionAsync("group", message.Group.GroupId.ToString(System.Globalization.CultureInfo.InvariantCulture), config, ct);
                 await session.SubmitAsync(new GameSessionInput
@@ -114,7 +114,8 @@ public sealed class QqBotApplication
                     ChannelId = $"qq-group:{message.Group.GroupId}",
                     ActorId = $"qq:{message.GroupMember.UserId}",
                     Kind = SessionInputKind.Ambient,
-                    Text = normalized,
+                    Text = normalized.Text,
+                    Parts = normalized.Parts,
                     Origin = BuildOrigin(
                         scene: "group",
                         conversationId: message.Group.GroupId.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -145,7 +146,7 @@ public sealed class QqBotApplication
                 mentioned,
                 routedInput.DisplayText);
 
-            if (IsCommandDenied(routedInput, message.GroupMember.UserId, config))
+            if (IsCommandDenied(normalized.Text, message.GroupMember.UserId, config))
             {
                 MirrorReplyToConsole("group", message.Group.GroupId.ToString(System.Globalization.CultureInfo.InvariantCulture), "Permission Denied");
                 await milky.Message.SendGroupMessageAsync(
@@ -170,6 +171,7 @@ public sealed class QqBotApplication
                 Kind = routedInput.Kind,
                 Text = routedInput.Text,
                 Command = routedInput.Command,
+                Parts = normalized.Parts,
                 Origin = BuildOrigin(
                     scene: "group",
                     conversationId: message.Group.GroupId.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -235,7 +237,7 @@ public sealed class QqBotApplication
                 message.SenderId,
                 routedInput.DisplayText);
 
-            if (IsCommandDenied(routedInput, message.SenderId, config))
+            if (IsCommandDenied(normalized.Text, message.SenderId, config))
             {
                 MirrorReplyToConsole("friend", message.Friend.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture), "Permission Denied");
                 await milky.Message.SendPrivateMessageAsync(
@@ -258,6 +260,7 @@ public sealed class QqBotApplication
                 Kind = routedInput.Kind,
                 Text = routedInput.Text,
                 Command = routedInput.Command,
+                Parts = normalized.Parts,
                 Origin = BuildOrigin(
                     scene: "friend",
                     conversationId: message.Friend.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -296,18 +299,21 @@ public sealed class QqBotApplication
         }
     }
 
-    private static SessionInputDescriptor RouteGroupInput(string normalized, bool mentioned, QqBotConfig config)
+    private static SessionInputDescriptor RouteGroupInput(QqNormalizedMessage normalized, bool mentioned, QqBotConfig config)
     {
-        if (string.IsNullOrWhiteSpace(normalized))
+        if (string.IsNullOrWhiteSpace(normalized.Text))
             return SessionInputDescriptor.Empty;
 
         if (config.ReplyOnlyWhenMentioned && !mentioned)
             return SessionInputDescriptor.Empty;
 
-        if (config.CommandPrefixPassthrough && normalized.StartsWith('/'))
-            return SessionInputDescriptor.FromCommand(normalized);
+        SessionInputDescriptor descriptor;
+        if (config.CommandPrefixPassthrough && normalized.Text.StartsWith('/'))
+            descriptor = SessionInputDescriptor.FromCommand(normalized.Text, normalized.Parts);
+        else
+            descriptor = SessionInputDescriptor.FromChat(normalized.Text, normalized.Parts);
 
-        return SessionInputDescriptor.FromChat(normalized);
+        return descriptor;
     }
 
     private static bool ShouldRecordAmbientGroupMessage(string normalized)
@@ -321,20 +327,23 @@ public sealed class QqBotApplication
         return true;
     }
 
-    private static SessionInputDescriptor RouteFriendInput(string normalized, QqBotConfig config)
+    private static SessionInputDescriptor RouteFriendInput(QqNormalizedMessage normalized, QqBotConfig config)
     {
-        if (string.IsNullOrWhiteSpace(normalized))
+        if (string.IsNullOrWhiteSpace(normalized.Text))
             return SessionInputDescriptor.Empty;
 
-        if (config.CommandPrefixPassthrough && normalized.StartsWith('/'))
-            return SessionInputDescriptor.FromCommand(normalized);
+        SessionInputDescriptor descriptor;
+        if (config.CommandPrefixPassthrough && normalized.Text.StartsWith('/'))
+            descriptor = SessionInputDescriptor.FromCommand(normalized.Text, normalized.Parts);
+        else
+            descriptor = SessionInputDescriptor.FromChat(normalized.Text, normalized.Parts);
 
-        return SessionInputDescriptor.FromChat(normalized);
+        return descriptor;
     }
 
-    private static bool IsCommandDenied(SessionInputDescriptor input, long userId, QqBotConfig config)
+    private static bool IsCommandDenied(string text, long userId, QqBotConfig config)
     {
-        if (input.Command is null)
+        if (!text.StartsWith('/'))
             return false;
 
         return !config.AdminUsers.Contains(userId);
@@ -566,35 +575,39 @@ public sealed class QqBotApplication
 
         public SessionCommandInvocation? Command { get; init; }
 
+        public IReadOnlyList<SessionInputPart> Parts { get; init; } = [];
+
         public bool IsEmpty => Kind == SessionInputKind.System && string.IsNullOrWhiteSpace(Text) && Command is null;
 
         public string DisplayText => Command?.RawText ?? Text ?? string.Empty;
 
-        public static SessionInputDescriptor FromChat(string text) => new()
+        public static SessionInputDescriptor FromChat(string text, IReadOnlyList<SessionInputPart>? parts = null) => new()
         {
             Kind = SessionInputKind.Chat,
-            Text = text.Trim()
+            Text = text.Trim(),
+            Parts = parts ?? []
         };
 
-        public static SessionInputDescriptor FromCommand(string normalized)
+        public static SessionInputDescriptor FromCommand(string normalized, IReadOnlyList<SessionInputPart>? parts = null)
         {
-            var parts = normalized[1..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var parts_ = normalized[1..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
             var options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var args = new List<string>();
-            for (int i = 1; i < parts.Length; i++)
+            for (int i = 1; i < parts_.Length; i++)
             {
-                if (parts[i].StartsWith("--", StringComparison.Ordinal) && i + 1 < parts.Length)
-                    options[parts[i][2..]] = parts[++i];
+                if (parts_[i].StartsWith("--", StringComparison.Ordinal) && i + 1 < parts_.Length)
+                    options[parts_[i][2..]] = parts_[++i];
                 else
-                    args.Add(parts[i]);
+                    args.Add(parts_[i]);
             }
 
             return new SessionInputDescriptor
             {
                 Kind = SessionInputKind.Command,
+                Parts = parts ?? [],
                 Command = new SessionCommandInvocation
                 {
-                    Name = parts[0],
+                    Name = parts_[0],
                     Prefix = normalized[0],
                     RawText = normalized,
                     Args = args,

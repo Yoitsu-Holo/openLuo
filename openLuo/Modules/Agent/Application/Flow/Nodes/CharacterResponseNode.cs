@@ -1,3 +1,4 @@
+using openLuo.Modules.Agent.Core.Interfaces;
 using openLuo.Modules.Executor.Application.CharacterResponse;
 using openLuo.Modules.Executor.Core.Interfaces;
 using openLuo.Modules.Llm.Core.Models;
@@ -8,12 +9,17 @@ namespace openLuo.Modules.Agent.Application;
 public sealed class CharacterResponseNode
 {
     private readonly IExecutor<CharacterResponseInput, string> _responseExecutor;
+    private readonly IAssetImageResolver _assetImageResolver;
     private readonly IRuntimeConfigCenter _config;
     internal const string DefaultFallbackReply = "我现在还需要一点时间整理思绪。";
 
-    public CharacterResponseNode(IExecutor<CharacterResponseInput, string> responseExecutor, IRuntimeConfigCenter config)
+    public CharacterResponseNode(
+        IExecutor<CharacterResponseInput, string> responseExecutor,
+        IAssetImageResolver assetImageResolver,
+        IRuntimeConfigCenter config)
     {
         _responseExecutor = responseExecutor;
+        _assetImageResolver = assetImageResolver;
         _config = config;
     }
 
@@ -22,6 +28,7 @@ public sealed class CharacterResponseNode
         if (!string.IsNullOrWhiteSpace(toolResult.Reply) && toolResult.EndDialogue)
             return toolResult.Reply.Trim();
 
+        var resolvedPlayerBlocks = await _assetImageResolver.ResolveAsync(context.PromptContext.PlayerBlocks, ct);
         var executors = _config.GetSnapshot().Executors;
         var response = await _responseExecutor.ExecuteAsync(new CharacterResponseInput
         {
@@ -35,7 +42,8 @@ public sealed class CharacterResponseNode
             ToolResults = BuildToolResults(toolResult),
             ExtraContexts = BuildExtraContexts(context.PromptContext.ExtraContexts),
             Conversation = context.PromptContext.Conversation.Select(ToChatMessage).ToList(),
-            PlayerInput = context.PromptContext.PlayerInput
+            PlayerInput = context.PromptContext.PlayerInput,
+            PlayerBlocks = resolvedPlayerBlocks
         }, ct);
 
         if (response.Success && !string.IsNullOrWhiteSpace(response.Output))

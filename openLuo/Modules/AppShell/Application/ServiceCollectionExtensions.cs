@@ -184,6 +184,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ICharacterStateGateway, CharacterStateGateway>();
         services.AddSingleton<ICharacterToolGateway, CharacterToolGateway>();
         services.AddSingleton<ICharacterPromptContextBuilder, CharacterPromptContextBuilder>();
+        services.AddSingleton<IAssetImageResolver, AssetImageResolver>();
         services.AddSingleton<CharacterMemoryRecallNode>();
         services.AddSingleton<CharacterResponseNode>();
         services.AddSingleton<CharacterStateUpdateNode>();

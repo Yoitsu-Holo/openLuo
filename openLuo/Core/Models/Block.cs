@@ -56,6 +56,12 @@ public sealed class ImageBlock : Block
     public string? Caption { get; init; }
 
     public string? RenderHint { get; init; }
+
+    /// <summary>
+    /// Resolved data URI (e.g. "data:image/jpeg;base64,...") for direct LLM consumption.
+    /// Set by the image resolution pipeline before passing blocks to the LLM provider.
+    /// </summary>
+    public string? DataUri { get; init; }
 }
 
 /// <summary>

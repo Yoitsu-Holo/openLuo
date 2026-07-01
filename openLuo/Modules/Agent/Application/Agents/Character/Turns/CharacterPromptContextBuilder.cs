@@ -1,5 +1,7 @@
+using openLuo.Core.Models;
 using openLuo.Modules.Agent.Core.Interfaces;
 using openLuo.Modules.AgentCapabilities.Core.Models;
+using openLuo.Modules.AppShell.Application;
 using openLuo.Modules.Llm.Core.Models;
 using openLuo.Modules.WorldState.Core.Interfaces;
 using openLuo.Modules.WorldState.Core.Models;
@@ -12,10 +14,12 @@ public sealed class CharacterPromptContextBuilder : ICharacterPromptContextBuild
     private static readonly TimeSpan RealtimeConversationWindow = TimeSpan.FromMinutes(15);
 
     private readonly ITimeService _timeService;
+    private readonly IRuntimeConfigCenter _configCenter;
 
-    public CharacterPromptContextBuilder(ITimeService timeService)
+    public CharacterPromptContextBuilder(ITimeService timeService, IRuntimeConfigCenter configCenter)
     {
         _timeService = timeService;
+        _configCenter = configCenter;
     }
 
     public async Task<CharacterPromptContext> BuildAsync(
@@ -27,6 +31,17 @@ public sealed class CharacterPromptContextBuilder : ICharacterPromptContextBuild
     {
         var extraContexts = request.ExtraContexts.Where(x => !string.IsNullOrWhiteSpace(x.Content)).ToList();
         var timeSnapshot = await _timeService.GetSnapshotAsync(request.Context.GameId, ct);
+        var config = _configCenter.GetSnapshot();
+        var hasImages = request.Message.Blocks?.Any(b => b is ImageBlock) == true;
+
+        var playerInput = request.Message.Payload;
+        if (hasImages)
+        {
+            if (config.Llm.SupportsVision)
+                playerInput = $"[当前消息包含用户发送的图片。你可以直接观察图片内容并基于图片回复。]\n{playerInput}";
+            else
+                playerInput = $"[当前消息包含用户发送的图片。当前模型不支持视觉识别，请向用户说明无法查看图片。]\n{playerInput}";
+        }
 
         return new CharacterPromptContext
         {
@@ -47,7 +62,8 @@ public sealed class CharacterPromptContextBuilder : ICharacterPromptContextBuild
                 .ToList(),
             Conversation = BuildConversation(request, timeSnapshot),
             ExtraContexts = extraContexts,
-            PlayerInput = request.Message.Payload
+            PlayerInput = playerInput,
+            PlayerBlocks = request.Message.Blocks
         };
     }
 

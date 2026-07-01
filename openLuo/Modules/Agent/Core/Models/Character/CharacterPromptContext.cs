@@ -1,3 +1,5 @@
+using openLuo.Core.Models;
+
 namespace openLuo.Modules.Agent.Application;
 
 public sealed class CharacterPromptContext
@@ -12,4 +14,5 @@ public sealed class CharacterPromptContext
     public IReadOnlyList<AgentConversationMessage> Conversation { get; init; } = [];
     public IReadOnlyList<AgentContextBlock> ExtraContexts { get; init; } = [];
     public string PlayerInput { get; init; } = string.Empty;
+    public IReadOnlyList<Block>? PlayerBlocks { get; init; }
 }

@@ -409,7 +409,7 @@ public sealed class GameSessionRuntime : IGameSessionRuntime
                 ChannelId = input.ChannelId,
                 EventId = Guid.NewGuid().ToString("N"),
                 Kind = GameEventKind.SystemNotice,
-                Notice = $"收到 {nonTextParts.Count} 个非文本输入片段（{attachmentKinds}）。当前命令链仅执行文本部分，后续可扩展为文件/图片处理。"
+                Notice = $"收到 {nonTextParts.Count} 个非文本输入片段（{attachmentKinds}）。"
             }, ct);
         }
 
@@ -426,17 +426,21 @@ public sealed class GameSessionRuntime : IGameSessionRuntime
             input.Command is null &&
             !input.Parts.Any(p => p.Kind == SessionContentKind.Text && !string.IsNullOrWhiteSpace(p.Text)))
         {
-            await _outputEventBus.PublishAsync(new ErrorEvent
+            var hasBinaryAttachmentsForChat = input.Kind == SessionInputKind.Chat && attachmentRefs.Count > 0;
+            if (!hasBinaryAttachmentsForChat)
             {
-                SessionId = input.SessionId,
-                ChannelId = input.ChannelId,
-                EventId = Guid.NewGuid().ToString("N"),
-                Kind = GameEventKind.Error,
-                Error = nonTextParts.Count > 0
-                    ? "当前会话运行时已接收到非文本输入，但现阶段还不能在没有文本指令的情况下处理文件或二进制内容。"
-                    : "当前只支持文本输入。"
-            }, ct);
-            return new SessionSubmitResult { Events = _outputEventBus.Drain(input.SessionId) };
+                await _outputEventBus.PublishAsync(new ErrorEvent
+                {
+                    SessionId = input.SessionId,
+                    ChannelId = input.ChannelId,
+                    EventId = Guid.NewGuid().ToString("N"),
+                    Kind = GameEventKind.Error,
+                    Error = nonTextParts.Count > 0
+                        ? "当前会话运行时已接收到非文本输入，但现阶段还不能在没有文本指令的情况下处理文件或二进制内容。"
+                        : "当前只支持文本输入。"
+                }, ct);
+                return new SessionSubmitResult { Events = _outputEventBus.Drain(input.SessionId) };
+            }
         }
 
         var executionRequest = await _inputRouter.RouteAsync(input, attachmentRefs, ct);

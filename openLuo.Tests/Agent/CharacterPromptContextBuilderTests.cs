@@ -1,5 +1,6 @@
 using openLuo.Modules.Agent.Application;
 using openLuo.Modules.AgentCapabilities.Core.Models;
+using openLuo.Modules.AppShell.Application;
 using openLuo.Modules.Llm.Core.Models;
 using openLuo.Modules.WorldState.Core.Interfaces;
 using NSubstitute;
@@ -11,7 +12,9 @@ public sealed class CharacterPromptContextBuilderTests
     [Fact]
     public async Task Build_SplitsWorldSceneAndGoal_AndDoesNotDuplicateCurrentUserMessage()
     {
-        var builder = new CharacterPromptContextBuilder(Substitute.For<ITimeService>());
+        var configCenter = Substitute.For<IRuntimeConfigCenter>();
+        configCenter.GetSnapshot().Returns(new AppConfig());
+        var builder = new CharacterPromptContextBuilder(Substitute.For<ITimeService>(), configCenter);
         var request = new CharacterTurnRequest
         {
             Context = new AgentContext

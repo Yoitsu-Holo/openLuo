@@ -49,6 +49,10 @@ public sealed class DefaultInputRouter : IInputRouter
                     .Select(p => p.Text)
                     .FirstOrDefault();
 
+            var hasBinaryParts = input.Parts.Any(p => p.Kind != SessionContentKind.Text);
+            if (string.IsNullOrWhiteSpace(chatText) && hasBinaryParts)
+                chatText = "[图片]";
+
             return string.IsNullOrWhiteSpace(chatText) ? null : $"/chat {chatText!.Trim()}";
         }
 

@@ -62,6 +62,7 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
 
         await _runtimeHub.EnsurePartyStartedAsync(request.State.Id, ct);
         var execCtx = _executionContextAccessor?.Current;
+        var playerBlocks = BuildPlayerBlocks(execCtx);
         var turnContext = new AgentChatTurnContext
         {
             GameId = request.State.Id,
@@ -83,10 +84,13 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
             gameId = request.State.Id,
             correlationId,
             targetId = targetCharacterId,
-            payloadLen = msg.Length
+            payloadLen = msg.Length,
+            parts = playerBlocks?.Count ?? 0,
+            imageParts = playerBlocks?.OfType<ImageBlock>().Count() ?? 0,
+            mimeTypes = playerBlocks?.OfType<ImageBlock>().Select(i => i.MimeType).ToList()
         });
 
-        var loopOutcome = await RunPlayerChatLoopAsync(request, targetCharacterId, msg, correlationId, beforeHook, sessionMetadata, ct);
+        var loopOutcome = await RunPlayerChatLoopAsync(request, targetCharacterId, msg, playerBlocks, correlationId, beforeHook, sessionMetadata, ct);
         var finalReply = loopOutcome.FinalReplyMessage?.Payload;
 
         _logger?.Info("agent/chat", "player chat dispatch finished", new
@@ -187,6 +191,7 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
         AgentInvocationRequest request,
         string targetCharacterId,
         string initialPayload,
+        IReadOnlyList<Block>? playerBlocks,
         string correlationId,
         AgentChatTurnBeforeResult beforeHook,
         IReadOnlyDictionary<string, string>? sessionMetadata,
@@ -218,6 +223,7 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
                 timeout: ChatAgentStepTimeout,
                 executionContext: executionContext,
                 contextBlocks: round == 1 ? beforeHook.ExtraContexts : null,
+                blocks: round == 1 ? playerBlocks : null,
                 metadata: sessionMetadata,
                 ct: ct);
 
@@ -471,5 +477,43 @@ public sealed class PlayerChatDispatcher : IPlayerChatDispatcher
             meta["channelId"] = execCtx.ChannelId;
         meta["presentationProfile"] = execCtx.PresentationProfile.ToString();
         return meta.Count > 0 ? meta : null;
+    }
+
+    private static IReadOnlyList<Block>? BuildPlayerBlocks(SessionExecutionContext? execCtx)
+    {
+        if (execCtx is null || execCtx.Attachments is not { Count: > 0 })
+            return null;
+
+        var blocks = new List<Block>();
+        foreach (var attachment in execCtx.Attachments)
+        {
+            var mediaType = attachment.MediaType ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(attachment.AssetId))
+                continue;
+
+            if (mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                blocks.Add(new ImageBlock
+                {
+                    Kind = BlockKind.Image,
+                    AssetId = attachment.AssetId,
+                    MimeType = mediaType,
+                    Name = attachment.Name,
+                    AltText = "[用户发送的图片]"
+                });
+            }
+            else
+            {
+                blocks.Add(new AssetBlock
+                {
+                    Kind = BlockKind.Asset,
+                    AssetId = attachment.AssetId,
+                    MimeType = mediaType,
+                    Name = attachment.Name
+                });
+            }
+        }
+
+        return blocks.Count > 0 ? blocks : null;
     }
 }

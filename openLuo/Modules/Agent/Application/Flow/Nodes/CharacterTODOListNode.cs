@@ -1,3 +1,4 @@
+using openLuo.Modules.Agent.Core.Interfaces;
 using openLuo.Modules.Executor.Application.TODOList;
 using openLuo.Modules.Executor.Core.Interfaces;
 using openLuo.Modules.AppShell.Application;
@@ -7,13 +8,16 @@ namespace openLuo.Modules.Agent.Application;
 public sealed class CharacterTODOListNode
 {
     private readonly IExecutor<TODOListInput, TODOListOutput> _todoListExecutor;
+    private readonly IAssetImageResolver _assetImageResolver;
     private readonly IRuntimeConfigCenter _config;
 
     public CharacterTODOListNode(
         IExecutor<TODOListInput, TODOListOutput> todoListExecutor,
+        IAssetImageResolver assetImageResolver,
         IRuntimeConfigCenter config)
     {
         _todoListExecutor = todoListExecutor;
+        _assetImageResolver = assetImageResolver;
         _config = config;
     }
 
@@ -32,6 +36,7 @@ public sealed class CharacterTODOListNode
                 : $"{c.HelpShort.Trim()}")
             .ToList();
 
+        var resolvedPlayerBlocks = await _assetImageResolver.ResolveAsync(context.PromptContext.PlayerBlocks, ct);
         var result = await _todoListExecutor.ExecuteAsync(new TODOListInput
         {
             Temperature = executors.TODOList.Temperature,
@@ -44,7 +49,8 @@ public sealed class CharacterTODOListNode
             CurrentStateSummary = context.CurrentStateSummary,
             ToolCapabilities = toolCapabilities,
             Conversation = conversation,
-            PlayerInput = context.PromptContext.PlayerInput
+            PlayerInput = context.PromptContext.PlayerInput,
+            PlayerBlocks = resolvedPlayerBlocks
         }, ct);
 
         if (result.Success && result.Output is not null)
