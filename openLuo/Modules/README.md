@@ -41,7 +41,6 @@
 
 设计约束：
 - executor 间只传公开成立的任务结果，不传仅供下游理解的内部控制状态
-- 详细规则见 [executor-contract-guidelines.md](/home/yoitsuholo/Code/openLuo-cli/design/technical/executor-contract-guidelines.md)
 
 ### 第 3 层：Agent 运行层
 

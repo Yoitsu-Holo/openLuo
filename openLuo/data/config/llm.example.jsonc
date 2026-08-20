@@ -14,7 +14,7 @@
         "provider": "DeepSeek",
         "baseUrl": "https://api.deepseek.com/v1/",
         "apiKey": "",
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",
         "temperature": 0.5,
         "maxTokens": null,
         "streaming": false,
@@ -47,7 +47,8 @@
         "capabilities": {
           "supportsVision": true,
           "supportsJsonMode": true,
-          "supportsStreaming": true
+          "supportsStreaming": true,
+          "supportsTools": false
         }
       }
     ]

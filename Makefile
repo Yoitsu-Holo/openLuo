@@ -34,11 +34,18 @@ $(foreach p,$(EXT_PAIRS),$(eval $(call ext-rule,$(p))))
 
 EXT_DLLS = $(foreach p,$(EXT_PAIRS),extensions/$(word 1,$(subst :, ,$(p)))/bin/Release/net10.0/openLuo.Extension.$(word 2,$(subst :, ,$(p))).dll)
 
-# 组装发布目录（publish 产物 + data/native/mcp + 扩展），保留 config/（生产密钥）
+# 发布时保留的不可再生内容（白名单：其余内容清空重建；在此增删条目）
+# build.sh: 用户自定义构建脚本；config/: 生产密钥/配置；game.db: 数据库
+KEEP_ENTRIES = build.sh config game.db
+KEEP_FIND = $(foreach e,$(KEEP_ENTRIES),! -path './publish/linux-x64/$(e)' ! -path './publish/linux-x64/$(e)/*')
+
+# 组装发布目录（publish 产物 + data/native/mcp + 扩展），保留 KEEP_ENTRIES
+# 只清空 linux-x64 的内容，不删除目录本身（保留 inode，避免符号链接/
+# 工作目录/监控失效）。保留项由 find 白名单排除，无需挪动。
 define assemble-publish
-	@rm -rf ./publish/linux-x64.bak
-	@if [ -d ./publish/linux-x64 ]; then mv ./publish/linux-x64 ./publish/linux-x64.bak; fi
-	mkdir -p ./publish/linux-x64
+	@rm -rf ./publish/.config-staging ./publish/linux-x64.bak
+	@mkdir -p ./publish/linux-x64
+	@find ./publish/linux-x64 -mindepth 1 $(KEEP_FIND) -delete
 	cp -r /tmp/openluo-pub/. ./publish/linux-x64/
 	cp -r openLuo/data ./publish/linux-x64/
 	cp -r openLuo/native ./publish/linux-x64/
@@ -48,10 +55,6 @@ define assemble-publish
 		cp extensions/$$ext/bin/Release/net10.0/openLuo.Extension.*.dll ./publish/linux-x64/extensions/$$ext/; \
 		cp extensions/$$ext/extension.jsonc ./publish/linux-x64/extensions/$$ext/; \
 	done
-	@if [ -d ./publish/linux-x64.bak ]; then \
-		cp -r ./publish/linux-x64.bak/config ./publish/linux-x64/ 2>/dev/null || true; \
-		rm -rf ./publish/linux-x64.bak; \
-	fi
 endef
 
 # 生产发布：单文件（native 库独立放置，启动免自解压）。publish 到临时空目录
@@ -86,5 +89,6 @@ format-python:
 	fi
 
 clean:
-	dotnet clean
-	rm -rf ./publish ./TestResults
+	dotnet clean openLuo.slnx
+	@if [ -d ./publish/linux-x64 ]; then find ./publish/linux-x64 -mindepth 1 $(KEEP_FIND) -delete; fi
+	rm -rf ./TestResults

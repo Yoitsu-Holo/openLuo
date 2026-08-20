@@ -9,6 +9,7 @@
   "targetFriendIds": [], // [热加载] 需要监听的好友 QQ 号列表
   "adminUsers": [], // [热加载] 允许执行 /command 的 QQ 号列表；为空表示所有用户都无权执行命令
   "replyOnlyWhenMentioned": true, // [热加载] 群聊仅在被 @ 时回复；好友聊天始终可直接回复
+  "logMessages": true, // [热加载] 记录消息收发日志（[recv] 收到的消息 / [send] 发出的回复）
   "defaultAgentId": "companion", // [热加载] 会话使用的 Agent；companion=内核自带陪伴 Agent
   "defaultSubjectId": "builtin-rin" // [热加载] 会话使用的角色原型 id（见 data/archetypes/*.jsonc）
 }

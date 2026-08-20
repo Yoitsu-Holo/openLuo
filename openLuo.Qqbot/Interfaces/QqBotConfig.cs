@@ -9,6 +9,7 @@ public sealed class QqBotConfig
     public List<long> TargetFriendIds { get; set; } = [];
     public List<long> AdminUsers { get; set; } = [];
     public bool ReplyOnlyWhenMentioned { get; set; } = true;
+    public bool LogMessages { get; set; } = true;
     public string DefaultAgentId { get; set; } = "companion";
     public string DefaultSubjectId { get; set; } = "builtin-rin";
 
@@ -16,6 +17,7 @@ public sealed class QqBotConfig
     {
         Enabled = Enabled, BaseAddress = BaseAddress, RequestTimeoutSeconds = RequestTimeoutSeconds,
         TargetGroupIds = [.. TargetGroupIds], TargetFriendIds = [.. TargetFriendIds], AdminUsers = [.. AdminUsers],
-        ReplyOnlyWhenMentioned = ReplyOnlyWhenMentioned, DefaultAgentId = DefaultAgentId, DefaultSubjectId = DefaultSubjectId
+        ReplyOnlyWhenMentioned = ReplyOnlyWhenMentioned, LogMessages = LogMessages,
+        DefaultAgentId = DefaultAgentId, DefaultSubjectId = DefaultSubjectId
     };
 }

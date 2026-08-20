@@ -30,6 +30,12 @@
       "transport": "streamable-http",
       "url": "https://mcp.amap.com/mcp?key=YOUR_AMAP_KEY",
       "injectContextKeys": false
+    },
+    {
+      "id": "web-fetch",
+      "transport": "streamable-http",
+      "url": "https://mcp.api-inference.modelscope.net/YOUR_FETCH_ENDPOINT_ID/mcp",
+      "injectContextKeys": false
     }
   ]
 }

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -46,44 +47,78 @@ public class GameLogger : IGameLogger
 
     // ── public API ──────────────────────────────────────────────
 
-    public void Log(string level, string category, string message)
+    public void Log(string level, string category, string message,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
     {
         var lv = Enum.TryParse<LogLevel>(level, true, out var l) ? l : LogLevel.Info;
-        Write(lv, category, message, null);
+        Write(lv, category, message, null, file, line);
     }
 
-    public void Info(string category, string message) => Write(LogLevel.Info, category, message, null);
-    public void Warn(string category, string message) => Write(LogLevel.Warn, category, message, null);
-    public void Error(string category, string message) => Write(LogLevel.Error, category, message, null);
-    public void Debug(string category, string message) => Write(LogLevel.Debug, category, message, null);
+    public void Info(string category, string message,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
+        => Write(LogLevel.Info, category, message, null, file, line);
+    public void Warn(string category, string message,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
+        => Write(LogLevel.Warn, category, message, null, file, line);
+    public void Error(string category, string message,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
+        => Write(LogLevel.Error, category, message, null, file, line);
+    public void Debug(string category, string message,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
+        => Write(LogLevel.Debug, category, message, null, file, line);
 
-    public void Info(string category, string msg, object? data) => Write(LogLevel.Info, category, msg, data);
-    public void Warn(string category, string msg, object? data) => Write(LogLevel.Warn, category, msg, data);
-    public void Error(string category, string msg, object? data) => Write(LogLevel.Error, category, msg, data);
-    public void Debug(string category, string msg, object? data) => Write(LogLevel.Debug, category, msg, data);
+    public void Info(string category, string msg, object? data,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
+        => Write(LogLevel.Info, category, msg, data, file, line);
+    public void Warn(string category, string msg, object? data,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
+        => Write(LogLevel.Warn, category, msg, data, file, line);
+    public void Error(string category, string msg, object? data,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
+        => Write(LogLevel.Error, category, msg, data, file, line);
+    public void Debug(string category, string msg, object? data,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
+        => Write(LogLevel.Debug, category, msg, data, file, line);
 
     /// <summary>Called by game/log MCP interface from plugins.</summary>
-    public void Plugin(string pluginId, string level, string msg, object? data = null)
+    public void Plugin(string pluginId, string level, string msg, object? data = null,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
     {
         var lv = Enum.TryParse<LogLevel>(level, true, out var l) ? l : LogLevel.Info;
         if (lv > GetEffectiveLevel("plugin")) return;
-        var entry = MakeEntry(lv, msg, data);
-        var file = Path.Combine(_pluginDir, $"{Sanitize(pluginId)}.jsonl");
-        AppendLine(file, entry);
+        var entry = MakeEntry(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), lv, pluginId, file, line, msg, data);
+        var path = Path.Combine(_pluginDir, $"{Sanitize(pluginId)}.jsonl");
+        AppendLine(path, entry);
     }
 
     // ── internals ───────────────────────────────────────────────
 
-    private void Write(LogLevel lv, string category, string msg, object? data)
+    private void Write(LogLevel lv, string category, string msg, object? data, string file, int line)
     {
         var effectiveLevel = GetEffectiveLevel(category);
         if (lv > effectiveLevel) return;
-        var entry = MakeEntry(lv, msg, data);
-        var file = Path.Combine(_coreDir, $"{Sanitize(category)}.jsonl");
-        AppendLine(file, entry);
+        // 时间戳只取一次：文件 JSON 的 ts 与终端元信息行共用，保证两侧逐字符一致。
+        var ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+        var module = ModuleOf(category);
+        var entry = MakeEntry(ts, lv, module, file, line, msg, data);
+        var path = Path.Combine(_coreDir, $"{Sanitize(category)}.jsonl");
+        AppendLine(path, entry);
         if (ShouldOutputToConsole() && _streams is not null)
         {
-            var bytes = Encoding.UTF8.GetBytes(entry + "\n");
+            // 1+N 行：首行元信息 [ts] [level] [source] [module]，后续为内容行。
+            // 单次 Write 拼成一个字符串（内部 \n 分隔），避免多线程下日志交错。
+            var color = lv switch
+            {
+                LogLevel.Debug => "\x1b[90m",
+                LogLevel.Info => "\x1b[32m",
+                LogLevel.Warn => "\x1b[33m",
+                LogLevel.Error => "\x1b[31m",
+                _ => ""
+            };
+            var levelText = lv.ToString().ToLower();
+            var content = data is null ? msg : $"{msg} {JsonSerializer.Serialize(data, _jsonOptions)}";
+            var consoleLine = $"[{ts}] [{color}{levelText}\x1b[0m] [{Path.GetFileName(file)}:{line}] [{module}]\n{content}\n";
+            var bytes = Encoding.UTF8.GetBytes(consoleLine);
             _streams.Error.Write(bytes);
             _streams.Error.Flush();
         }
@@ -100,11 +135,19 @@ public class GameLogger : IGameLogger
     private static LogLevel ParseLevel(string? level) =>
         Enum.TryParse<LogLevel>(level, true, out var parsed) ? parsed : LogLevel.Info;
 
-    private static string MakeEntry(LogLevel lv, string msg, object? data)
+    /// <summary>module = category 第一个 '/' 前的段（agent/dispatch → agent）；无 '/' 时即 category 本身。</summary>
+    private static string ModuleOf(string category)
     {
+        var idx = category.IndexOf('/');
+        return idx < 0 ? category : category[..idx];
+    }
+
+    private static string MakeEntry(string ts, LogLevel lv, string module, string file, int line, string msg, object? data)
+    {
+        var source = $"{Path.GetFileName(file)}:{line}";
         var obj = data is null
-            ? (object)new { ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), level = lv.ToString().ToLower(), msg }
-            : new { ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), level = lv.ToString().ToLower(), msg, data };
+            ? (object)new { ts, level = lv.ToString().ToLower(), module, source, msg }
+            : new { ts, level = lv.ToString().ToLower(), module, source, msg, data };
         return JsonSerializer.Serialize(obj, _jsonOptions);
     }
 

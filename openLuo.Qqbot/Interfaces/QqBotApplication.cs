@@ -52,14 +52,14 @@ public sealed class QqBotApplication
                 if (string.IsNullOrWhiteSpace(text)) return;
                 var member = group.GroupMember;
                 var senderName = string.IsNullOrWhiteSpace(member?.Card) ? member?.Nickname : member?.Card;
-                _logger?.Info("qq",
+                LogMessage(current,
                     $"[recv] group={group.Group.GroupId} from={senderName}({group.GroupMember.UserId}): {Truncate(text)}");
                 if (text.StartsWith('/'))
                 {
                     var reply = await TryRunCommandAsync(text, current, group.GroupMember.UserId, group.Group.GroupId, isGroup: true, ct);
                     if (reply is not null)
                     {
-                        _logger?.Info("qq", $"[send] group={group.Group.GroupId}: {Truncate(reply)}");
+                        LogMessage(current, $"[send] group={group.Group.GroupId}: {Truncate(reply)}");
                         await milky.Message.SendGroupMessageAsync(new SendGroupMessageRequest(group.Group.GroupId, [new OutgoingSegment<TextOutgoingSegmentData>(new TextOutgoingSegmentData(reply))]), ct);
                     }
                     return;
@@ -69,7 +69,7 @@ public sealed class QqBotApplication
                 var segments = ToSegments(rendered);
                 if (segments.Count > 0)
                 {
-                    _logger?.Info("qq", $"[send] group={group.Group.GroupId}: {Truncate(string.Join(" | ", rendered.Select(p => p.Kind == "text" ? p.Value : $"[{p.Kind}]")))}");
+                    LogMessage(current, $"[send] group={group.Group.GroupId}: {Truncate(string.Join(" | ", rendered.Select(p => p.Kind == "text" ? p.Value : $"[{p.Kind}]")))}");
                     await milky.Message.SendGroupMessageAsync(new SendGroupMessageRequest(group.Group.GroupId, [.. segments]), ct);
                 }
             }
@@ -79,14 +79,14 @@ public sealed class QqBotApplication
                 var text = ExtractText(friend.Segments, null);
                 if (string.IsNullOrWhiteSpace(text)) return;
                 var friendName = string.IsNullOrWhiteSpace(friend.Friend.Nickname) ? friend.Friend.Remark : friend.Friend.Nickname;
-                _logger?.Info("qq",
+                LogMessage(current,
                     $"[recv] friend={friend.Friend.UserId} from={friendName}: {Truncate(text)}");
                 if (text.StartsWith('/'))
                 {
                     var reply = await TryRunCommandAsync(text, current, friend.Friend.UserId, friend.Friend.UserId, isGroup: false, ct);
                     if (reply is not null)
                     {
-                        _logger?.Info("qq", $"[send] friend={friend.Friend.UserId}: {Truncate(reply)}");
+                        LogMessage(current, $"[send] friend={friend.Friend.UserId}: {Truncate(reply)}");
                         await milky.Message.SendPrivateMessageAsync(new SendPrivateMessageRequest(friend.Friend.UserId,
                             [new OutgoingSegment<TextOutgoingSegmentData>(new TextOutgoingSegmentData(reply))]), ct);
                     }
@@ -97,7 +97,7 @@ public sealed class QqBotApplication
                 var segments = ToSegments(rendered);
                 if (segments.Count > 0)
                 {
-                    _logger?.Info("qq", $"[send] friend={friend.Friend.UserId}: {Truncate(string.Join(" | ", rendered.Select(p => p.Kind == "text" ? p.Value : $"[{p.Kind}]")))}");
+                    LogMessage(current, $"[send] friend={friend.Friend.UserId}: {Truncate(string.Join(" | ", rendered.Select(p => p.Kind == "text" ? p.Value : $"[{p.Kind}]")))}");
                     await milky.Message.SendPrivateMessageAsync(new SendPrivateMessageRequest(friend.Friend.UserId, [.. segments]), ct);
                 }
             }
@@ -161,4 +161,11 @@ public sealed class QqBotApplication
         string.IsNullOrWhiteSpace(text)
             ? "(empty)"
             : text.Length <= LogTextMax ? text : text[..LogTextMax] + $"…(+{text.Length - LogTextMax}ch)";
+
+    /// <summary>QQ bot 消息收发日志（interface 层配置 qqbot.jsonc logMessages 控制，热加载）。</summary>
+    private void LogMessage(QqBotConfig config, string message)
+    {
+        if (config.LogMessages)
+            _logger?.Info("qq", message);
+    }
 }

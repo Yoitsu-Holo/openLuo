@@ -4,15 +4,17 @@
   //
   // level: off / error / warn / info / debug
   // categories: 按模块独立设置日志级别
+  //
+  // outputToConsole: true 时，终端输出为文本格式（时间 level: 类别 消息，
+  //   与启动期 BootstrapLogger 一致）；文件始终为 JSONL（log/core/*.jsonl，
+  //   每行 {ts, level, msg, data}，ts 与终端文本共用同一时间戳）
 
   "log": {
     "level": "info",
     "outputToConsole": false,
     "categories": {
       // 工具调度（能力调度器）：[tool] start / ok / failed / batch rejected / batch done
-      "agent/dispatch": "info",
-      // QQ bot 消息收发：[recv] 收到的消息 / [send] 发出的回复
-      "qq": "info"
+      "agent/dispatch": "info"
     }
   }
 }
