@@ -27,6 +27,7 @@ public sealed class DomainExtensionContractTests
             ["companion"] = "OpenLuo.Extensions.Companion.CompanionExtension",
             ["world"] = "OpenLuo.Extensions.World.WorldExtension",
             ["party"] = "OpenLuo.Extensions.Party.PartyExtension",
+            ["sticker"] = "OpenLuo.Extensions.Sticker.StickerExtension",
         };
 
         foreach (var pair in expected)

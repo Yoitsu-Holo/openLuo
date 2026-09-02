@@ -1,5 +1,5 @@
 # 扩展项目（目录:程序集名，注意 Linux 大小写敏感）
-EXT_PAIRS = memory:Memory companion:Companion world:World party:Party
+EXT_PAIRS = memory:Memory companion:Companion world:World party:Party sticker:Sticker
 
 .PHONY: run run-playground test test-kernel test-e2e build publish publish-fast format format-csharp format-python clean
 
@@ -52,7 +52,7 @@ define assemble-publish
 	cp -r openLuo/data ./publish/linux-x64/
 	cp -r openLuo/native ./publish/linux-x64/
 	cp -r mcp ./publish/linux-x64/
-	@for ext in memory companion world party; do \
+	@for ext in memory companion world party sticker; do \
 		mkdir -p ./publish/linux-x64/extensions/$$ext; \
 		cp extensions/$$ext/bin/Release/net10.0/openLuo.Extension.*.dll ./publish/linux-x64/extensions/$$ext/; \
 		cp extensions/$$ext/extension.jsonc ./publish/linux-x64/extensions/$$ext/; \

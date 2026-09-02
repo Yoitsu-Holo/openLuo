@@ -19,6 +19,7 @@
   <Project Path="extensions/companion/openLuo.Extension.Companion.csproj" />
   <Project Path="extensions/world/openLuo.Extension.World.csproj" />
   <Project Path="extensions/party/openLuo.Extension.Party.csproj" />
+  <Project Path="extensions/sticker/openLuo.Extension.Sticker.csproj" />
   <Project Path="openLuo.playgraound/openLuo.playgraound.csproj" />
   <Project Path="openLuo.Cli/openLuo.Cli.csproj" />
   <Project Path="openLuo.Tui/openLuo.Tui.csproj" />
