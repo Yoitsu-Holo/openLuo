@@ -9,6 +9,11 @@ config.json
 *.db-shm
 *.db-wal
 
+# Runtime data (extension image libraries, per-release local assets).
+# Kept out of git: user-private/copyright assets. Published via Makefile's
+# `cp -r openLuo/data` into the release tree on each `make publish`.
+openLuo/data/stickers/
+
 # IDE
 .vs/
 .vscode/
