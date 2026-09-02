@@ -51,74 +51,82 @@ public sealed class QqBotApplication
             _ = ConsumeInterimQueueAsync(milky, ct);
         milky.Events.MessageReceive += async (_, args) =>
         {
-            var current = _configCenter.GetSnapshot();
-            if (args.Data is GroupIncomingMessage group)
+            try
             {
-                if (!current.TargetGroupIds.Contains(group.Group.GroupId) || group.GroupMember.UserId == login.Uin) return;
-                var text = ExtractText(group.Segments, login.Uin);
-                if (string.IsNullOrWhiteSpace(text)) return;
-                var imageBlocks = await DownloadImagesAsync(http, CollectImageUrls(group.Segments), ct);
-                var member = group.GroupMember;
-                var senderName = string.IsNullOrWhiteSpace(member?.Card) ? member?.Nickname : member?.Card;
-                LogMessage(current,
-                    $"[recv] group={group.Group.GroupId} from={senderName}({group.GroupMember.UserId}): {Truncate(text)}");
-                var mentioned = group.Segments.OfType<IncomingSegment<MentionIncomingSegmentData>>().Any(s => s.Data.UserId == login.Uin);
-                if (current.ReplyOnlyWhenMentioned && !mentioned)
+                var current = _configCenter.GetSnapshot();
+                if (args.Data is GroupIncomingMessage group)
                 {
-                    // 感知通道：未 @ 消息写入会话历史（"看但不回"），不触发 LLM 回合
-                    await new QqRuntimeBridge(_runtime, current).ObserveAsync("group", group.Group.GroupId, text, senderName, imageBlocks, ct);
-                    return;
-                }
-                if (text.StartsWith('/'))
-                {
-                    var reply = await TryRunCommandAsync(text, current, group.GroupMember.UserId, group.Group.GroupId, isGroup: true, ct);
-                    if (reply is not null)
+                    if (!current.TargetGroupIds.Contains(group.Group.GroupId) || group.GroupMember.UserId == login.Uin) return;
+                    var text = ExtractText(group.Segments, login.Uin);
+                    if (string.IsNullOrWhiteSpace(text)) return;
+                    var imageBlocks = await DownloadImagesAsync(http, CollectImageUrls(group.Segments), ct);
+                    var member = group.GroupMember;
+                    var senderName = string.IsNullOrWhiteSpace(member?.Card) ? member?.Nickname : member?.Card;
+                    LogMessage(current,
+                        $"[recv] group={group.Group.GroupId} from={senderName}({group.GroupMember.UserId}): {Truncate(text)}");
+                    var mentioned = group.Segments.OfType<IncomingSegment<MentionIncomingSegmentData>>().Any(s => s.Data.UserId == login.Uin);
+                    if (current.ReplyOnlyWhenMentioned && !mentioned)
                     {
-                        LogMessage(current, $"[send] group={group.Group.GroupId}: {Truncate(reply)}");
-                        await milky.Message.SendGroupMessageAsync(new SendGroupMessageRequest(group.Group.GroupId, [new OutgoingSegment<TextOutgoingSegmentData>(new TextOutgoingSegmentData(reply))]), ct);
+                        // 感知通道：未 @ 消息写入会话历史（"看但不回"），不触发 LLM 回合
+                        await new QqRuntimeBridge(_runtime, current).ObserveAsync("group", group.Group.GroupId, text, senderName, imageBlocks, ct);
+                        return;
                     }
-                    return;
+                    if (text.StartsWith('/'))
+                    {
+                        var reply = await TryRunCommandAsync(text, current, group.GroupMember.UserId, group.Group.GroupId, isGroup: true, ct);
+                        if (reply is not null)
+                        {
+                            LogMessage(current, $"[send] group={group.Group.GroupId}: {Truncate(reply)}");
+                            await milky.Message.SendGroupMessageAsync(new SendGroupMessageRequest(group.Group.GroupId, [new OutgoingSegment<TextOutgoingSegmentData>(new TextOutgoingSegmentData(reply))]), ct);
+                        }
+                        return;
+                    }
+                    var result = await new QqRuntimeBridge(_runtime, current).HandleAsync("group", group.Group.GroupId, group.GroupMember.UserId, text, senderName, imageBlocks, ct);
+                    var rendered = QqRuntimeBridge.Render(result);
+                    var segments = ToSegments(rendered);
+                    if (segments.Count > 0)
+                    {
+                        LogMessage(current, $"[send] group={group.Group.GroupId}: {Truncate(string.Join(" | ", rendered.Select(p => p.Kind == "text" ? p.Value : $"[{p.Kind}]")))}");
+                        await milky.Message.SendGroupMessageAsync(new SendGroupMessageRequest(group.Group.GroupId, [.. segments]), ct);
+                    }
                 }
-                var result = await new QqRuntimeBridge(_runtime, current).HandleAsync("group", group.Group.GroupId, group.GroupMember.UserId, text, senderName, imageBlocks, ct);
-                var rendered = QqRuntimeBridge.Render(result);
-                var segments = ToSegments(rendered);
-                if (segments.Count > 0)
+                else if (args.Data is FriendIncomingMessage friend)
                 {
-                    LogMessage(current, $"[send] group={group.Group.GroupId}: {Truncate(string.Join(" | ", rendered.Select(p => p.Kind == "text" ? p.Value : $"[{p.Kind}]")))}");
-                    await milky.Message.SendGroupMessageAsync(new SendGroupMessageRequest(group.Group.GroupId, [.. segments]), ct);
+                    if (!current.TargetFriendIds.Contains(friend.Friend.UserId) || friend.SenderId == login.Uin) return;
+                    var text = ExtractText(friend.Segments, null);
+                    if (string.IsNullOrWhiteSpace(text)) return;
+                    var imageBlocks = await DownloadImagesAsync(http, CollectImageUrls(friend.Segments), ct);
+                    var friendName = string.IsNullOrWhiteSpace(friend.Friend.Nickname) ? friend.Friend.Remark : friend.Friend.Nickname;
+                    LogMessage(current,
+                        $"[recv] friend={friend.Friend.UserId} from={friendName}: {Truncate(text)}");
+                    if (text.StartsWith('/'))
+                    {
+                        var reply = await TryRunCommandAsync(text, current, friend.Friend.UserId, friend.Friend.UserId, isGroup: false, ct);
+                        if (reply is not null)
+                        {
+                            LogMessage(current, $"[send] friend={friend.Friend.UserId}: {Truncate(reply)}");
+                            await milky.Message.SendPrivateMessageAsync(new SendPrivateMessageRequest(friend.Friend.UserId,
+                                [new OutgoingSegment<TextOutgoingSegmentData>(new TextOutgoingSegmentData(reply))]), ct);
+                        }
+                        return;
+                    }
+                    var result = await new QqRuntimeBridge(_runtime, current).HandleAsync("friend", friend.Friend.UserId, friend.SenderId, text, friendName, imageBlocks, ct);
+                    var rendered = QqRuntimeBridge.Render(result);
+                    var segments = ToSegments(rendered);
+                    if (segments.Count > 0)
+                    {
+                        LogMessage(current, $"[send] friend={friend.Friend.UserId}: {Truncate(string.Join(" | ", rendered.Select(p => p.Kind == "text" ? p.Value : $"[{p.Kind}]")))}");
+                        await milky.Message.SendPrivateMessageAsync(new SendPrivateMessageRequest(friend.Friend.UserId, [.. segments]), ct);
+                    }
                 }
             }
-            else if (args.Data is FriendIncomingMessage friend)
+            catch (Exception ex)
             {
-                if (!current.TargetFriendIds.Contains(friend.Friend.UserId) || friend.SenderId == login.Uin) return;
-                var text = ExtractText(friend.Segments, null);
-                if (string.IsNullOrWhiteSpace(text)) return;
-                var imageBlocks = await DownloadImagesAsync(http, CollectImageUrls(friend.Segments), ct);
-                var friendName = string.IsNullOrWhiteSpace(friend.Friend.Nickname) ? friend.Friend.Remark : friend.Friend.Nickname;
-                LogMessage(current,
-                    $"[recv] friend={friend.Friend.UserId} from={friendName}: {Truncate(text)}");
-                if (text.StartsWith('/'))
-                {
-                    var reply = await TryRunCommandAsync(text, current, friend.Friend.UserId, friend.Friend.UserId, isGroup: false, ct);
-                    if (reply is not null)
-                    {
-                        LogMessage(current, $"[send] friend={friend.Friend.UserId}: {Truncate(reply)}");
-                        await milky.Message.SendPrivateMessageAsync(new SendPrivateMessageRequest(friend.Friend.UserId,
-                            [new OutgoingSegment<TextOutgoingSegmentData>(new TextOutgoingSegmentData(reply))]), ct);
-                    }
-                    return;
-                }
-                var result = await new QqRuntimeBridge(_runtime, current).HandleAsync("friend", friend.Friend.UserId, friend.SenderId, text, friendName, imageBlocks, ct);
-                var rendered = QqRuntimeBridge.Render(result);
-                var segments = ToSegments(rendered);
-                if (segments.Count > 0)
-                {
-                    LogMessage(current, $"[send] friend={friend.Friend.UserId}: {Truncate(string.Join(" | ", rendered.Select(p => p.Kind == "text" ? p.Value : $"[{p.Kind}]")))}");
-                    await milky.Message.SendPrivateMessageAsync(new SendPrivateMessageRequest(friend.Friend.UserId, [.. segments]), ct);
-                }
+                _logger?.Error("qq", $"message handler failed: {ex.Message}");
             }
         };
-        await milky.ReceivingEventUsingWebSocketAsync(static ws => ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(30), ct);
+        // WebSocket 接收循环：远端断连（服务器重启/网络波动/代理断开）时自动重连，不退出进程。
+        await ReceiveLoopAsync(milky, ct);
     }
 
     /// <summary>中途消息即时推送（D50 队列消费）。按 ConversationId 路由到对应频道，发送后 Ack。
@@ -283,5 +291,42 @@ public sealed class QqBotApplication
     {
         if (config.LogMessages)
             _logger?.Info("qq", message);
+    }
+
+    /// <summary>WebSocket 接收重连循环：远端断连（服务器重启/网络波动/代理断开）时
+    /// 自动重连，不退出进程。事件处理器在 milky.Events 上注册一次，重连仅恢复接收通道。
+    /// 连接曾成功建立则重置退避（快速恢复）；连续失败指数退避 1s→30s 封顶；ct 取消立即退出。</summary>
+    private async Task ReceiveLoopAsync(MilkyClient milky, CancellationToken ct)
+    {
+        var retryDelay = TimeSpan.FromSeconds(1);
+        const double MaxRetrySeconds = 30;
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await milky.ReceivingEventUsingWebSocketAsync(
+                    static ws => ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(30), ct);
+                retryDelay = TimeSpan.FromSeconds(1); // 连接曾成功建立，重置退避
+                if (ct.IsCancellationRequested) return;
+                _logger?.Warn("qq", "WebSocket receive ended without exception; reconnecting.");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return; // 正常关闭
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error("qq", $"WebSocket receive failed: {ex.Message}; reconnect in {retryDelay.TotalSeconds:0}s");
+            }
+            try
+            {
+                await Task.Delay(retryDelay, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            retryDelay = TimeSpan.FromSeconds(Math.Min(retryDelay.TotalSeconds * 2, MaxRetrySeconds));
+        }
     }
 }
