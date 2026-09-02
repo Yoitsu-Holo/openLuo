@@ -23,7 +23,6 @@
     <ProjectReference Include="..\..\extensions\companion\openLuo.Extension.Companion.csproj" />
     <ProjectReference Include="..\..\extensions\world\openLuo.Extension.World.csproj" />
     <ProjectReference Include="..\..\extensions\party\openLuo.Extension.Party.csproj" />
-    <ProjectReference Include="..\..\extensions\media\openLuo.Extension.Media.csproj" />
   </ItemGroup>
 
 </Project>
