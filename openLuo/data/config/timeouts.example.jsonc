@@ -1,0 +1,9 @@
+{
+  // ===== 超时配置 =====
+  // [热加载] 修改后自动生效
+
+  "timeouts": {
+    "defaultTimeoutSeconds": 30,
+    "chatTimeoutSeconds": 120
+  }
+}

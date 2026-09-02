@@ -1,0 +1,17 @@
+{
+  // ===== 安全配置 =====
+  // [热加载] 修改后自动生效
+
+  "security": {
+    "rateLimitPerMinute": 10,
+    "maxInputLength": 1000,
+    "burstLimit": 5,
+    "promptBreakCharLimit": 10,
+    // 图片/多模态输入安全限制（字节为单位）
+    "maxImageSizeBytes": 10485760,
+    "allowedImageMimeTypes": "image/png,image/jpeg,image/gif,image/webp",
+    "maxBase64PromptLength": 1048576,
+    "imageDownloadTimeoutSeconds": 15,
+    "imageDownloadMaxRetries": 3
+  }
+}

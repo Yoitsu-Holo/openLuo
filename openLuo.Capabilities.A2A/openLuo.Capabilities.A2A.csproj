@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>openLuo</RootNamespace>
+    <AssemblyName>openLuo.Capabilities.A2A</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\openLuo.Capabilities\openLuo.Capabilities.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="A2A" Version="1.0.0-preview2" />
+  </ItemGroup>
+
+</Project>

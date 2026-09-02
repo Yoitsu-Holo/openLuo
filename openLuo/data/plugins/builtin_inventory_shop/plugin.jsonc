@@ -1,0 +1,36 @@
+{
+  "id": "builtin_inventory_shop",
+  "name": "商店与背包",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": [],
+  "tools": [
+    {
+      "name": "shop",
+      "aliases": [],
+      "description": "浏览商店，购买礼物道具",
+      "category": "command",
+      "helpShort": "浏览商店",
+      "riskLevel": "low",
+      "needsConfirm": false
+    },
+    {
+      "name": "buy",
+      "aliases": [],
+      "description": "购买商品，例：/buy 1.3",
+      "category": "command",
+      "helpShort": "购买商品",
+      "riskLevel": "low",
+      "needsConfirm": false
+    },
+    {
+      "name": "inventory",
+      "aliases": ["bag", "inv"],
+      "description": "查看背包中的物品",
+      "category": "command",
+      "helpShort": "查看背包中的物品",
+      "riskLevel": "low",
+      "needsConfirm": false
+    }
+  ]
+}

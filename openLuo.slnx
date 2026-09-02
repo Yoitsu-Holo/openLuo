@@ -1,0 +1,32 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="openLuo/openLuo.csproj" />
+  <Project Path="openLuo.Foundation/openLuo.Foundation.csproj" />
+  <Project Path="openLuo.Llm/openLuo.Llm.csproj" />
+  <Project Path="openLuo.Embedding/openLuo.Embedding.csproj" />
+  <Project Path="openLuo.Memory/openLuo.Memory.csproj" />
+  <Project Path="openLuo.AgentContext/openLuo.AgentContext.csproj" />
+  <Project Path="openLuo.Capabilities.Llm/openLuo.Capabilities.Llm.csproj" />
+  <Project Path="openLuo.Capabilities.Mcp/openLuo.Capabilities.Mcp.csproj" />
+  <Project Path="openLuo.Capabilities.A2A/openLuo.Capabilities.A2A.csproj" />
+  <Project Path="openLuo.Abstractions/openLuo.Abstractions.csproj" />
+  <Project Path="openLuo.Capabilities/openLuo.Capabilities.csproj" />
+  <Project Path="extensions/memory/openLuo.Extension.Memory.csproj" />
+  <Project Path="extensions/companion/openLuo.Extension.Companion.csproj" />
+  <Project Path="extensions/world/openLuo.Extension.World.csproj" />
+  <Project Path="extensions/party/openLuo.Extension.Party.csproj" />
+  <Project Path="openLuo.playgraound/openLuo.playgraound.csproj" />
+  <Project Path="openLuo.Cli/openLuo.Cli.csproj" />
+  <Project Path="openLuo.Tui/openLuo.Tui.csproj" />
+  <Project Path="openLuo.Gui/openLuo.Gui.csproj" />
+  <Project Path="openLuo.Qqbot/openLuo.Qqbot.csproj" />
+  <Project Path="tests/openLuo.Capabilities.Tests/openLuo.Capabilities.Tests.csproj" />
+  <Project Path="tests/openLuo.AgentContext.Tests/openLuo.AgentContext.Tests.csproj" />
+  <Project Path="tests/openLuo.Extensions.Tests/openLuo.Extensions.Tests.csproj" />
+  <Project Path="tests/openLuo.Cli.Tests/openLuo.Cli.Tests.csproj" />
+  <Project Path="tests/openLuo.E2E.Tests/openLuo.E2E.Tests.csproj" />
+</Solution>

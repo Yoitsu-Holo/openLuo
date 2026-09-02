@@ -1,0 +1,54 @@
+{
+  "id": "builtin_subagent_core",
+  "name": "子 Agent 核心",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": [],
+  "tools": [
+    {
+      "name": "bash",
+      "aliases": [],
+      "description": "执行 Bash 命令",
+      "category": "command",
+      "helpShort": "执行 Bash 命令",
+      "riskLevel": "high",
+      "needsConfirm": true
+    },
+    {
+      "name": "read_file",
+      "aliases": [],
+      "description": "读取文件内容",
+      "category": "command",
+      "helpShort": "读取文件内容",
+      "riskLevel": "medium",
+      "needsConfirm": false
+    },
+    {
+      "name": "write_file",
+      "aliases": [],
+      "description": "写入文件内容",
+      "category": "command",
+      "helpShort": "写入文件内容",
+      "riskLevel": "medium",
+      "needsConfirm": false
+    },
+    {
+      "name": "edit_file",
+      "aliases": [],
+      "description": "编辑文件内容",
+      "category": "command",
+      "helpShort": "编辑文件内容",
+      "riskLevel": "medium",
+      "needsConfirm": false
+    },
+    {
+      "name": "agent_shell",
+      "aliases": [],
+      "description": "启动子 Agent",
+      "category": "command",
+      "helpShort": "启动子 Agent",
+      "riskLevel": "high",
+      "needsConfirm": true
+    }
+  ]
+}

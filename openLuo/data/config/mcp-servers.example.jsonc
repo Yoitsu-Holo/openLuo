@@ -1,0 +1,41 @@
+{
+  // MCP server 集合配置（D48）
+  // 每个 server 的能力注册为 mcp:{serverId}:{toolName}，进 [Capabilities] 供模型调用。
+  // 传输：stdio（本地进程）/ streamable-http / streamablehttp（远程端点）。
+  // headers 附加到每个请求；鉴权头按服务要求直接写明文（如 Bearer YOUR_MCP_TOKEN）。
+  "servers": [
+    {
+      "id": "media",
+      "transport": "stdio",
+      "command": "python3",
+      "args": ["mcp/media_server.py"]
+    },
+    {
+      "id": "mcd",
+      "transport": "streamable-http",
+      "url": "https://mcp.mcd.cn",
+      "injectContextKeys": false,
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_TOKEN"
+      }
+    },
+    {
+      "id": "12306",
+      "transport": "streamable-http",
+      "url": "https://mcp.api-inference.modelscope.net/303e117d05c441/mcp",
+      "injectContextKeys": false
+    },
+    {
+      "id": "amap",
+      "transport": "streamable-http",
+      "url": "https://mcp.amap.com/mcp?key=YOUR_AMAP_KEY",
+      "injectContextKeys": false
+    },
+    {
+      "id": "web-fetch",
+      "transport": "streamable-http",
+      "url": "https://mcp.api-inference.modelscope.net/YOUR_FETCH_ENDPOINT_ID/mcp",
+      "injectContextKeys": false
+    }
+  ]
+}

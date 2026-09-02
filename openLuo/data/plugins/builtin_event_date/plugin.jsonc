@@ -1,0 +1,18 @@
+{
+  "id": "builtin_event_date",
+  "name": "约会与回忆",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onScheduleDue"],
+  "tools": [
+    {
+      "name": "plan_date",
+      "aliases": [],
+      "description": "主动发起约会",
+      "category": "command",
+      "helpShort": "主动发起约会",
+      "riskLevel": "low",
+      "needsConfirm": false
+    }
+  ]
+}
