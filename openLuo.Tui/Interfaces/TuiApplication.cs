@@ -1,5 +1,6 @@
 using Terminal.Gui;
 using openLuo.Capabilities.Core;
+using openLuo.Capabilities.Core.Models;
 using TuiApp = Terminal.Gui.Application;
 
 namespace openLuo.Interfaces.TUI;
@@ -46,8 +47,13 @@ public sealed class TuiApplication
             ChannelId = _session.ConversationId, ActorId = "player", Text = text
         }, ct);
         if (!string.IsNullOrWhiteSpace(result.FinalText)) Append(result.FinalText + "\n");
-        foreach (var output in result.Outputs) Append($"[{output.Kind}] {output.Payload}\n");
+        foreach (var output in result.Outputs) Append(RenderOutput(output) + "\n");
     }
+
+    private static string RenderOutput(OutputItem output) =>
+        output.Kind == ReplyItemKind.Card
+            ? $"[card] {System.Text.Json.JsonSerializer.Serialize(output.Payload)}"
+            : $"[{output.Kind}] {output.Payload}";
 
     private void Append(string text) => TuiApp.MainLoop.Invoke(() => _history.Text = (_history.Text?.ToString() ?? string.Empty) + text);
 }

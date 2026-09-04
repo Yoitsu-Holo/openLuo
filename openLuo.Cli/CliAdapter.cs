@@ -59,8 +59,30 @@ public static class CliRenderer
         ReplyItemKind.Image => $"[image] {Convert.ToString(item.Payload, CultureInfo.InvariantCulture)}",
         ReplyItemKind.Audio => $"[audio] {Convert.ToString(item.Payload, CultureInfo.InvariantCulture)}",
         ReplyItemKind.File => $"[file] {Convert.ToString(item.Payload, CultureInfo.InvariantCulture)}",
+        // Card = 结构化不透明载荷：CLI 无渲染语义，按契约降级——优先可点 Url，其次紧凑 JSON。
+        ReplyItemKind.Card => RenderCard(item.Payload),
         _ => Convert.ToString(item.Payload, CultureInfo.InvariantCulture) ?? string.Empty
     };
+
+    private static string RenderCard(object? payload)
+    {
+        if (payload is null)
+            return "[card]";
+        try
+        {
+            var root = System.Text.Json.JsonSerializer.SerializeToElement(payload);
+            if (root.ValueKind == System.Text.Json.JsonValueKind.Object
+                && root.TryGetProperty("Url", out var url)
+                && url.ValueKind == System.Text.Json.JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(url.GetString()))
+                return url.GetString()!;
+            return $"[card] {System.Text.Json.JsonSerializer.Serialize(payload)}";
+        }
+        catch
+        {
+            return $"[card] {payload}";
+        }
+    }
 }
 
 public sealed class CliOutputSubscriber

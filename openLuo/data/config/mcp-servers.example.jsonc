@@ -8,7 +8,22 @@
       "id": "media",
       "transport": "stdio",
       "command": "python3",
-      "args": ["mcp/media_server.py"]
+      "args": ["mcp/media/media_server.py"]
+    },
+    {
+      "id": "cloud-music",
+      "transport": "stdio",
+      "command": "python3",
+      "args": ["mcp/cloud_music/cloud_music_server.py"],
+      // 官方开放平台后端（可选，不配则只启用匿名搜索）：
+      // stdio 子进程无 headers，密钥经 env 注入（NCM_OPENAPI_APP_ID 与 NCM_OPENAPI_PRIVATE_KEY
+      // 必填；NCM_OPENAPI_ACCESS_TOKEN 可选，缺省自动 anonymous 登录）。
+      // 注意：这里会明文落盘，建议改用宿主进程环境变量注入（stdio 子进程继承父环境）。
+      // "env": {
+      //   "NCM_OPENAPI_APP_ID": "YOUR_APP_ID",
+      //   "NCM_OPENAPI_PRIVATE_KEY": "YOUR_X509_PRIVATE_KEY_NO_HEADER",
+      //   "NCM_OPENAPI_ACCESS_TOKEN": ""
+      // }
     },
     {
       "id": "mcd",

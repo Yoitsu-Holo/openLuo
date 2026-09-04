@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using openLuo.Capabilities.Core;
+using openLuo.Capabilities.Core.Models;
 
 namespace openLuo.Interfaces.GUI;
 
@@ -23,7 +24,12 @@ public sealed class GuiMainViewModel
             SessionId = _session.SessionId, TurnId = Guid.NewGuid().ToString("N"), SourceId = "gui",
             ChannelId = _session.ConversationId, ActorId = "player", Text = text
         }, ct);
-        foreach (var output in result.Outputs) Messages.Add($"[{output.Kind}] {output.Payload}");
+        foreach (var output in result.Outputs) Messages.Add(RenderOutput(output));
         if (!string.IsNullOrWhiteSpace(result.FinalText)) Messages.Add($"角色: {result.FinalText}");
     }
+
+    private static string RenderOutput(OutputItem output) =>
+        output.Kind == ReplyItemKind.Card
+            ? $"[card] {System.Text.Json.JsonSerializer.Serialize(output.Payload)}"
+            : $"[{output.Kind}] {output.Payload}";
 }

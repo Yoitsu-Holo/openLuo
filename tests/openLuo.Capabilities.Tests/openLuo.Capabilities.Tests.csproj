@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\openLuo.Capabilities\openLuo.Capabilities.csproj" />
+    <ProjectReference Include="..\..\openLuo.Capabilities.Llm\openLuo.Capabilities.Llm.csproj" />
   </ItemGroup>
 
 </Project>

@@ -19,6 +19,7 @@
     <ProjectReference Include="..\..\openLuo.AgentContext\openLuo.AgentContext.csproj" />
     <ProjectReference Include="..\..\openLuo.Cli\openLuo.Cli.csproj" />
     <ProjectReference Include="..\..\openLuo\openLuo.csproj" />
+    <ProjectReference Include="..\..\extensions\music\openLuo.Extension.Music.csproj" />
   </ItemGroup>
 
 </Project>

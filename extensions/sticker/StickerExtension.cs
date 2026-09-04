@@ -33,9 +33,12 @@ internal static class StickerDescriptors
     public static CapabilityDescriptor Send => new()
     {
         CanonicalId = "send_sticker", DisplayName = "Send sticker",
-        Summary = "Send a sticker image expressing a mood, emotion, or meme that fits the conversation.",
-        Usage = "Use when a sticker conveys the character's reaction better than words. Describe the desired expression naturally (e.g. 'speechless eye-roll', 'shocked cat', 'celebrating victory'). Send only when emotionally appropriate; do not overuse stickers.",
+        Summary = "Send a sticker from the character's local expression library, matching the mood, emotion, or meme of the moment.",
+        Usage = "Use when the user asks for a sticker, expression, meme, or reaction image, or when the character wants to convey a mood or emotion (e.g. 'send a speechless sticker', 'show a shocked expression', '发一张无语的表情'). Describe the desired expression naturally in the description parameter (e.g. 'speechless eye-roll', 'shocked cat', 'celebrating victory'). Call this tool at most ONCE per request: a single call sends exactly ONE sticker, which completes the sticker-sending goal. Do NOT call it multiple times or send several stickers for one request; after the call, continue with natural language or end the turn. This is the preferred tool for mood, emotion, and meme expression; only reach for fetch_random_image when the user explicitly wants a random illustration, wallpaper, or a picture of something specific.",
         Kind = CapabilityKind.Builtin, ProviderId = "sticker", SideEffect = SideEffectClass.ReadOnly,
+        // 保持 Continue：发图只是 plan 中的一步，模型发完应回到决策继续（补说明/结束），
+        // 而不是靠 Terminal 硬性终结整个回合。重复发图由工具结果 Text 的"已完成"信号引导
+        // 模型停止，而非中断回合。
         Completion = CompletionPolicy.Continue, ParallelSafe = false,
         InputSchema = new
         {
@@ -253,7 +256,10 @@ internal sealed class StickerSendInvoker : ICapabilityInvoker
             return new CapabilityResult
             {
                 InvocationId = call.InvocationId, Success = true, Status = CapabilityStatus.Ok,
-                Text = $"sent sticker tagged '{hit.Label}'",
+                // 回填给模型的完成信号：明确"已发出一张、发图动作完成、不要重复发送"。
+                // 模型据此判定该子任务已结束，可回到 plan 继续下一步（补说明/结束回合），
+                // 而不是因 Continue 空白地反复调用本工具。
+                Text = $"Sent 1 sticker tagged '{hit.Label}'. The sticker send is complete — do NOT call send_sticker again for this request and do NOT send more than one sticker. Return to your plan: continue the conversation, add a short natural-language remark, or end the turn.",
                 Outputs = [new OutputItem
                 {
                     Id = Guid.NewGuid().ToString("N"), Kind = ReplyItemKind.Image, Payload = payload,

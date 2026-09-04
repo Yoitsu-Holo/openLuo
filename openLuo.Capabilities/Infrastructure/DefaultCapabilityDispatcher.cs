@@ -66,8 +66,10 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
             .Select((call, index) => (call, index))
             .ToDictionary(t => t.call.InvocationId, t => t.index, StringComparer.OrdinalIgnoreCase);
 
+
         var budget = context.Budgets;
         var parallelLimit = Math.Max(1, budget.MaxConcurrentTools);
+        var toolMaxRetries = Math.Max(0, budget.MaxToolRetries);
 
         // 可并行子批次（按模型顺序切片控制并发度）
         var parallel = validation.ParallelCalls ?? [];
@@ -75,7 +77,7 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
         {
             ct.ThrowIfCancellationRequested();
             var slice = parallel.Skip(i).Take(parallelLimit).ToList();
-            var tasks = slice.Select(call => InvokeSafelyAsync(call, snapshot, executionContext, ct)).ToList();
+            var tasks = slice.Select(call => InvokeSafelyAsync(call, snapshot, executionContext, ct, toolMaxRetries)).ToList();
             var results = await Task.WhenAll(tasks);
             for (var j = 0; j < slice.Count; j++)
                 orderedResults[orderIndex[slice[j].InvocationId]] = results[j];
@@ -86,7 +88,7 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
         {
             foreach (var call in validation.SerializedCalls)
             {
-                orderedResults[orderIndex[call.InvocationId]] = await InvokeSafelyAsync(call, snapshot, executionContext, ct);
+                orderedResults[orderIndex[call.InvocationId]] = await InvokeSafelyAsync(call, snapshot, executionContext, ct, toolMaxRetries);
             }
         }
 
@@ -145,7 +147,8 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
         CapabilityCall call,
         CapabilityCatalogSnapshot snapshot,
         CapabilityExecutionContext baseContext,
-        CancellationToken ct)
+        CancellationToken ct,
+        int maxRetries)
     {
         var descriptor = snapshot.ByCanonicalId.TryGetValue(call.CanonicalId, out var d) ? d : null;
         var invoker = _canonicalInvokers.TryGetValue(call.CanonicalId, out var canonicalInvoker)
@@ -154,7 +157,75 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
                 ? kindInvoker
                 : _invoker;
 
-        var executionContext = new CapabilityExecutionContext
+        // 工具级失败重试：同一调用（InvocationId 不变）连续失败时，在 dispatcher 内
+        // 原封不动重放（工程化重试，不经过模型决策、不消耗 MaxDecisions）。成功后即停止，
+        // 只有连续失败累计达 MaxToolRetries 才把失败结果返回给模型。这与"多轮调用每张都
+        // 成功"的场景（如连续获取 10 张图）完全兼容——每次成功都不会触发重试。
+        maxRetries = Math.Max(0, maxRetries);
+        var attempt = Math.Max(0, call.Attempt);
+        while (true)
+        {
+            var executionContext = BuildExecutionContext(call, baseContext);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var provider = descriptor?.ProviderId ?? "?";
+            _logger?.Info("agent/dispatch",
+                $"[tool] start {call.CanonicalId} inv={call.InvocationId} attempt={attempt} provider={provider}");
+
+            CapabilityResult result;
+            try
+            {
+                result = await invoker.InvokeAsync(call, executionContext, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                _logger?.Warn("agent/dispatch",
+                    $"[tool] {call.CanonicalId} cancelled ({sw.ElapsedMilliseconds}ms)");
+                return new CapabilityResult
+                {
+                    InvocationId = call.InvocationId,
+                    Status = CapabilityStatus.Cancelled,
+                    Success = false,
+                    Error = "cancelled"
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error("agent/dispatch",
+                    $"[tool] {call.CanonicalId} exception ({sw.ElapsedMilliseconds}ms): {ex.Message}");
+                result = new CapabilityResult
+                {
+                    InvocationId = call.InvocationId,
+                    Status = CapabilityStatus.Failed,
+                    Success = false,
+                    Error = ex.Message
+                };
+            }
+
+            LogToolOutcome(call.CanonicalId, provider, result, sw.ElapsedMilliseconds);
+
+            // 成功/取消/校验拒绝即返回：成功重置计数；Rejected 是参数/业务校验失败
+            // （确定性错误，如缺 id），重放同样参数只会重复失败——立即回填让模型纠错，
+            // 不为"多轮逐个成功"触发重试。只有 Failed（执行期瞬时错误）才进入重试。
+            if (result.Status is CapabilityStatus.Ok
+                or CapabilityStatus.Cancelled
+                or CapabilityStatus.Rejected)
+                return result;
+
+            // 连续失败：attempt 从 0 起，允许最多 maxRetries 次重放（attempt 已用重放次数）。
+            if (attempt >= maxRetries)
+                return result;
+
+            attempt++;
+            _logger?.Warn("agent/dispatch",
+                $"[tool] {call.CanonicalId} failed ({sw.ElapsedMilliseconds}ms), retrying {attempt}/{maxRetries} in-dispatch");
+        }
+    }
+
+    private static CapabilityExecutionContext BuildExecutionContext(
+        CapabilityCall call,
+        CapabilityExecutionContext baseContext)
+    {
+        return new CapabilityExecutionContext
         {
             GameId = baseContext.GameId,
             SessionId = baseContext.SessionId,
@@ -170,42 +241,6 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
             OutputQueue = baseContext.OutputQueue,
             SystemBlocks = baseContext.SystemBlocks
         };
-
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var provider = descriptor?.ProviderId ?? "?";
-        _logger?.Info("agent/dispatch",
-            $"[tool] start {call.CanonicalId} inv={call.InvocationId} provider={provider}");
-
-        try
-        {
-            var result = await invoker.InvokeAsync(call, executionContext, ct);
-            LogToolOutcome(call.CanonicalId, provider, result, sw.ElapsedMilliseconds);
-            return result;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            _logger?.Warn("agent/dispatch",
-                $"[tool] {call.CanonicalId} cancelled ({sw.ElapsedMilliseconds}ms)");
-            return new CapabilityResult
-            {
-                InvocationId = call.InvocationId,
-                Status = CapabilityStatus.Cancelled,
-                Success = false,
-                Error = "cancelled"
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger?.Error("agent/dispatch",
-                $"[tool] {call.CanonicalId} exception ({sw.ElapsedMilliseconds}ms): {ex.Message}");
-            return new CapabilityResult
-            {
-                InvocationId = call.InvocationId,
-                Status = CapabilityStatus.Failed,
-                Success = false,
-                Error = ex.Message
-            };
-        }
     }
 
     /// <summary>按结果状态分级输出单工具调用日志（公共日志中间件 agent/dispatch category）。</summary>

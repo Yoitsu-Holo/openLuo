@@ -24,6 +24,7 @@
     <ProjectReference Include="..\..\extensions\world\openLuo.Extension.World.csproj" />
     <ProjectReference Include="..\..\extensions\party\openLuo.Extension.Party.csproj" />
     <ProjectReference Include="..\..\extensions\sticker\openLuo.Extension.Sticker.csproj" />
+    <ProjectReference Include="..\..\extensions\music\openLuo.Extension.Music.csproj" />
   </ItemGroup>
 
 </Project>

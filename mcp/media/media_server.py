@@ -56,16 +56,16 @@ def _fetch_random_image() -> str:
     """duckMo JSON → pid → pixiv.cat 下载 → 缩放 → data URL。"""
     payload = json.loads(_get(DUCK_MO_URL).decode("utf-8"))
     items = (payload or {}).get("data", [])
-    source_url = None
-    if items:
-        urls = items[0].get("urlsList", [])
-        if urls:
-            source_url = urls[0].get("url")
-    if not source_url:
-        raise RuntimeError("no image url from source")
+    if not items:
+        raise RuntimeError("no image data from source")
 
-    artwork_id = _extract_pixiv_id(source_url)
-    pixiv_cat_url = f"https://pixiv.cat/{artwork_id}.png" if artwork_id else source_url
+    # duckMo 返回的字段是数字 pid（作品 id），而非 urlsList/url。
+    # 直接以 pid 构造 pixiv.cat 下载地址，避免字段名不匹配导致下载失败。
+    pid = items[0].get("pid")
+    if not pid:
+        raise RuntimeError("no pid from source")
+
+    pixiv_cat_url = f"https://pixiv.cat/{pid}.png"
     img = _download_with_retry(pixiv_cat_url)
     if not img:
         raise RuntimeError("image download failed")
@@ -94,7 +94,11 @@ def _to_data_url(img: bytes, is_png: bool) -> str:
 
 @mcp.tool()
 def fetch_random_image() -> str:
-    """获取一张随机图片并返回 data URL（base64 编码）。
+    """获取一张随机插画并返回 data URL（base64 编码）。
+
+    使用范围：仅当用户明确要求"随机图片/随便来一张图/壁纸/插画"时使用。
+    若用户表达的是心情、情绪、表情、吐槽、meme，请改用 send_sticker 能力
+    （它会从本地表情库检索最贴合情绪的表情包），不要用本工具。
 
     流程：从图源 API（duckMo）取随机插画 → 解析作品 pid → 经 pixiv.cat
     代理下载图片。返回格式 data:<mime>;base64,<payload>，宿主直接作为

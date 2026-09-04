@@ -41,7 +41,7 @@ public sealed class ExtensionCompositionIntegrationTests
         try
         {
             // 部署 5 个扩展的 manifest + 程序集（模拟 build.sh 的拷贝）
-            foreach (var id in new[] { "memory", "companion", "world", "party" })
+            foreach (var id in new[] { "memory", "companion", "world", "party", "music" })
             {
                 var dest = Path.Combine(extensionsRoot, id);
                 Directory.CreateDirectory(dest);
@@ -69,7 +69,7 @@ public sealed class ExtensionCompositionIntegrationTests
             var result = host.ScanAndLoad();
 
                         Assert.All(result.Diagnostics, d => Assert.True(d.Loaded, $"{d.ExtensionId}: {d.Error}"));
-            Assert.Equal(4, result.Loaded.Count);
+            Assert.Equal(5, result.Loaded.Count);
             registry.SetExtensions(result.Loaded);
 
             // 命名空间化后的能力目录
@@ -79,6 +79,7 @@ public sealed class ExtensionCompositionIntegrationTests
             Assert.Contains("companion:chat", canonicalIds);
             Assert.Contains("world:state.read", canonicalIds);
             Assert.Contains("party:list_characters", canonicalIds);
+            Assert.Contains("music:share_song", canonicalIds);
 
             // 每个能力都有可解析的 invoker
             var invokers = registry.Invokers;
@@ -104,7 +105,7 @@ public sealed class ExtensionCompositionIntegrationTests
         Directory.CreateDirectory(extensionsRoot);
         try
         {
-            foreach (var id in new[] { "memory", "companion", "world", "party" })
+            foreach (var id in new[] { "memory", "companion", "world", "party", "music" })
             {
                 var dest = Path.Combine(extensionsRoot, id);
                 Directory.CreateDirectory(dest);
@@ -128,7 +129,7 @@ public sealed class ExtensionCompositionIntegrationTests
             var registry = provider.GetRequiredService<ExtensionRegistry>();
             var host = new ExtensionHost(extensionsRoot, type => ActivatorUtilities.CreateInstance(provider, type));
             var result = host.ScanAndLoad();
-            Assert.Equal(4, result.Loaded.Count);
+            Assert.Equal(5, result.Loaded.Count);
             registry.SetExtensions(result.Loaded);
 
             // 组合根等价（ServiceCollectionExtensions 组合根 dispatcher 工厂的精确复制）：
@@ -212,7 +213,7 @@ public sealed class ExtensionCompositionIntegrationTests
         Directory.CreateDirectory(extensionsRoot);
         try
         {
-            foreach (var id in new[] { "memory", "companion", "world", "party" })
+            foreach (var id in new[] { "memory", "companion", "world", "party", "music" })
             {
                 var dest = Path.Combine(extensionsRoot, id);
                 Directory.CreateDirectory(dest);
@@ -236,9 +237,9 @@ public sealed class ExtensionCompositionIntegrationTests
             var registry = provider.GetRequiredService<ExtensionRegistry>();
             var host = new ExtensionHost(extensionsRoot, type => ActivatorUtilities.CreateInstance(provider, type));
             var result = host.ScanAndLoad();
-            Assert.Equal(4, result.Loaded.Count);
+            Assert.Equal(5, result.Loaded.Count);
             registry.SetExtensions(result.Loaded);
-            var mcpServer = Path.Combine(FindRepositoryRoot(), "mcp", "media_server.py");
+            var mcpServer = Path.Combine(FindRepositoryRoot(), "mcp", "media", "media_server.py");
 
             var mcp = new McpCapabilitySource(new McpServerConfig
             {
@@ -271,6 +272,7 @@ public sealed class ExtensionCompositionIntegrationTests
             Assert.Contains("memory:search", invokers.Keys);
             Assert.Contains("world:state.read", invokers.Keys);
             Assert.Contains("party:list_characters", invokers.Keys);
+            Assert.Contains("music:share_song", invokers.Keys);
         }
         finally
         {
@@ -308,6 +310,70 @@ public sealed class ExtensionCompositionIntegrationTests
         {
             Environment.SetEnvironmentVariable(envVar, null);
         }
+    }
+
+    [Fact]
+    public async Task CloudMusicMcpSource_ExposesSearchTool()
+    {
+        // 真实 stdio 启动 mcp/cloud_music server（注册工具不联网，仅 tools/list）
+        var server = Path.Combine(FindRepositoryRoot(), "mcp", "cloud_music", "cloud_music_server.py");
+        Assert.True(File.Exists(server), $"cloud music server not found: {server}");
+        var mcp = new McpCapabilitySource(new McpServerConfig
+        {
+            Id = "cloud-music", Transport = "stdio", Command = "python3", Args = [server]
+        });
+        await mcp.ConnectAsync(CancellationToken.None);
+        Assert.True(mcp.IsHealthy, "cloud-music MCP server should connect (python3 + mcp package required)");
+        var tools = mcp.ListCapabilities().Select(d => d.CanonicalId).ToList();
+        Assert.Contains("mcp:cloud-music:cloud_music_search", tools);
+        Assert.DoesNotContain(tools, d => d.EndsWith(":cloud_music_play", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task StdioEnvironmentVariables_AreInjectedIntoSubprocess()
+    {
+        // McpServerConfig.EnvironmentVariables → stdio 子进程 env（本地 python server 读 os.environ）。
+        // 注入 NCM_OPENAPI_APP_ID 后，cloud_music_official_status 应进入"已读到配置"路径
+        //（显示 appId 或登录失败），而非"官方后端未配置"。
+        var server = Path.Combine(FindRepositoryRoot(), "mcp", "cloud_music", "cloud_music_server.py");
+        var mcp = new McpCapabilitySource(new McpServerConfig
+        {
+            Id = "cloud-music-env", Transport = "stdio", Command = "python3", Args = [server],
+            EnvironmentVariables = new Dictionary<string, string>
+            {
+                ["NCM_OPENAPI_APP_ID"] = "envtest-app-123",
+                // 假私钥：足以让 server 认为"已配置"，进而在加载/登录阶段报配置检查失败，
+                // 从而证明两个 env 键都到达了子进程（缺 env 会走"未配置"引导）。
+                ["NCM_OPENAPI_PRIVATE_KEY"] = "bm90LWEtcmVhbC1rZXk="
+            }
+        });
+        await mcp.ConnectAsync(CancellationToken.None);
+        Assert.True(mcp.IsHealthy);
+
+        var invoker = mcp.CreateInvoker();
+        var result = await invoker.InvokeAsync(
+            new CapabilityCall { InvocationId = "inv-env", CanonicalId = "mcp:cloud-music-env:cloud_music_official_status" },
+            new CapabilityExecutionContext(), CancellationToken.None);
+        Assert.True(result.Success, result.Error);
+        // env 已注入 → server 进入"已配置但凭据无效"路径（配置检查失败），而非"官方后端未配置"引导。
+        Assert.DoesNotContain("官方后端未配置。", result.Text);
+        Assert.Contains("配置检查失败", result.Text);
+    }
+
+    [Fact]
+    public void McpServerConfig_JsoncEnvKey_DeserializesToEnvironmentVariables()
+    {
+        // jsonc 中键名为 "env"(JsonPropertyName);反序列化选项与 LoadJsonc 一致(大小写不敏感+注释容忍)
+        var json = """{"id":"x","transport":"stdio","command":"python3","env":{"NCM_OPENAPI_APP_ID":"app-1"}}""";
+        var options = new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            ReadCommentHandling = System.Text.Json.JsonCommentHandling.Skip,
+            AllowTrailingCommas = true
+        };
+        var config = System.Text.Json.JsonSerializer.Deserialize<McpServerConfig>(json, options);
+        Assert.NotNull(config);
+        Assert.Equal("app-1", config!.EnvironmentVariables["NCM_OPENAPI_APP_ID"]);
     }
 
     private static string LocateExtensionAssembly(string root, string id)

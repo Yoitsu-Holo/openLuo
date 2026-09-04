@@ -1,3 +1,4 @@
+using System.Text.Json;
 using openLuo.Capabilities.Core;
 using openLuo.Capabilities.Core.Models;
 
@@ -59,8 +60,45 @@ public sealed class QqRuntimeBridge
     {
         ReplyItemKind.Text => new("text", Convert.ToString(item.Payload) ?? string.Empty),
         ReplyItemKind.Image => new("image", Convert.ToString(item.Payload) ?? string.Empty),
+        // Card = 结构化不透明载荷：与产出扩展（music:share_song）联合契约
+        // { Platform="163", Id, Title?, Url? }。解析失败按 Url/JSON 文本降级。
+        ReplyItemKind.Card => RenderCard(item),
         _ => new("text", $"[{item.Kind.ToString().ToLowerInvariant()}] {item.Payload}")
     };
+
+    /// <summary>供 QqBotApplication 复用（interim 队列等非回合路径）。</summary>
+    internal static QqReplyPart? TryRenderCard(OutputItem item) => RenderCard(item);
+
+    /// <summary>把 163 音乐分享卡渲染为 OneBot music 段（QQ 原生卡）；其它/未知结构 → 文本降级。</summary>
+    private static QqReplyPart? RenderCard(OutputItem item)
+    {
+        JsonElement root;
+        try
+        {
+            root = JsonSerializer.SerializeToElement(item.Payload);
+        }
+        catch
+        {
+            return new("text", Convert.ToString(item.Payload) ?? string.Empty);
+        }
+        if (root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty("Platform", out var platform)
+            && platform.GetString() == "163"
+            && root.TryGetProperty("Id", out var id)
+            && id.ValueKind == JsonValueKind.Number
+            && id.TryGetInt64(out var songId))
+        {
+            return new QqReplyPart("music", songId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        // 降级：优先可点链接，其次紧凑 JSON
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("Url", out var url) && url.ValueKind == JsonValueKind.String)
+        {
+            var text = url.GetString();
+            return new("text", string.IsNullOrWhiteSpace(text) ? "[card]" : text);
+        }
+        return new("text", $"[card] {JsonSerializer.Serialize(item.Payload)}");
+    }
 }
 
+/// <summary>Kind: text | image | music（OneBot music 段,Value 为平台资源 id）。</summary>
 public sealed record QqReplyPart(string Kind, string Value);

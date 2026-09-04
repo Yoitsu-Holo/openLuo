@@ -31,7 +31,7 @@ QQ bot 是当前生产主入口（`./openLuo --qq`），通过 Milky WebSocket/H
 | 内核契约 | `openLuo.Capabilities` / `openLuo.AgentContext`                 | 能力目录、决策循环、并行调度、状态事务、上下文快照、输出队列 |
 | 桥接     | `openLuo.Capabilities.Llm` / `.Mcp` / `.A2A`                    | LLM 原生 tool calls、MCP、Agent2Agent 远程能力               |
 | 扩展宿主 | `openLuo.Extensions.Host`                                       | manifest、依赖拓扑、程序集加载、失败隔离                     |
-| 领域扩展 | `extensions/{memory,companion,world,party}`                     | 记忆、伴侣人格、世界状态、多角色；每个扩展自带 manifest      |
+| 领域扩展 | `extensions/{memory,companion,world,party,sticker,music}` | 记忆、伴侣人格、世界状态、多角色、表情、音乐分享卡；每个扩展自带 manifest |
 | 平台     | `openLuo.Cli` / `openLuo.Tui` / `openLuo.Gui` / `openLuo.Qqbot` | 输入解析、输出渲染与平台传输                                 |
 | 宿主     | `openLuo`                                                       | 组合根、配置加载、入口分发                                   |
 | Demo     | `openLuo.playgraound`（程序集名 `openLuo.Playground`）          | 新内核能力循环最小可运行演示                                 |

@@ -1,0 +1,9 @@
+{
+  "id": "music",
+  "version": "1.0.0",
+  "displayName": "Music",
+  "description": "Music share cards: emit structured Card output (netease 163) for platform rendering.",
+  "assembly": "openLuo.Extension.Music.dll",
+  "entryType": "OpenLuo.Extensions.Music.MusicExtension",
+  "dataDir": "data"
+}

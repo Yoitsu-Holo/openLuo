@@ -79,7 +79,10 @@ public sealed class McpCapabilitySource : ICapabilitySource, IAsyncDisposable
                 {
                     Name = _config.Id,
                     Command = _config.Command,
-                    Arguments = [.. _config.Args]
+                    Arguments = [.. _config.Args],
+                    EnvironmentVariables = _config.EnvironmentVariables.Count > 0
+                        ? _config.EnvironmentVariables.ToDictionary(kv => kv.Key, kv => (string?)kv.Value, StringComparer.Ordinal)
+                        : null
                 });
                 return await McpClient.CreateAsync(transport, cancellationToken: ct);
             }

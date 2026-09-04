@@ -173,7 +173,9 @@ public sealed class LlmCapabilityDecisionModel : ICapabilityDecisionModel
         {
             var json = JsonNode.Parse(argumentsJson)?.AsObject();
             return json?["args"]?.AsArray()
-                .Select(node => node?.GetValue<string>() ?? string.Empty)
+                .Select(ValueToText)
+                .Where(text => text is not null)
+                .Cast<string>()
                 .ToArray() ?? [];
         }
         catch
@@ -191,19 +193,54 @@ public sealed class LlmCapabilityDecisionModel : ICapabilityDecisionModel
         try
         {
             var json = JsonNode.Parse(argumentsJson)?.AsObject();
-            if (json?["options"]?.AsObject() is { } options)
+            if (json is null) return result;
+            // 两处来源合并：
+            // 1) 约定式包装：{"options":{...}}（宿主代码构造 / 模型按 options 语义生成）
+            // 2) 顶层命名属性：模型按 InputSchema 的 properties 生成（如 sticker 的
+            //    {"description":"..."}）。此前只解析 options 包装，导致声明了命名参数的
+            //    能力（send_sticker 首例）参数永远丢失。
+            if (json["options"]?.AsObject() is { } options)
             {
                 foreach (var pair in options)
-                    result[pair.Key] = pair.Value?.GetValue<string>() ?? string.Empty;
+                {
+                    var text = ValueToText(pair.Value);
+                    if (text is not null)
+                        result[pair.Key] = text;
+                }
+            }
+            foreach (var pair in json)
+            {
+                // 排除元键与已由 options 分支覆盖的键
+                if (pair.Key is "args" or "options") continue;
+                if (pair.Value is JsonObject or JsonArray) continue;
+                var text = ValueToText(pair.Value);
+                if (text is not null)
+                    result.TryAdd(pair.Key, text);
             }
         }
         catch
         {
-            // 忽略解析失败
+            // 忽略解析失败（单参数损坏不拖垮整批解析）
         }
 
         return result;
     }
+
+    /// <summary>JsonValue → 文本：字符串原样；数字保留原文（27908590 不丢精度）；布尔转小写；
+    /// 对象/数组/null 返回 null。旧实现直接 GetValue&lt;string&gt;()，模型按 integer/boolean schema
+    /// 传参时会抛异常并被整体吞掉 → 参数静默丢失（share_song 首例）。</summary>
+    private static string? ValueToText(JsonNode? node) => node switch
+    {
+        JsonValue value => value.GetValueKind() switch
+        {
+            JsonValueKind.String => value.GetValue<string>(),
+            JsonValueKind.Number => value.ToJsonString(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null
+        },
+        _ => null
+    };
 }
 
 /// <summary>构建 LlmOptions（温度/token 上限等），宿主可覆盖。</summary>
