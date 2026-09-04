@@ -1,6 +1,8 @@
+using System.Text.Json.Nodes;
 using openLuo.Capabilities.Core;
 using openLuo.Capabilities.Core.Models;
 using openLuo.Interfaces.QQbot;
+using openLuo.OneBot;
 
 namespace openLuo.Interfaces.Tests;
 
@@ -50,36 +52,63 @@ public sealed class QqRuntimeBridgeTests
     }
 
     [Fact]
-    public void ExtractText_JoinsSegmentsAndSkipsBotMention()
+    public void EventText_JoinsSegmentsAndSkipsBotMention()
     {
-        var segments = new[] { Mention("123"), Text("hello"), Text("world") };
-        Assert.Equal("hello world", QqBotApplication.ExtractText(segments, 123));
-        Assert.Equal("@bot hello world", QqBotApplication.ExtractText(segments, 456));
+        var segments = new[] { At("123"), TextSeg("hello"), TextSeg("world") };
+        var ev = Event("group", segments);
+
+        Assert.Equal("hello world", ev.ToPlainText(123));       // bot 的 @ 被跳过
+        Assert.Equal("@123 hello world", ev.ToPlainText(456));  // 他人 @ 保留(无 name 时显示 qq 号)
+        Assert.True(ev.Mentions(123));
+        Assert.False(ev.Mentions(456));
     }
 
     [Fact]
-    public void CollectImageUrls_ExtractsTempUrls()
+    public void EventImageUrls_ExtractsFromImageSegments()
     {
-        var segments = new Milky.Net.Model.IncomingSegment[]
+        var segments = new OneBotSegment[]
         {
-            Text("hello"),
-            new Milky.Net.Model.IncomingSegment<Milky.Net.Model.ImageIncomingSegmentData>(
-                new Milky.Net.Model.ImageIncomingSegmentData("r1", "https://img.example/a.png", 100, 100, "img", Milky.Net.Model.SubType.Normal)),
-            Text("world")
+            TextSeg("hello"),
+            new OneBotSegment("image", new JsonObject { ["url"] = "https://img.example/a.png" }),
+            TextSeg("world")
         };
-        Assert.Equal(["https://img.example/a.png"], QqBotApplication.CollectImageUrls(segments));
+        Assert.Equal(["https://img.example/a.png"], Event("group", segments).ImageUrls());
     }
 
     [Fact]
-    public void CollectImageUrls_SkipsSegmentsWithoutUrl()
+    public void EventImageUrls_FallsBackToFile_AndSkipsEmpty()
     {
-        var segments = new Milky.Net.Model.IncomingSegment[]
-        {
-            new Milky.Net.Model.IncomingSegment<Milky.Net.Model.ImageIncomingSegmentData>(
-                new Milky.Net.Model.ImageIncomingSegmentData("r2", "", 50, 50, "no-url", Milky.Net.Model.SubType.Normal))
-        };
-        Assert.Empty(QqBotApplication.CollectImageUrls(segments));
+        var withFile = new OneBotSegment("image", new JsonObject { ["file"] = "https://img.example/b.png" });
+        var noUrl = new OneBotSegment("image", new JsonObject { ["file"] = "" });
+        var ev = Event("private", new OneBotSegment[] { withFile, noUrl });
+        Assert.Equal(["https://img.example/b.png"], ev.ImageUrls());
     }
+
+    [Fact]
+    public void EventParse_GroupAndPrivateShape()
+    {
+        var group = Event("group", [TextSeg("hi")], userId: 111, groupId: 222);
+        Assert.Equal("group", group.MessageType);
+        Assert.Equal(222, group.GroupId);
+        Assert.Equal(111, group.UserId);
+        Assert.Equal("hi", group.ToPlainText(null));
+
+        var @private = Event("private", [TextSeg("yo")], userId: 111);
+        Assert.Equal("private", @private.MessageType);
+        Assert.Null(@private.GroupId);
+    }
+
+    private static OneBotMessageEvent Event(string messageType, IReadOnlyList<OneBotSegment> segments, long userId = 1, long? groupId = null) => new()
+    {
+        MessageType = messageType,
+        UserId = userId,
+        GroupId = groupId,
+        Segments = segments,
+        SenderDisplayName = "测试"
+    };
+
+    private static OneBotSegment At(string userId) => OneBotSegment.At(long.Parse(userId));
+    private static OneBotSegment TextSeg(string value) => OneBotSegment.Text(value);
 
     [Fact]
     public async Task ObserveAsync_PropagatesImageBlocks()
@@ -110,11 +139,6 @@ public sealed class QqRuntimeBridgeTests
 
         Assert.Same(block, Assert.Single(runtime.LastTurnBlocks!));
     }
-
-    private static Milky.Net.Model.IncomingSegment Mention(string userId) =>
-        new Milky.Net.Model.IncomingSegment<Milky.Net.Model.MentionIncomingSegmentData>(new Milky.Net.Model.MentionIncomingSegmentData(long.Parse(userId), "bot"));
-    private static Milky.Net.Model.IncomingSegment Text(string value) =>
-        new Milky.Net.Model.IncomingSegment<Milky.Net.Model.TextIncomingSegmentData>(new Milky.Net.Model.TextIncomingSegmentData(value));
 
     private sealed class StubRuntime(string expectedSessionId) : IAgentRuntime
     {

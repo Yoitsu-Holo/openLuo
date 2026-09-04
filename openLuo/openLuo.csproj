@@ -51,6 +51,7 @@
     <ProjectReference Include="..\openLuo.Tui\openLuo.Tui.csproj" />
     <ProjectReference Include="..\openLuo.Gui\openLuo.Gui.csproj" />
     <ProjectReference Include="..\openLuo.Qqbot\openLuo.Qqbot.csproj" />
+    <ProjectReference Include="..\openLuo.OneBot\openLuo.OneBot.csproj" />
   </ItemGroup>
 
   <ItemGroup>

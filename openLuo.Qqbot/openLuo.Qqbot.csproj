@@ -9,9 +9,6 @@
   <ItemGroup>
     <ProjectReference Include="..\openLuo.AgentContext\openLuo.AgentContext.csproj" />
     <ProjectReference Include="..\openLuo.Capabilities\openLuo.Capabilities.csproj" />
-  </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="Milky.Net.Client" Version="1.2.2" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.5" />
+    <ProjectReference Include="..\openLuo.OneBot\openLuo.OneBot.csproj" />
   </ItemGroup>
 </Project>
