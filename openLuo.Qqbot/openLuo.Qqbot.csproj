@@ -11,4 +11,7 @@
     <ProjectReference Include="..\openLuo.Capabilities\openLuo.Capabilities.csproj" />
     <ProjectReference Include="..\openLuo.OneBot\openLuo.OneBot.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="openLuo.Tests" />
+  </ItemGroup>
 </Project>

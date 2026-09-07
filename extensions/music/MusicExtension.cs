@@ -25,8 +25,12 @@ internal static class MusicDescriptors
     public static CapabilityDescriptor ShareSong => new()
     {
         CanonicalId = "share_song", DisplayName = "Share music card",
-        Summary = "Share a song as a rich music card to the current channel.",
-        Usage = "Use when the user asks you to play, share, or recommend a specific song and the channel supports music cards. Pass the REAL song id returned by cloud_music_search; never invent an id. Send at most one card per request; after the call, add a short remark or end the turn.",
+        Summary = "Send a single song as a rich music card to the current channel.",
+        Usage = "Use to actually SEND one song card. Hard rules:\n"
+            + "1. The card is only sent when you CALL this tool successfully. Saying 'I sent the card' in text does NOT send it; never claim a card was sent without a successful tool result.\n"
+            + "2. Pass the REAL numeric id exactly as returned by cloud_music_search (first column); NEVER invent, guess, or paraphrase an id from the song name.\n"
+            + "3. If you do not have the id, call cloud_music_search first to obtain it.\n"
+            + "4. At most one card per request; pass a single id. After the tool returns ok, add a short remark or end the turn.",
         Kind = CapabilityKind.Builtin, ProviderId = "music",
         SideEffect = SideEffectClass.ReadOnly, Completion = CompletionPolicy.Continue,
         ParallelSafe = false,

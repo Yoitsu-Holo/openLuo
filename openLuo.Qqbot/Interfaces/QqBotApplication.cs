@@ -212,7 +212,11 @@ public sealed class QqBotApplication
         _ => new("text", Convert.ToString(item.Payload) ?? string.Empty)
     };
 
-    /// <summary>渲染 parts → 单条 OneBot 消息段数组发送(text/image/music 可同报文)。</summary>
+    /// <summary>渲染 parts → 按序发送若干条 OneBot 消息(text/image 合并一条,每个音乐卡独占一条)。</summary>
+    /// <remarks>
+    /// LLBot/QQ 对 text+music 同消息混发不稳(实测只出 text),故音乐卡必须单独成条;
+    /// 超过 <see cref="MaxMusicCardsPerTurn"/> 张时其余候选折叠为文本链接。
+    /// </remarks>
     private async Task SendPartsAsync(
         OneBotWebSocketClient client, bool isGroup, long targetId,
         IReadOnlyList<QqReplyPart> parts, QqBotConfig config, string logLabel, CancellationToken ct)
@@ -236,13 +240,78 @@ public sealed class QqBotApplication
         }
         if (segments.Count == 0)
             return;
-        LogMessage(config, $"[send] {logLabel}: {Truncate(string.Join(" | ", parts.Select(p => p.Kind == "text" ? p.Value : $"[{p.Kind}:{Truncate(p.Value)}]")))}");
-        var result = isGroup
-            ? await client.SendGroupMessageAsync(targetId, segments, ct)
-            : await client.SendPrivateMessageAsync(targetId, segments, ct);
-        if (!result.Ok)
-            _logger?.Error("qq", $"message send failed: {result.Error}");
+
+        foreach (var batch in SplitMusicBatches(segments))
+        {
+            var result = isGroup
+                ? await client.SendGroupMessageAsync(targetId, batch, ct)
+                : await client.SendPrivateMessageAsync(targetId, batch, ct);
+            LogMessage(config, $"[send] {logLabel}: {Truncate(string.Join(" | ", batch.Select(SegmentToLog)))}");
+            if (!result.Ok)
+                _logger?.Error("qq", $"message send failed: {result.Error}");
+        }
     }
+
+    /// <summary>单回合最多发出的音乐卡数;超出部分折叠为文本链接。</summary>
+    internal const int MaxMusicCardsPerTurn = 3;
+
+    /// <summary>把段列表拆成若干条可发送的消息。</summary>
+    /// <remarks>
+    /// LLBot/QQ 对 text+music 同消息混发不稳(实测只出 text),故音乐卡必须独占一条消息:
+    /// 非音乐段(text/image)按出场顺序合并为一条(多条连续文本/图片归一条),
+    /// 每个独占的音乐卡单独成一条,保持整体出场顺序(卡仍夹在相邻文本之间)。
+    /// 超出 <see cref="MaxMusicCardsPerTurn"/> 的音乐卡折叠为文本链接附在最后一条。
+    /// </remarks>
+    internal static IReadOnlyList<List<OneBotSegment>> SplitMusicBatches(List<OneBotSegment> segments)
+    {
+        var batches = new List<List<OneBotSegment>>();
+        var text = new List<OneBotSegment>();
+        var cards = new List<OneBotSegment>();
+        var overflow = new List<OneBotSegment>();
+
+        void FlushText()
+        {
+            if (text.Count > 0)
+            {
+                batches.Add(text);
+                text = [];
+            }
+        }
+
+        foreach (var seg in segments)
+        {
+            if (seg.Type != "music")
+            {
+                text.Add(seg);
+                continue;
+            }
+            FlushText();
+            if (cards.Count >= MaxMusicCardsPerTurn)
+            {
+                overflow.Add(seg);
+                continue;
+            }
+            cards.Add(seg);
+            batches.Add([seg]);   // 每张卡独占一条消息
+        }
+        FlushText();
+
+        if (overflow.Count > 0)
+        {
+            var note = "还有 " + overflow.Count + " 首候选(超单次发卡上限):\n"
+                + string.Join("\n", overflow.Select(m => $"https://music.163.com/#/song?id={m.Data["id"]}"));
+            batches.Add([OneBotSegment.Text(note)]);
+        }
+        return batches;
+    }
+
+    /// <summary>段 → 日志文本(文本原样,music 显示资源 id,其余显示类型)。</summary>
+    private static string SegmentToLog(OneBotSegment seg) => seg.Type switch
+    {
+        "text" => seg.Data["text"]?.GetValue<string>() ?? string.Empty,
+        "music" => $"[music:{seg.Data["id"]}]",
+        _ => $"[{seg.Type}]"
+    };
 
     /// <summary>平台命令分发:仅 admin 可执行;返回要发送的文本,null 表示已处理或不应回复。</summary>
     private async Task<string?> TryRunCommandAsync(string text, QqBotConfig config, long actorId, long channelId, bool isGroup, CancellationToken ct)

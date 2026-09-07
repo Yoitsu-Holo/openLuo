@@ -102,11 +102,13 @@ def _search(keyword: str, category: str, limit: int) -> str:
         songs = result.get("songs") or []
         if not songs:
             return "未找到相关歌曲"
-        lines = []
+        lines = [
+            "候选歌曲(数字 id 可发卡,请原样保留第一列 id 用于下一步 share_song):"
+        ]
         for i, song in enumerate(songs, 1):
             artists = ",".join(a.get("name", "") for a in (song.get("ar") or []))
             sid = song.get("id", "")
-            lines.append(f"{i}. {song.get('name', '')} - {artists} (ID: {sid}, {_song_url(sid)})")
+            lines.append(f"[{i}] id={sid} | {song.get('name', '')} - {artists} | {_song_url(sid)}")
         return "\n".join(lines)
     if category == "album":
         albums = result.get("albums") or []
@@ -273,7 +275,8 @@ mcp = MCPServer(
     name="openluo-cloud-music",
     version="1.1.0",
     instructions=(
-        "网易云音乐工具。点歌/发卡请用 cloud_music_search（返回数字 id 与网页 URL，可配合分享卡）；"
+        "网易云音乐工具。点歌/发卡流程：第一步调 cloud_music_search 得到候选列表（每行首列 id 为数字资源 id），"
+        "**把选中的 id 原样保留**；第二步用该 id 调 share_song 才真正发出音乐卡。"
         "cloud_music_official_search 返回官方开放平台信息（hex 资源 id，不能发 QQ 卡，仅作信息检索）。"
         "不要编造歌曲 id，一律使用工具返回的 id。"
     ),
@@ -283,7 +286,8 @@ mcp = MCPServer(
 @mcp.tool(
     description=(
         "按关键词搜索网易云音乐（匿名接口）。category: song(默认)/album/artist/playlist。"
-        "返回行含歌曲名称、歌手、**数字 id** 与网页 URL；分享/点歌卡片请用此 id。"
+        "返回行格式：`[序号] id=<数字资源id> | 歌名 - 歌手 | 网页URL`。"
+        "点歌/分享卡片必须使用该行第一列的 id；请把选中的 id 原样保留到发卡步骤，不要凭歌名改写或编造 id。"
     )
 )
 def cloud_music_search(keyword: str, category: str = "song", limit: int = 5) -> str:
