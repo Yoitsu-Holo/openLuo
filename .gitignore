@@ -49,5 +49,8 @@ coverage/
 # tempfile
 **/*.temp.*
 
+# Qwen-TTS 合成 WAV 落盘目录(运行时生成,便于清理,不入 git)
+mcp/qwen_tts/tmp/
+
 # logs
 logs/

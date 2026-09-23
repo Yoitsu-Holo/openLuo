@@ -11,6 +11,17 @@
       "args": ["mcp/media/media_server.py"]
     },
     {
+      "id": "qwen-tts",
+      "transport": "stdio",
+      "command": "python3",
+      "args": ["mcp/qwen_tts/qwen_tts_server.py"]
+      // 远程 Qwen-TTS 服务地址不在此落盘：经宿主进程环境变量注入 QWEN_TTS_BASE_URL
+      // （stdio 子进程继承父环境，默认不写 env 即继承）。可选：QWEN_TTS_TIMEOUT(秒,默认300)、
+      // QWEN_TTS_PROXY(JSON dict，默认绕过 http_proxy 直连服务端)。
+      // 预设音色库 data/tts/tts.json（相对运行时 cwd，即 publish 树 data/ 下；可用环境变量
+      // QWEN_TTS_VOICES 覆盖路径）。tts.example.jsonc 为入库模板；真实 tts.json + WAV 不入 git。
+    },
+    {
       "id": "cloud-music",
       "transport": "stdio",
       "command": "python3",
