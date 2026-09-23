@@ -144,7 +144,31 @@ public sealed class DefaultCapabilityDecisionLoop : ICapabilityDecisionLoop
             foreach (var result in batch.Results)
             {
                 if (result.Success && result.Outputs is { Count: > 0 })
-                    outputs.AddRange(result.Outputs);
+                {
+                    foreach (var output in result.Outputs)
+                    {
+                        if (output.Kind == ReplyItemKind.Audio)
+                        {
+                            // 音频生成即发:即时入 output 队列,经平台 interim 通道逐条推送
+                            // (D50,如 QQ ConsumeInterimQueueAsync 按 ConversationId 路由)。
+                            // 带 ConversationId 供平台路由;不加入回合 outputs,
+                            // 避免"回合结束又发一次"导致同一段双发。
+                            await request.BaseExecutionContext.OutputQueue.EnqueueAsync(new OutputItem
+                            {
+                                Id = output.Id,
+                                Kind = output.Kind,
+                                Payload = output.Payload,
+                                SourceCapability = output.SourceCapability,
+                                Fingerprint = output.Fingerprint,
+                                ConversationId = request.SessionId
+                            }, ct);
+                        }
+                        else
+                        {
+                            outputs.Add(output);
+                        }
+                    }
+                }
 
                 steps.Add(new AgentToolUseStep
                 {

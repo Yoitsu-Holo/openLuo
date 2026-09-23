@@ -94,22 +94,29 @@ public sealed class McpCapabilityInvoker : ICapabilityInvoker
         var result = await _client.CallToolAsync(toolName, arguments, cancellationToken: ct);
         var blocks = result.Content.OfType<TextContentBlock>().Select(b => b.Text).ToList();
 
-        // data URL 结果（如图片）转公共输出项；剩余文本回传 LLM
+        // 内联 data URL（图片/音频）转公共输出项；剩余文本回传 LLM
         var outputs = new List<OutputItem>();
         var textParts = new List<string>();
         foreach (var block in blocks)
         {
-            if (TryExtractDataUrl(block, out var dataUrl))
+            if (TryExtractDataUrl(block, out var dataUrl, out var isAudio, out var leading))
             {
                 outputs.Add(new OutputItem
                 {
                     Id = Guid.NewGuid().ToString("N"),
-                    Kind = ReplyItemKind.Image,
+                    Kind = isAudio ? ReplyItemKind.Audio : ReplyItemKind.Image,
                     Payload = dataUrl,
                     SourceCapability = call.CanonicalId,
                     Fingerprint = $"mcp:{_serverId}:{dataUrl.GetHashCode()}"
                 });
-                textParts.Add("image fetched; the image is delivered to the user with this reply");
+                // 前置文本(如"本次朗读完成...")保留给 LLM，让模型知道本次结果的语义；
+                // 仅当无前置文本时用通用占位符。
+                if (!string.IsNullOrWhiteSpace(leading))
+                    textParts.Add(leading.Trim());
+                else
+                    textParts.Add(isAudio
+                        ? "audio fetched; the audio is delivered to the user with this reply"
+                        : "image fetched; the image is delivered to the user with this reply");
             }
             else
             {
@@ -143,16 +150,38 @@ public sealed class McpCapabilityInvoker : ICapabilityInvoker
         return canonicalId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? canonicalId[prefix.Length..] : canonicalId;
     }
 
-    private static bool TryExtractDataUrl(string text, out string dataUrl)
+    /// <summary>从文本块提取内联 data URL(图片/音频)，并回传 data URL 之前的前置文本。</summary>
+    /// <remarks>
+    /// 兼容两种形态：① 整块仅为 data URL(旧行为,前置文本为空)；
+    /// ② 块内含 `<前置文本>\ndata:&lt;mime&gt;;base64,...`(如 TTS 返回的"本次朗读完成...\ndata:audio/...")。
+    /// data URL 从 `data:` 起到**该行末尾**或块尾,避免吞掉其后文本。
+    /// </remarks>
+    private static bool TryExtractDataUrl(string text, out string dataUrl, out bool isAudio, out string leading)
     {
         dataUrl = string.Empty;
-        var trimmed = text.Trim();
-        if (!trimmed.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+        isAudio = false;
+        leading = string.Empty;
+
+        var start = text.IndexOf("data:", StringComparison.OrdinalIgnoreCase);
+        if (start < 0)
             return false;
-        var comma = trimmed.IndexOf(";base64,", StringComparison.OrdinalIgnoreCase);
-        if (comma < 0)
+        var base64 = text.IndexOf(";base64,", start, StringComparison.OrdinalIgnoreCase);
+        if (base64 < 0)
             return false;
-        dataUrl = trimmed;
+        var mime = text[(start + 5)..base64];
+        if (mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            isAudio = false;
+        else if (mime.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+            isAudio = true;
+        else
+            return false;
+
+        // data URL 到行尾/块尾(避免吞掉其后文本)
+        var newline = text.IndexOf('\n', base64);
+        var end = newline < 0 ? text.Length : newline;
+        dataUrl = text[start..end].TrimEnd();
+
+        leading = text[..start].TrimEnd();
         return true;
     }
 }
