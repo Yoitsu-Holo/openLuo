@@ -1,0 +1,11 @@
+{
+  // ===== 世界/数据库配置 =====
+  // [需重启] 修改后需重启生效
+  //
+  // databasePath: 留空使用默认路径
+  //   Windows: %APPDATA%\openLuo\game.db
+  //   macOS:   ~/Library/Application Support/openLuo/game.db
+  //   Linux:   ~/.config/openLuo/game.db
+
+  "databasePath": ""
+}

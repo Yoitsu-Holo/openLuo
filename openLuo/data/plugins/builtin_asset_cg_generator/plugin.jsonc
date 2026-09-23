@@ -1,0 +1,8 @@
+{
+  "id": "builtin_asset_cg_generator",
+  "name": "CG 场景图资产生成",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onStartup", "onNarrativeAfter"],
+  "tools": []
+}

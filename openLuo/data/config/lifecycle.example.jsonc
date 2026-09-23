@@ -1,0 +1,10 @@
+{
+  // ===== 作息/体力配置 =====
+  // [热加载] 修改后自动生效
+
+  "lifecycle": {
+    "wakeUpBaseMinute": 480,
+    "lateSleepThresholdMinute": 120,
+    "minimumRecoveryDelta": 20.0
+  }
+}

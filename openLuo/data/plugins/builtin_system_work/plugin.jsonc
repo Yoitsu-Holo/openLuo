@@ -1,0 +1,36 @@
+{
+  "id": "builtin_system_work",
+  "name": "工作与休息",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": [],
+  "tools": [
+    {
+      "name": "work",
+      "description": "打工赚取金币（part-time / overtime）",
+      "category": "command",
+      "aliases": [],
+      "helpShort": "打工赚钱，例：/work part-time",
+      "riskLevel": "low",
+      "needsConfirm": false
+    },
+    {
+      "name": "rest",
+      "description": "小休息：消耗 30 分钟，恢复 10 点体力（随时可用）",
+      "category": "command",
+      "aliases": [],
+      "helpShort": "稍作休息，小幅恢复体力",
+      "riskLevel": "low",
+      "needsConfirm": false
+    },
+    {
+      "name": "nap",
+      "description": "小睡：消耗 90 分钟，恢复 25 点体力（随时可用）",
+      "category": "command",
+      "aliases": [],
+      "helpShort": "小睡一觉，较多恢复体力",
+      "riskLevel": "low",
+      "needsConfirm": false
+    }
+  ]
+}

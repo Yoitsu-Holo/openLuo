@@ -1,0 +1,84 @@
+{
+  "id": "core-capabilities",
+  "name": "Core agent capabilities",
+  "items": [
+    {
+      "name": "list_characters",
+      "aliases": ["characters", "list_roles", "list_agents"],
+      "helpShort": "列出当前存档中可联系的角色",
+      "category": "core",
+      "prefix": "",
+      "usage": "list_characters",
+      "riskLevel": "low",
+      "needsConfirm": false,
+      "capabilities": ["roster-query", "character-query"],
+      "providerId": "core_agent_capabilities",
+      "executorKind": "core"
+    },
+    {
+      "name": "narrative_chat",
+      "aliases": ["render_dialogue", "dialogue_chat"],
+      "helpShort": "调用叙事聊天渲染链并返回最终角色对白",
+      "category": "render",
+      "prefix": "",
+      "usage": "narrative_chat --message <玩家输入>",
+      "riskLevel": "low",
+      "needsConfirm": false,
+      "capabilities": ["narrative", "dialogue", "renderer"],
+      "providerId": "core_agent_capabilities",
+      "executorKind": "core"
+    },
+    {
+      "name": "character_response",
+      "aliases": ["reply_to_player", "respond"],
+      "helpShort": "生成角色对玩家的自然语言回复，适合在完成工具目标后向玩家汇报或进行纯对话",
+      "category": "core",
+      "prefix": "",
+      "usage": "character_response",
+      "riskLevel": "low",
+      "needsConfirm": false,
+      "capabilities": ["dialogue", "reply", "chat"],
+      "providerId": "core_agent_capabilities",
+      "executorKind": "core"
+    },
+    {
+      "name": "offer_gift",
+      "aliases": ["accept_gift", "receive_gift"],
+      "helpShort": "从玩家背包中执行一次真实赠礼，并返回礼物执行结果",
+      "category": "core",
+      "prefix": "",
+      "usage": "offer_gift --item <物品名>",
+      "riskLevel": "low",
+      "needsConfirm": false,
+      "capabilities": ["gift", "inventory", "interaction"],
+      "providerId": "core_agent_capabilities",
+      "executorKind": "core"
+    },
+    {
+      "name": "ask_character",
+      "aliases": ["consult_character", "query_character"],
+      "helpShort": "向另一位角色发送问题并等待其真实回复",
+      "category": "inter-agent",
+      "prefix": "",
+      "usage": "ask_character --target <角色名|角色ID> --question <问题>",
+      "riskLevel": "low",
+      "needsConfirm": false,
+      "capabilities": ["inter-agent", "character-query", "dialogue"],
+      "providerId": "core_agent_capabilities",
+      "executorKind": "inter-agent"
+    },
+    {
+      "name": "chat_with_character_session",
+      "aliases": ["talk_with_character", "character_chat_session"],
+      "helpShort": "让当前角色和另一位角色进行一段自然对话，并返回对话记录",
+      "category": "inter-agent",
+      "prefix": "",
+      "usage": "chat_with_character_session --target <角色名|角色ID> --opening <开场白>",
+      "riskLevel": "low",
+      "needsConfirm": false,
+      "capabilities": ["inter-agent", "dialogue", "session"],
+      "providerId": "core_agent_capabilities",
+      "executorKind": "inter-agent"
+    }
+  ]
+}

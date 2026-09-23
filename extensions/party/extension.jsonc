@@ -1,0 +1,10 @@
+{
+  "id": "party",
+  "version": "1.0.0",
+  "displayName": "Party",
+  "description": "Multi-character roster and delegation.",
+  "assembly": "openLuo.Extension.Party.dll",
+  "entryType": "OpenLuo.Extensions.Party.PartyExtension",
+  "requires": [{ "id": "companion", "minVersion": "1.0.0" }],
+  "dataDir": "data"
+}

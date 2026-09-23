@@ -1,0 +1,8 @@
+{
+  "id": "builtin_asset_bg_generator",
+  "name": "背景图资产生成",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onStartup", "onNarrativeAfter"],
+  "tools": []
+}

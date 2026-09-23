@@ -1,0 +1,15 @@
+{
+  // ===== Agent 运行时配置 =====
+  // [热加载] 修改后自动生效
+
+  "agent": {
+    "chatRoundTimeoutSeconds": 60,
+    "taskDispatchTimeoutSeconds": 24,
+    "pendingAbilityConfirmTimeoutSeconds": 45,
+    "invocationConfirmTimeoutSeconds": 30,
+    "contextConversationRetainCount": 24,
+    // 向每个对话上下文注入当前时间标记
+    "injectTimeContext": true
+    // 注入方案由内核 TimeMode 决定（Realtime → 绝对时间，Virtual → 相对时间）
+  }
+}

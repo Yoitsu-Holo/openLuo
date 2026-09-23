@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>OpenLuo.Extensions.Sticker</RootNamespace>
+    <AssemblyName>openLuo.Extension.Sticker</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\openLuo.Abstractions\openLuo.Abstractions.csproj" />
+    <ProjectReference Include="..\..\openLuo.Embedding\openLuo.Embedding.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="openLuo.Extensions.Tests" />
+  </ItemGroup>
+
+</Project>

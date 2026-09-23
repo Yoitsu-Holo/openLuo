@@ -1,0 +1,74 @@
+{
+  // ===== LLM 提供商配置 =====
+  // [热加载] 修改后自动生效
+  // 拷贝此文件为 llm.jsonc 并填入你的 apiKey
+
+  "llm": {
+    // 推荐：多模型路由模式。LLM 层只看结构化能力需求，不解析用户语义。
+    // priority 越大越优先；DeepSeek 可作为快文本模型，Qwen 可作为低优先级视觉模型。
+    "routes": [
+      {
+        "name": "deepseek-fast-text",
+        "enabled": true,
+        "priority": 100,
+        "provider": "DeepSeek",
+        "baseUrl": "https://api.deepseek.com/v1/",
+        "apiKey": "",
+        "model": "deepseek-v4-flash",
+        "temperature": 0.5,
+        "maxTokens": null,
+        "streaming": false,
+        "timeoutSeconds": 60,
+        "maxRetryAttempts": 5,
+        "baseDelayMs": 2500,
+        "rateLimitPerMinute": 30,
+        "capabilities": {
+          "supportsVision": false,
+          "supportsJsonMode": true,
+          "supportsStreaming": true,
+          "supportsTools": true
+        }
+      },
+      {
+        "name": "qwen-vision",
+        "enabled": true,
+        "priority": 50,
+        "provider": "Qwen",
+        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+        "apiKey": "",
+        "model": "qwen-vl-plus",
+        "temperature": 0.7,
+        "maxTokens": null,
+        "streaming": false,
+        "timeoutSeconds": 120,
+        "maxRetryAttempts": 5,
+        "baseDelayMs": 2500,
+        "rateLimitPerMinute": 30,
+        "capabilities": {
+          "supportsVision": true,
+          "supportsJsonMode": true,
+          "supportsStreaming": true,
+          "supportsTools": true
+        }
+      }
+    ],
+
+    // ===== 模型路由策略（D60）=====
+    // 语义：路由只回答"这次回复是否需要视觉能力"，选哪个模型由系统按能力匹配 + priority 决定。
+    // 上下文无图 → 非视觉模型优先（零路由推理）；有图 → 用文本路由模型做微型推理，
+    // prompt 只含图片 base64 采样（[image:base64: ...]，让模型意识到有图但不读内容），
+    // 返回 {"multimodal": true|false}；失败/超时/解析失败 → 有图回退视觉优先。
+    // 调用方显式要求视觉（RequiredCapabilities.Vision）→ 直接选视觉，不做推理。
+    // routing.model 必须是 routes[*].name；候选恰好一个时永远短路（不调用路由模型）。
+    "routing": {
+      "mode": "llm",
+      "model": "deepseek-fast-text",
+      "maxTokens": 256,
+      "timeoutSeconds": 8
+    }
+
+    // route-only 模式：所有 provider/baseUrl/apiKey/model/capabilities 都必须写在 routes[*] 内。
+    // llm 外层不再支持单模型 provider/baseUrl/apiKey/model/capabilities 字段。
+  }
+}
+

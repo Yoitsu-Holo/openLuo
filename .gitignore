@@ -1,0 +1,56 @@
+# Build output
+bin/
+obj/
+publish/
+
+# User config (contains API keys)
+config.json
+*.db
+*.db-shm
+*.db-wal
+
+# Runtime data (extension image libraries, per-release local assets).
+# Kept out of git: user-private/copyright assets. Published via Makefile's
+# `cp -r openLuo/data` into the release tree on each `make publish`.
+openLuo/data/stickers/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ai pilot
+**/.claude/
+**/.omc/
+**/.omx/
+**/.codex
+
+# python
+.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# test / debug artifacts
+TestResults/
+**/TestResults/
+*.trx
+*.coverage
+coverage/
+
+
+# tempfile
+**/*.temp.*
+
+# Qwen-TTS 合成 WAV 落盘目录(运行时生成,便于清理,不入 git)
+mcp/qwen_tts/tmp/
+
+# logs
+logs/

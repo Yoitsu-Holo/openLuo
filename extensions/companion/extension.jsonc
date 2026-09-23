@@ -1,0 +1,10 @@
+{
+  "id": "companion",
+  "version": "1.0.0",
+  "displayName": "Companion",
+  "description": "Persona-aware companion chat and planning.",
+  "assembly": "openLuo.Extension.Companion.dll",
+  "entryType": "OpenLuo.Extensions.Companion.CompanionExtension",
+  "requires": [{ "id": "memory", "minVersion": "1.0.0" }],
+  "dataDir": "data"
+}

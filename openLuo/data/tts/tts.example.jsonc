@@ -1,0 +1,25 @@
+{
+  // Qwen-TTS 预设音色库（模板，入库）。
+  // 真实文件：将本文件复制为同目录 tts.json，并把参考 WAV 放到同目录（真文件不入 git）。
+  // 匹配：qwen_tts_speak(charId, text) 按 角色卡 id 字段 → aliases(数组) → default 依次选音色。
+  //
+  // 条目字段：
+  //   id       必填：对应的 openLuo 角色卡(openLuo/data/archetypes/*.jsonc)的 id 字段。
+  //   name     可读名（仅展示/排查）。
+  //   ref_audio 必填：参考音频 WAV 路径，相对本文件所在目录。
+  //   ref_text 强烈建议：参考音频的准确文字转写（显著提升克隆对齐质量）。
+  //   aliases  可选：额外可选中的 id 数组（默认只有 id 匹配）。
+  //   default  可选 true：未匹配到任何音色时的回退音色（应为真实存在的条目）。
+  //   language 可选：语言代码，缺省服务端自动检测。
+  // 注：语气/情绪不在此配置——clone/speak 路径没有风格参数，服务端也不解析 [标记]（标记会被念出来）。
+  "voices": [
+    {
+      "id": "custom-rin-bot",
+      "name": "泠汐",
+      "ref_audio": "raw_01_24k.wav",
+      "ref_text": "如果天依是拥有时间魔法的魔女,真想让时间永远停留在这一刻。也许在万千的演唱会中,天依的这一场并没有那么特别,甚至会被许多人误解",
+      "aliases": [],
+      "default": true
+    }
+  ]
+}

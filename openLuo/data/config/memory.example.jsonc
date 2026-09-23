@@ -1,0 +1,23 @@
+{
+  // ===== 记忆系统配置 =====
+  // [热加载] 修改后自动生效
+
+  "memoryRetrieval": {
+    "characterTopK": 8,
+    "globalTopK": 4,
+    "recentN": 12,
+    "emotionalN": 8,
+    "globalDistanceMax": 0.7
+  },
+
+  "memoryStore": {
+    "embeddingOperationTimeoutSeconds": 8,
+    "compressionLookbackDays": 30,
+    "compressionCheckCount": 50
+  },
+
+  "sqliteVec": {
+    "extensionPath": "",
+    "vectorDimensions": 2560
+  }
+}

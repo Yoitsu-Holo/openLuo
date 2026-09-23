@@ -1,0 +1,119 @@
+[
+  {
+    "namespace": "char_status",
+    "key": "mood",
+    "ownerKind": "character",
+    "valueType": "enum",
+    "defaultValue": "Neutral",
+    "mutableByLlm": true,
+    "derived": false,
+    "statusGroup": "emotion",
+    "statusOrder": 150,
+    "hiddenFromStatus": false,
+    "displayFormat": "心情：{value}",
+    "promptContext": "心情影响角色的反应和态度。",
+    "pluginId": "builtin_char_status_daily",
+    "metadata": {
+      "name": "心情",
+      "category": "emotion"
+    },
+    "enumValues": [
+      "Happy",
+      "Neutral",
+      "Sad",
+      "Angry"
+    ]
+  },
+  {
+    "namespace": "char_status",
+    "key": "stress",
+    "ownerKind": "character",
+    "valueType": "number",
+    "defaultValue": "30",
+    "mutableByLlm": true,
+    "derived": false,
+    "statusGroup": "emotion",
+    "statusOrder": 160,
+    "hiddenFromStatus": false,
+    "displayFormat": "压力：{value}/100",
+    "promptContext": "压力 0-100。平稳（<30）：心态放松。紧张（30-70）：有些焦虑但可控。高压（>70）：极度紧张焦虑，易怒易崩溃，对小事反应过激，需要安慰和减压。",
+    "pluginId": "builtin_char_status_daily",
+    "metadata": {
+      "name": "压力",
+      "category": "emotion",
+      "maxDeltaPerTurn": 15
+    },
+    "enumValues": [],
+    "min": "0",
+    "max": "100"
+  },
+  {
+    "namespace": "char_status",
+    "key": "energy",
+    "ownerKind": "character",
+    "valueType": "number",
+    "defaultValue": "100",
+    "mutableByLlm": true,
+    "derived": false,
+    "statusGroup": "physical",
+    "statusOrder": 200,
+    "hiddenFromStatus": false,
+    "displayFormat": "体力：{value}/100",
+    "promptContext": "体力低时角色会疲惫、不愿活动。",
+    "pluginId": "builtin_char_status_daily",
+    "metadata": {
+      "name": "体力",
+      "category": "physical",
+      "maxDeltaPerTurn": 15
+    },
+    "enumValues": [],
+    "min": "0",
+    "max": "100"
+  },
+  {
+    "namespace": "char_status",
+    "key": "health",
+    "ownerKind": "character",
+    "valueType": "number",
+    "defaultValue": "100",
+    "mutableByLlm": true,
+    "derived": false,
+    "statusGroup": "physical",
+    "statusOrder": 210,
+    "hiddenFromStatus": false,
+    "displayFormat": "健康：{value}/100",
+    "promptContext": "健康低时角色会虚弱、需要休息。",
+    "pluginId": "builtin_char_status_daily",
+    "metadata": {
+      "name": "健康",
+      "category": "physical",
+      "maxDeltaPerTurn": 10
+    },
+    "enumValues": [],
+    "min": "0",
+    "max": "100"
+  },
+  {
+    "namespace": "char_status",
+    "key": "fatigue",
+    "ownerKind": "character",
+    "valueType": "number",
+    "defaultValue": "20",
+    "mutableByLlm": true,
+    "derived": false,
+    "statusGroup": "physical",
+    "statusOrder": 220,
+    "hiddenFromStatus": false,
+    "displayFormat": "疲劳：{value}/100",
+    "promptContext": "疲劳度 0-100。轻度疲劳（<30）：精力充沛。中度疲劳（30-70）：有些累但能坚持。重度疲劳（>70）：身心俱疲，反应迟钝，不愿活动，强烈需要休息，可能打哈欠、揉眼睛。",
+    "pluginId": "builtin_char_status_daily",
+    "metadata": {
+      "name": "疲劳度",
+      "category": "physical",
+      "maxDeltaPerTurn": 15
+    },
+    "enumValues": [],
+    "min": "0",
+    "max": "100"
+  }
+]

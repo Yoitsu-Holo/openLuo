@@ -1,0 +1,5 @@
+# openLuo Qwen-TTS 预设音色库（用户本地资产）
+# 真实音色清单与 WAV 不入 git（版权/体积），与 openLuo/data/stickers 同惯例。
+# 发布时随 `cp -r openLuo/data` 带进 publish 树；tts.example.jsonc 为入库模板，不受本规则影响。
+tts.json
+*.wav

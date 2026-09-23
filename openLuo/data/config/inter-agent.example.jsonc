@@ -1,0 +1,10 @@
+{
+  // ===== 角色间通讯配置 =====
+  // [热加载] 修改后自动生效
+
+  "interAgent": {
+    "askTimeoutSeconds": 12,
+    "sessionTurnTimeoutSeconds": 12,
+    "hiddenDialogueFuseTurns": 24
+  }
+}

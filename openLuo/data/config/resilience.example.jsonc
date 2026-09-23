@@ -1,0 +1,11 @@
+{
+  // ===== 重试/容错配置 =====
+  // [热加载] 修改后自动生效
+
+  "resilience": {
+    "llmMaxRetryAttempts": 3,
+    "llmRetryDelaySeconds": 1,
+    "databaseMaxRetryAttempts": 2,
+    "databaseRetryDelayMilliseconds": 500
+  }
+}

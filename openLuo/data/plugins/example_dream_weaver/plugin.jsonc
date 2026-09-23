@@ -1,0 +1,8 @@
+{
+  "id": "example_dream_weaver",
+  "name": "梦境编织示例",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": ["onStartup", "onSleep"],
+  "tools": []
+}

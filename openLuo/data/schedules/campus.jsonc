@@ -1,0 +1,24 @@
+{
+  "id": "campus-schedule",
+  "name": "Campus daily schedule windows",
+  "items": [
+    {
+      "id": "class",
+      "name": "上课时段",
+      "startMinute": 570,
+      "endMinute": 690,
+      "allowList": ["help", "status", "chat", "plan_date", "time_mode", "debug"],
+      "blockMessage": "现在是上课时段（09:30-11:30），该操作暂不可用。可尝试 /chat 或 /status。",
+      "noticeMessage": ""
+    },
+    {
+      "id": "lunch",
+      "name": "午餐时段",
+      "startMinute": 720,
+      "endMinute": 780,
+      "blockCommands": ["work"],
+      "blockMessage": "现在是午餐时段（12:00-13:00），先去吃饭再继续工作吧。",
+      "noticeMessage": "🍱 到午餐时间了，可以先去食堂休息一下。"
+    }
+  ]
+}

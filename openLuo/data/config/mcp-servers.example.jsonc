@@ -1,0 +1,67 @@
+{
+  // MCP server 集合配置（D48）
+  // 每个 server 的能力注册为 mcp:{serverId}:{toolName}，进 [Capabilities] 供模型调用。
+  // 传输：stdio（本地进程）/ streamable-http / streamablehttp（远程端点）。
+  // headers 附加到每个请求；鉴权头按服务要求直接写明文（如 Bearer YOUR_MCP_TOKEN）。
+  "servers": [
+    {
+      "id": "media",
+      "transport": "stdio",
+      "command": "python3",
+      "args": ["mcp/media/media_server.py"]
+    },
+    {
+      "id": "qwen-tts",
+      "transport": "stdio",
+      "command": "python3",
+      "args": ["mcp/qwen_tts/qwen_tts_server.py"]
+      // 远程 Qwen-TTS 服务地址不在此落盘：经宿主进程环境变量注入 QWEN_TTS_BASE_URL
+      // （stdio 子进程继承父环境，默认不写 env 即继承）。可选：QWEN_TTS_TIMEOUT(秒,默认300)、
+      // QWEN_TTS_PROXY(JSON dict，默认绕过 http_proxy 直连服务端)。
+      // 预设音色库 data/tts/tts.json（相对运行时 cwd，即 publish 树 data/ 下；可用环境变量
+      // QWEN_TTS_VOICES 覆盖路径）。tts.example.jsonc 为入库模板；真实 tts.json + WAV 不入 git。
+    },
+    {
+      "id": "cloud-music",
+      "transport": "stdio",
+      "command": "python3",
+      "args": ["mcp/cloud_music/cloud_music_server.py"],
+      // 官方开放平台后端（可选，不配则只启用匿名搜索）：
+      // stdio 子进程无 headers，密钥经 env 注入（NCM_OPENAPI_APP_ID 与 NCM_OPENAPI_PRIVATE_KEY
+      // 必填；NCM_OPENAPI_ACCESS_TOKEN 可选，缺省自动 anonymous 登录）。
+      // 注意：这里会明文落盘，建议改用宿主进程环境变量注入（stdio 子进程继承父环境）。
+      // "env": {
+      //   "NCM_OPENAPI_APP_ID": "YOUR_APP_ID",
+      //   "NCM_OPENAPI_PRIVATE_KEY": "YOUR_X509_PRIVATE_KEY_NO_HEADER",
+      //   "NCM_OPENAPI_ACCESS_TOKEN": ""
+      // }
+    },
+    {
+      "id": "mcd",
+      "transport": "streamable-http",
+      "url": "https://mcp.mcd.cn",
+      "injectContextKeys": false,
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_TOKEN"
+      }
+    },
+    {
+      "id": "12306",
+      "transport": "streamable-http",
+      "url": "https://mcp.api-inference.modelscope.net/303e117d05c441/mcp",
+      "injectContextKeys": false
+    },
+    {
+      "id": "amap",
+      "transport": "streamable-http",
+      "url": "https://mcp.amap.com/mcp?key=YOUR_AMAP_KEY",
+      "injectContextKeys": false
+    },
+    {
+      "id": "web-fetch",
+      "transport": "streamable-http",
+      "url": "https://mcp.api-inference.modelscope.net/YOUR_FETCH_ENDPOINT_ID/mcp",
+      "injectContextKeys": false
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "id": "core-time-state-defs",
+  "name": "Kernel time state definitions",
+  "items": [
+    {
+      "namespace": "system_time",
+      "key": "mode",
+      "ownerKind": "System",
+      "valueType": "Enum",
+      "defaultValue": "virtual",
+      "enumValues": ["virtual", "realtime", "disabled"],
+      "hiddenFromStatus": true,
+      "mutableByLlm": false,
+      "derived": false,
+      "pluginId": "core_time_kernel",
+      "promptContext": "Time mode: virtual/realtime/disabled.",
+      "metadataJson": "{\"name\":\"time_mode\",\"category\":\"system\"}",
+      "sourceKind": "core"
+    },
+    {
+      "namespace": "system_time",
+      "key": "timezone",
+      "ownerKind": "System",
+      "valueType": "Text",
+      "defaultValue": "local",
+      "hiddenFromStatus": true,
+      "mutableByLlm": false,
+      "derived": false,
+      "pluginId": "core_time_kernel",
+      "promptContext": "Timezone setting: local/utc or a system timezone ID.",
+      "metadataJson": "{\"name\":\"timezone\",\"category\":\"system\"}",
+      "sourceKind": "core"
+    },
+    {
+      "namespace": "system_time",
+      "key": "realtime_advance_policy",
+      "ownerKind": "System",
+      "valueType": "Enum",
+      "defaultValue": "no_op",
+      "enumValues": ["no_op"],
+      "hiddenFromStatus": true,
+      "mutableByLlm": false,
+      "derived": false,
+      "pluginId": "core_time_kernel",
+      "promptContext": "Advance policy in realtime time mode.",
+      "metadataJson": "{\"name\":\"realtime_advance_policy\",\"category\":\"system\"}",
+      "sourceKind": "core"
+    }
+  ]
+}

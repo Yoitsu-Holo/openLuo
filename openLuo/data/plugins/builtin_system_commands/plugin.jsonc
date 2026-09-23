@@ -1,0 +1,45 @@
+{
+  "id": "builtin_system_commands",
+  "name": "系统指令",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "hooks": [],
+  "tools": [
+    {
+      "name": "help",
+      "aliases": [],
+      "description": "显示所有可用指令",
+      "category": "command",
+      "helpShort": "显示所有可用指令",
+      "riskLevel": "low",
+      "needsConfirm": false
+    },
+    {
+      "name": "give",
+      "aliases": ["gift", "赠礼"],
+      "description": "向当前角色赠送礼物",
+      "category": "command",
+      "helpShort": "向当前角色赠送礼物",
+      "riskLevel": "low",
+      "needsConfirm": true
+    },
+    {
+      "name": "debug",
+      "aliases": [],
+      "description": "调试指令：查看内部状态",
+      "category": "command",
+      "helpShort": "调试指令",
+      "riskLevel": "medium",
+      "needsConfirm": false
+    },
+    {
+      "name": "time_mode",
+      "aliases": ["time"],
+      "description": "查看或切换时间模式",
+      "category": "command",
+      "helpShort": "查看或切换时间模式",
+      "riskLevel": "low",
+      "needsConfirm": false
+    }
+  ]
+}

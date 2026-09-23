@@ -1,0 +1,9 @@
+{
+  "id": "sticker",
+  "version": "1.0.0",
+  "displayName": "Sticker",
+  "description": "Sticker sending via embedding search over a filename-tagged image library.",
+  "assembly": "openLuo.Extension.Sticker.dll",
+  "entryType": "OpenLuo.Extensions.Sticker.StickerExtension",
+  "dataDir": "data"
+}
