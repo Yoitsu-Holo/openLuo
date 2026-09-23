@@ -60,6 +60,7 @@ public sealed class QqRuntimeBridge
     {
         ReplyItemKind.Text => new("text", Convert.ToString(item.Payload) ?? string.Empty),
         ReplyItemKind.Image => new("image", Convert.ToString(item.Payload) ?? string.Empty),
+        ReplyItemKind.Audio => new("record", Convert.ToString(item.Payload) ?? string.Empty),
         // Card = 结构化不透明载荷：与产出扩展（music:share_song）联合契约
         // { Platform="163", Id, Title?, Url? }。解析失败按 Url/JSON 文本降级。
         ReplyItemKind.Card => RenderCard(item),
@@ -100,5 +101,5 @@ public sealed class QqRuntimeBridge
     }
 }
 
-/// <summary>Kind: text | image | music（OneBot music 段,Value 为平台资源 id）。</summary>
+/// <summary>Kind: text | image | music（OneBot music 段,Value 为平台资源 id）| record（语音,Value 为 data URL）。</summary>
 public sealed record QqReplyPart(string Kind, string Value);

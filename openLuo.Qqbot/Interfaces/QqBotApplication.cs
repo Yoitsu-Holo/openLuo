@@ -208,6 +208,7 @@ public sealed class QqBotApplication
     private static QqReplyPart ToReplyPart(OutputItem item) => item.Kind switch
     {
         ReplyItemKind.Image => new("image", Convert.ToString(item.Payload) ?? string.Empty),
+        ReplyItemKind.Audio => new("record", Convert.ToString(item.Payload) ?? string.Empty),
         ReplyItemKind.Card => QqRuntimeBridge.TryRenderCard(item) ?? new("text", Convert.ToString(item.Payload) ?? string.Empty),
         _ => new("text", Convert.ToString(item.Payload) ?? string.Empty)
     };
@@ -228,6 +229,9 @@ public sealed class QqBotApplication
             {
                 case "image" when ExtractBase64(part.Value) is { } image:
                     segments.Add(OneBotSegment.Image($"base64://{image}"));
+                    break;
+                case "record" when ExtractBase64(part.Value) is { } audio:
+                    segments.Add(OneBotSegment.Record($"base64://{audio}"));
                     break;
                 case "music" when long.TryParse(part.Value, out var songId):
                     segments.Add(OneBotSegment.Music163(songId));
@@ -257,9 +261,10 @@ public sealed class QqBotApplication
 
     /// <summary>把段列表拆成若干条可发送的消息。</summary>
     /// <remarks>
-    /// LLBot/QQ 对 text+music 同消息混发不稳(实测只出 text),故音乐卡必须独占一条消息:
-    /// 非音乐段(text/image)按出场顺序合并为一条(多条连续文本/图片归一条),
-    /// 每个独占的音乐卡单独成一条,保持整体出场顺序(卡仍夹在相邻文本之间)。
+    /// LLBot/QQ 对同条消息内多个"独占段"混发不稳(实测 text+music 只出 text、
+    /// 多 record 只取第一个),故 music 与 record 段必须各自独占一条消息:
+    /// 非独占段(text/image)按出场顺序合并为一条(多条连续文本/图片归一条),
+    /// 每个独占段单独成一条,保持整体出场顺序(独占段仍夹在相邻文本之间)。
     /// 超出 <see cref="MaxMusicCardsPerTurn"/> 的音乐卡折叠为文本链接附在最后一条。
     /// </remarks>
     internal static IReadOnlyList<List<OneBotSegment>> SplitMusicBatches(List<OneBotSegment> segments)
@@ -278,21 +283,27 @@ public sealed class QqBotApplication
             }
         }
 
+        static bool IsExclusive(OneBotSegment s) =>
+            s.Type is "music" or "record";   // OneBot→QQ 同消息多个这类段只取第一个,必须独占
+
         foreach (var seg in segments)
         {
-            if (seg.Type != "music")
+            if (!IsExclusive(seg))
             {
                 text.Add(seg);
                 continue;
             }
             FlushText();
-            if (cards.Count >= MaxMusicCardsPerTurn)
+            if (seg.Type == "music")
             {
-                overflow.Add(seg);
-                continue;
+                if (cards.Count >= MaxMusicCardsPerTurn)
+                {
+                    overflow.Add(seg);
+                    continue;
+                }
+                cards.Add(seg);
             }
-            cards.Add(seg);
-            batches.Add([seg]);   // 每张卡独占一条消息
+            batches.Add([seg]);   // 每个独占段单独一条消息
         }
         FlushText();
 
@@ -310,6 +321,7 @@ public sealed class QqBotApplication
     {
         "text" => seg.Data["text"]?.GetValue<string>() ?? string.Empty,
         "music" => $"[music:{seg.Data["id"]}]",
+        "record" => "[record]",
         _ => $"[{seg.Type}]"
     };
 

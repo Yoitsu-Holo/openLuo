@@ -11,6 +11,7 @@ public sealed class MusicBatchSplitTests
 {
     private static OneBotSegment Music(long id) => OneBotSegment.Music163(id);
     private static OneBotSegment Text(string t) => OneBotSegment.Text(t);
+    private static OneBotSegment Record(string d) => OneBotSegment.Record(d);
 
     [Fact]
     public void TextAndMusic_SplitIntoTwoBatches()
@@ -77,10 +78,38 @@ public sealed class MusicBatchSplitTests
         Assert.Equal(["c"], batches[2].Select(Log).ToArray());
     }
 
+    [Fact]
+    public void MultiRecord_EachRecordInOwnBatch()
+    {
+        // 多条 record(语音)必须各自独占一条消息(OneBot→QQ 同消息多个 record 只取第一个)
+        var batches = QqBotApplication.SplitMusicBatches([Record("bin1"), Record("bin2"), Record("bin3")]);
+        Assert.Equal(3, batches.Count);
+        foreach (var b in batches)
+            Assert.Single(b, s => s.Type == "record");
+        Assert.Equal(["bin1"], batches[0].Select(Log).ToArray());
+        Assert.Equal(["bin2"], batches[1].Select(Log).ToArray());
+        Assert.Equal(["bin3"], batches[2].Select(Log).ToArray());
+    }
+
+    [Fact]
+    public void MusicAndRecord_EachExclusiveInOwnBatch()
+    {
+        // text + 卡 + 语音:文本一条,卡独占一条,语音独占一条(各自成为独立消息)
+        var batches = QqBotApplication.SplitMusicBatches([Text("给你听"), Music(1), Record("binX")]);
+        Assert.Equal(3, batches.Count);
+        Assert.Equal(["给你听"], batches[0].Select(Log).ToArray());
+        Assert.Equal(["1"], batches[1].Select(Log).ToArray());
+        Assert.Equal(["binX"], batches[2].Select(Log).ToArray());
+    }
+
     private static string Log(OneBotSegment s) => s.Type switch
     {
         "text" => s.Data["text"]?.GetValue<string>() ?? string.Empty,
         "music" => (s.Data["id"]?.GetValue<long>() ?? 0L).ToString(),
+        "record" => StringValue(s, "file"),
         _ => s.Type
     };
+
+    private static string StringValue(OneBotSegment s, string key)
+        => s.Data[key]?.GetValue<string>() ?? string.Empty;
 }
