@@ -129,7 +129,7 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 | 段 | 区间 | 领域 |
 | --- | --- | --- |
-| 1xxx | 1000–1999 | 通用 / 成功 |
+| 1xxx | 1000–1999 | 通用 / 成功（`11xx` 配置） |
 | 2xxx | 2000–2999 | 协议 |
 | 3xxx | 3000–3999 | 鉴权 |
 | 4xxx | 4000–4999 | 会话 |
@@ -145,6 +145,10 @@ HTTP body 与 WS 帧**共用同一结构**：
 | --- | --- | --- | --- |
 | 1000 | success | 成功（`errorMsg` 为空串） | — |
 | 1001 | unknown | 未分类 | — |
+| 1101 | config.namespace_not_found | 配置命名空间不存在 | false |
+| 1102 | config.invalid_value | 配置值非法（类型/结构） | false |
+| 1103 | config.read_only | 该命名空间只读 | false |
+| 1104 | config.persist_failed | 配置落盘失败 | true |
 | 2001 | protocol.version_mismatch | 协议 major 不符 | false |
 | 2002 | protocol.bad_envelope | Envelope 结构非法 | false |
 | 2003 | protocol.unknown_type | 未知消息类型（可忽略） | — |
@@ -219,6 +223,26 @@ HTTP body 与 WS 帧**共用同一结构**：
 | GET | `/v1/assets/{assetId}` | 返回原始字节（`Content-Type` 由资产决定），用于 image/audio/file |
 | HEAD | `/v1/assets/{assetId}` | 元数据（size/mime/checksum） |
 
+### 5.7 配置（管理，需 `admin`）
+
+配置命名空间对应 `config/{ns}.jsonc`；有效值 = **default ⊕ file ⊕ runtime**（后者覆盖前者，
+来源见 `ConfigSources`）。
+
+| 方法 | 路径 | 请求 `data` | 响应 `data` | 说明 |
+| --- | --- | --- | --- | --- |
+| GET | `/v1/config` | — | `ConfigListResponse` | 列出命名空间（来源 / 是否覆盖） |
+| GET | `/v1/config/{ns}` | — | `ConfigGetResponse` | 获取有效值（**敏感字段掩码 `***`**） |
+| POST | `/v1/config/{ns}` | `ConfigSetRequest` | `ConfigSetResponse` | JSON 合并写入覆盖层 |
+| DELETE | `/v1/config/{ns}` | `ConfigDeleteRequest` | `ConfigDeleteResponse` | 删除覆盖 → 回退默认 |
+
+**语义**
+
+- `persist=false`（默认）：仅写**运行时**覆盖（进程内，重启丢失）。
+- `persist=true`：写回磁盘 `config/{ns}.jsonc`（失败回 `1104 config.persist_failed`）。
+- POST 为**递归合并**（对象按键递归；数组整体替换）；值为 `null` 表示删除该键（回退下层）。
+- DELETE 后 `source` 回退到 `file` 或 `default`；关键命名空间（如 `server`）标记只读，写操作回 `1103 config.read_only`。
+- 变更经 `RuntimeConfigCenter` 热加载生效，并向所有 WS 连接广播 `config.updated`。
+
 ---
 
 ## 6. WebSocket 数据面协议
@@ -242,6 +266,7 @@ HTTP body 与 WS 帧**共用同一结构**：
 | `output.ack` | `{sequence}` | 已成功投递（对应 `IOutputQueue.AckAsync`） |
 | `output.fail` | `{sequence, permanent}` | 投递失败（对应 `FailAsync`） |
 | `confirm.response` | `{requestId, approved, reason?}` | 高危能力确认结果（§8） |
+| `config.get` / `config.set` / `config.del` | `ConfigGetCommand` / `ConfigSetCommand` / `ConfigDelCommand` | 配置读取 / 修改 / 删除（§5.7，需 `admin`） |
 | `ping` | `{}` | 心跳 |
 
 ### 6.2 服务端 → 客户端（事件）
@@ -260,7 +285,8 @@ HTTP body 与 WS 帧**共用同一结构**：
 | `context.updated` | `{sessionId, regions[]}` | 上下文快照变更（可选/调试） |
 | `state.updated` | `{sessionId, version, patch[]}` | 世界状态变更 |
 | `confirm.request` | `{requestId, turnId, canonicalId, risk, summary, argsPreview}` | 高危能力需确认 |
-| `error` | `{code, message, retryable, details}` | 关联 `replyTo` |
+| `config.updated` | `ConfigUpdatedEvent` | 配置已变更（热加载广播） |
+| `error` | 顶层 `errorCode` / `errorMsg`（§4.2 / §4.5） | 关联 `replyTo` |
 | `pong` | `{ts}` | 心跳应答 |
 
 ### 6.3 典型时序（流式回合）
@@ -449,5 +475,6 @@ sequenceDiagram
 | 5 | 端口 | `127.0.0.1:8674`（避让 LLBot 的 3001/3010） |
 | 6 | 流式实现 | **内核真流式**：`ComposedAgentRuntime.StreamTurnAsync` 还原为逐事件产出（改 `DefaultCapabilityDecisionLoop` + `ComposedAgentRuntime`），Server 直接消费；不做 Server 层近似流式 |
 | 7 | 错误模型 | **`errorCode`(int) + `errorMsg`**：码值分段（1000=成功；2xxx 协议 / 3xxx 鉴权 / 4xxx 会话 / 5xxx 回合 / 6xxx 能力 / 7xxx 资产 / 8xxx 限流 / 9xxx 服务端）；稳定标识经 `ErrorCodes.NameOf` 提供，**不入 wire** |
+| 8 | 配置协议 | **`get` / `post` / `del`** 三类（HTTP `/v1/config`；WS `config.get`/`set`/`del` + `config.updated` 广播）：有效值 = default ⊕ file ⊕ runtime，删除即回退默认；支持 `persist` 落盘；需 `admin`，敏感字段掩码 |
 
 仍开放：TLS 终结方式（Hub 直出 vs 反向代理）——实施 Server 时再定。

@@ -100,3 +100,80 @@ public sealed record StateResponse
     public long Version { get; init; }
     public JsonNode? Values { get; init; }
 }
+
+// ─────────────────────────── 配置（管理，需 admin 权限） ───────────────────────────
+
+/// <summary>`GET /v1/config` 单项（命名空间摘要）。</summary>
+public sealed record ConfigNamespaceDto
+{
+    /// <summary>命名空间（对应 <c>config/{ns}.jsonc</c>），如 llm / agent / timeouts。</summary>
+    public string Namespace { get; init; } = string.Empty;
+
+    /// <summary>有效值来源：见 <see cref="ConfigSources"/>。</summary>
+    public string Source { get; init; } = ConfigSources.Default;
+
+    /// <summary>是否存在覆盖（file 或 runtime）。</summary>
+    public bool Overridden { get; init; }
+
+    public DateTimeOffset UpdatedAt { get; init; }
+}
+
+/// <summary>`GET /v1/config` 响应。</summary>
+public sealed record ConfigListResponse
+{
+    public IReadOnlyList<ConfigNamespaceDto> Namespaces { get; init; } = [];
+}
+
+/// <summary>`GET /v1/config/{ns}` 响应（敏感字段已掩码为 <c>***</c>）。</summary>
+public sealed record ConfigGetResponse
+{
+    public string Namespace { get; init; } = string.Empty;
+
+    /// <summary>见 <see cref="ConfigSources"/>。</summary>
+    public string Source { get; init; } = ConfigSources.Default;
+
+    /// <summary>合并后的有效值。</summary>
+    public JsonNode? Values { get; init; }
+
+    /// <summary>当前覆盖层（file ⊕ runtime）；无覆盖为 null。</summary>
+    public JsonNode? Overrides { get; init; }
+}
+
+/// <summary>`POST /v1/config/{ns}` 请求：以 JSON 合并方式写入覆盖层。</summary>
+public sealed record ConfigSetRequest
+{
+    /// <summary>待合并的配置片段（对象）。</summary>
+    public JsonNode? Values { get; init; }
+
+    /// <summary>true = 写回 <c>config/{ns}.jsonc</c>；false = 仅运行时（重启丢失）。</summary>
+    public bool Persist { get; init; }
+}
+
+/// <summary>`POST /v1/config/{ns}` 响应（返回合并后的有效值）。</summary>
+public sealed record ConfigSetResponse
+{
+    public string Namespace { get; init; } = string.Empty;
+
+    /// <summary>见 <see cref="ConfigSources"/>。</summary>
+    public string Source { get; init; } = ConfigSources.Runtime;
+
+    public JsonNode? Values { get; init; }
+}
+
+/// <summary>`DELETE /v1/config/{ns}` 请求：删除覆盖，回退到下一层（最终为默认值）。</summary>
+public sealed record ConfigDeleteRequest
+{
+    /// <summary>true = 同时删除 <c>config/{ns}.jsonc</c>；false = 仅清运行时覆盖。</summary>
+    public bool Persist { get; init; }
+}
+
+/// <summary>`DELETE /v1/config/{ns}` 响应。</summary>
+public sealed record ConfigDeleteResponse
+{
+    public string Namespace { get; init; } = string.Empty;
+
+    /// <summary>删除后回退到的来源（通常为 <see cref="ConfigSources.Default"/>）。</summary>
+    public string Source { get; init; } = ConfigSources.Default;
+
+    public JsonNode? Values { get; init; }
+}

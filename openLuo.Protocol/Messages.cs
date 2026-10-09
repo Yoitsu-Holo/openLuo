@@ -168,3 +168,38 @@ public sealed record PongEvent
 {
     public DateTimeOffset Ts { get; init; } = DateTimeOffset.UtcNow;
 }
+
+// ─────────────────────────── 配置（WS 命令 / 事件） ───────────────────────────
+
+/// <summary>`config.get`：读取命名空间配置（敏感字段掩码）。</summary>
+public sealed record ConfigGetCommand
+{
+    public string Namespace { get; init; } = string.Empty;
+}
+
+/// <summary>`config.set`：合并写入命名空间配置。</summary>
+public sealed record ConfigSetCommand
+{
+    public string Namespace { get; init; } = string.Empty;
+    public JsonNode? Values { get; init; }
+    public bool Persist { get; init; }
+}
+
+/// <summary>`config.del`：删除命名空间覆盖，回退默认。</summary>
+public sealed record ConfigDelCommand
+{
+    public string Namespace { get; init; } = string.Empty;
+    public bool Persist { get; init; }
+}
+
+/// <summary>`config.updated`：配置已变更（热加载广播，含发起方）。</summary>
+public sealed record ConfigUpdatedEvent
+{
+    public string Namespace { get; init; } = string.Empty;
+
+    /// <summary>变更后来源，见 <see cref="ConfigSources"/>。</summary>
+    public string Source { get; init; } = ConfigSources.Default;
+
+    /// <summary>变更发起方 clientId（服务端自身触发的热加载为 null）。</summary>
+    public string? ChangedBy { get; init; }
+}

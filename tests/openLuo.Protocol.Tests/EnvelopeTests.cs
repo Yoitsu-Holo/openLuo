@@ -134,6 +134,8 @@ public sealed class ErrorCodesTests
         int[] all =
         [
             ErrorCodes.Success, ErrorCodes.Unknown,
+            ErrorCodes.ConfigNamespaceNotFound, ErrorCodes.ConfigInvalidValue,
+            ErrorCodes.ConfigReadOnly, ErrorCodes.ConfigPersistFailed,
             ErrorCodes.ProtocolVersionMismatch, ErrorCodes.ProtocolBadEnvelope, ErrorCodes.ProtocolUnknownType,
             ErrorCodes.AuthUnauthorized, ErrorCodes.AuthForbidden,
             ErrorCodes.SessionNotFound, ErrorCodes.SessionLimitExceeded,
@@ -146,6 +148,63 @@ public sealed class ErrorCodesTests
 
         Assert.Equal(all.Length, all.Distinct().Count());
         Assert.All(all, code => Assert.InRange(code, 1000, 9999));
+    }
+}
+
+public sealed class ConfigProtocolTests
+{
+    [Fact]
+    public void ConfigSet_RoundTrips_WithNamespacedValues()
+    {
+        var json = ProtocolJson.Serialize(EnvelopeFactory.Create(MessageTypes.ConfigSet, new ConfigSetCommand
+        {
+            Namespace = "llm",
+            Persist = true,
+            Values = JsonNode.Parse("""{"routes":[{"model":"deepseek"}]}"""),
+        }));
+
+        Assert.Contains("\"type\":\"config.set\"", json);
+
+        var back = ProtocolJson.Deserialize<Envelope>(json)!.DataAs<ConfigSetCommand>();
+        Assert.NotNull(back);
+        Assert.Equal("llm", back!.Namespace);
+        Assert.True(back.Persist);
+        Assert.Equal("deepseek", back.Values!["routes"]![0]!["model"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void ConfigGet_Response_ReportsSource_And_OmitsNullOverrides()
+    {
+        var response = new ConfigGetResponse
+        {
+            Namespace = "timeouts",
+            Source = ConfigSources.File,
+            Values = JsonNode.Parse("""{"mcp":15}"""),
+        };
+
+        var json = ProtocolJson.Serialize(response);
+
+        Assert.Contains("\"source\":\"file\"", json);
+        Assert.DoesNotContain("overrides", json);   // null 被忽略
+    }
+
+    [Fact]
+    public void ConfigDelete_DefaultsToDefaultSource()
+    {
+        var response = new ConfigDeleteResponse { Namespace = "world" };
+
+        Assert.Equal(ConfigSources.Default, response.Source);
+        Assert.Equal("config.del", MessageTypes.ConfigDel);
+        Assert.Equal("config.updated", EventTypes.ConfigUpdated);
+    }
+
+    [Fact]
+    public void ConfigErrorCodes_Are1101Series()
+    {
+        Assert.Equal(1101, ErrorCodes.ConfigNamespaceNotFound);
+        Assert.Equal("config.namespace_not_found", ErrorCodes.NameOf(ErrorCodes.ConfigNamespaceNotFound));
+        Assert.Equal("config.invalid_value", ErrorCodes.NameOf(ErrorCodes.ConfigInvalidValue));
+        Assert.Equal("config", Features.Config);
     }
 }
 
