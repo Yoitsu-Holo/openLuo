@@ -141,6 +141,7 @@ if (options.Mode is LaunchMode.Serve)
         serviceProvider.GetRequiredService<openLuo.Capabilities.Core.Models.ICapabilityCatalog>());
     var configService = new openLuo.Modules.AppShell.Application.JsonConfigService(
         Path.Combine(Directory.GetCurrentDirectory(), "config"));
-    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService);
+    var jobs = new openLuo.Modules.AppShell.Application.InMemoryJobService();
+    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs);
     return;
 }

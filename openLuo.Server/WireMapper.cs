@@ -52,6 +52,18 @@ public static class WireMapper
         Note = note,
     };
 
+    public static JobDto ToDto(JobInfo job) => new()
+    {
+        Id = job.Id,
+        Kind = job.Kind,
+        Status = job.Status,
+        Progress = job.Progress,
+        Message = job.Message,
+        SessionId = job.SessionId,
+        CreatedAt = job.CreatedAt,
+        CompletedAt = job.CompletedAt,
+    };
+
     public static CapabilityDto ToDto(CapabilityDescriptor descriptor) => new()
     {
         CanonicalId = descriptor.CanonicalId,

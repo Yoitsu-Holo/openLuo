@@ -39,6 +39,37 @@ internal sealed class HubMetrics
     public void ClientClosed() => Interlocked.Decrement(ref _clients);
 }
 
+/// <summary>在线连接广播（作业 / 调度 / 通知等非回合事件）。</summary>
+internal sealed class HubBroadcaster
+{
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, WebSocket> _sockets = new(StringComparer.Ordinal);
+
+    public void Add(string id, WebSocket socket) => _sockets[id] = socket;
+
+    public void Remove(string id) => _sockets.TryRemove(id, out _);
+
+    public async Task BroadcastAsync(Envelope envelope)
+    {
+        if (_sockets.IsEmpty)
+            return;
+
+        var bytes = Encoding.UTF8.GetBytes(ProtocolJson.Serialize(envelope));
+        foreach (var (_, socket) in _sockets)
+        {
+            if (socket.State != WebSocketState.Open)
+                continue;
+            try
+            {
+                await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+            }
+            catch (WebSocketException)
+            {
+                // 断开：忽略（连接循环会清理）
+            }
+        }
+    }
+}
+
 /// <summary>
 /// 最小 Hub：HTTP 控制面（health/version/sessions） + WebSocket 数据面
 /// （hello/welcome、session.open、turn.submit → 真流式事件 → turn.final）。
@@ -48,7 +79,7 @@ public static class HubServer
 {
     public static async Task RunAsync(
         IAgentRuntime runtime, HubServerOptions options, IRuntimeDirectory? directory = null,
-        IConfigService? config = null, CancellationToken ct = default)
+        IConfigService? config = null, IJobService? jobs = null, CancellationToken ct = default)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -59,6 +90,7 @@ public static class HubServer
 
         var startedAt = DateTimeOffset.UtcNow;
         var metrics = new HubMetrics();
+        var broadcaster = new HubBroadcaster();
         string[] features = [Features.Streaming, Features.MultiSession, Features.Confirm, Features.Config];
 
         app.MapGet("/v1/health", () => Json(EnvelopeFactory.Create("health", new HealthDto
@@ -209,6 +241,74 @@ public static class HubServer
             }));
         });
 
+        if (jobs is not null)
+        {
+            app.MapPost("/v1/jobs", async (HttpContext ctx, CancellationToken requestCt) =>
+            {
+                var body = await JsonSerializer.DeserializeAsync<CreateJobRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
+                           ?? new CreateJobRequest();
+                if (string.IsNullOrWhiteSpace(body.Kind))
+                    return Error(ErrorCodes.JobInvalid, "kind is required");
+
+                try
+                {
+                    var job = await jobs.SubmitAsync(body.Kind, body.Payload, body.SessionId, requestCt);
+                    return Json(EnvelopeFactory.Create("job", WireMapper.ToDto(job)));
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Error(ErrorCodes.JobInvalid, ex.Message);
+                }
+            });
+
+            app.MapGet("/v1/jobs/{id}", (string id) =>
+            {
+                var job = jobs.Get(id);
+                return job is null
+                    ? Error(ErrorCodes.JobNotFound, $"job not found: {id}")
+                    : Json(EnvelopeFactory.Create("job", WireMapper.ToDto(job)));
+            });
+
+            app.MapDelete("/v1/jobs/{id}", (string id) =>
+                jobs.Cancel(id)
+                    ? Json(EnvelopeFactory.Create("job", new JobDto { Id = id, Status = JobStatuses.Cancelled, CompletedAt = DateTimeOffset.UtcNow }))
+                    : Error(ErrorCodes.JobNotFound, $"job not running: {id}"));
+
+            // 作业事件 → 广播给所有在线客户端（§6.4）
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await foreach (var evt in jobs.WatchAsync(ct))
+                        await broadcaster.BroadcastAsync(ToEnvelope(evt));
+                }
+                catch (OperationCanceledException)
+                {
+                    // 服务关闭
+                }
+            }, CancellationToken.None);
+
+            static Envelope ToEnvelope(JobEvent evt) => evt.Kind switch
+            {
+                "job.accepted" => EnvelopeFactory.Create(EventTypes.JobAccepted, new JobAcceptedEvent
+                {
+                    JobId = evt.Job.Id, Kind = evt.Job.Kind, SessionId = evt.Job.SessionId,
+                }),
+                "job.progress" => EnvelopeFactory.Create(EventTypes.JobProgress, new JobProgressEvent
+                {
+                    JobId = evt.Job.Id, Progress = evt.Job.Progress, Message = evt.Job.Message,
+                }),
+                "job.completed" => EnvelopeFactory.Create(EventTypes.JobCompleted, new JobCompletedEvent
+                {
+                    JobId = evt.Job.Id,
+                }),
+                _ => EnvelopeFactory.Create(EventTypes.JobFailed, new JobFailedEvent
+                {
+                    JobId = evt.Job.Id, ErrorCode = ErrorCodes.JobFailed, ErrorMsg = evt.ErrorMsg ?? "failed",
+                }),
+            };
+        }
+
         app.Map("/v1/stream", async (HttpContext ctx) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest)
@@ -220,12 +320,15 @@ public static class HubServer
 
             using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
             metrics.ClientOpened();
+            var clientKey = ProtocolIds.NewUlid();
+            broadcaster.Add(clientKey, socket);
             try
             {
                 await HandleConnectionAsync(socket, runtime, options, features, metrics, ctx.RequestAborted);
             }
             finally
             {
+                broadcaster.Remove(clientKey);
                 metrics.ClientClosed();
             }
         });
