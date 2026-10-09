@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>openLuo.Protocol</RootNamespace>
+    <AssemblyName>openLuo.Protocol</AssemblyName>
+    <Description>openLuo Wire 协议契约（HTTP 控制面 + WebSocket 数据面共用）。零业务依赖，供客户端与服务端共同引用。</Description>
+  </PropertyGroup>
+
+</Project>

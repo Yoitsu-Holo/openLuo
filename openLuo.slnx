@@ -26,9 +26,11 @@
   <Project Path="openLuo.Gui/openLuo.Gui.csproj" />
   <Project Path="openLuo.Qqbot/openLuo.Qqbot.csproj" />
   <Project Path="openLuo.OneBot/openLuo.OneBot.csproj" />
+  <Project Path="openLuo.Protocol/openLuo.Protocol.csproj" />
   <Project Path="tests/openLuo.Capabilities.Tests/openLuo.Capabilities.Tests.csproj" />
   <Project Path="tests/openLuo.AgentContext.Tests/openLuo.AgentContext.Tests.csproj" />
   <Project Path="tests/openLuo.Extensions.Tests/openLuo.Extensions.Tests.csproj" />
   <Project Path="tests/openLuo.Cli.Tests/openLuo.Cli.Tests.csproj" />
   <Project Path="tests/openLuo.E2E.Tests/openLuo.E2E.Tests.csproj" />
+  <Project Path="tests/openLuo.Protocol.Tests/openLuo.Protocol.Tests.csproj" />
 </Solution>
