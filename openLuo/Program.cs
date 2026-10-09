@@ -16,6 +16,28 @@ using System.Diagnostics;
 var options = LaunchOptions.Parse(args);
 if (options is null) return;
 
+// 交互客户端（CLI / TUI / GUI）：经协议连 Hub（Hub 为唯一权威；不启动内核）
+if (options.Mode is LaunchMode.Cli or LaunchMode.Tui or LaunchMode.Gui)
+{
+    var hubUrl = Environment.GetEnvironmentVariable("OPENLUO_HUB_URL")
+        ?? $"ws://127.0.0.1:{openLuo.Protocol.ProtocolInfo.DefaultPort}{openLuo.Protocol.ProtocolInfo.StreamPath}";
+
+    if (options.Mode is LaunchMode.Cli)
+    {
+        await new openLuo.Cli.CliHubApp(hubUrl, "builtin-rin", "companion").RunAsync(Console.In);
+        return;
+    }
+
+    if (options.Mode is LaunchMode.Tui)
+    {
+        await new TuiApplication(hubUrl).RunAsync();
+        return;
+    }
+
+    GuiApplication.Launch(hubUrl);
+    return;
+}
+
 await using var host = await OpenLuoBootstrapper.BootstrapAsync(options.Mode);
 if (host is null) return;
 var serviceProvider = host.ServiceProvider;
@@ -102,11 +124,6 @@ if (options.Mode is LaunchMode.Serve)
     await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService);
     return;
 }
-if (options.Mode is LaunchMode.Tui)
-{
-    await new TuiApplication(runtime).RunAsync();
-    return;
-}
 if (options.Mode is LaunchMode.QqBot)
 {
     await new QqBotApplication(
@@ -116,14 +133,3 @@ if (options.Mode is LaunchMode.QqBot)
         serviceProvider.GetService<openLuo.Core.Interfaces.IGameLogger>()).RunAsync();
     return;
 }
-if (options.Mode is LaunchMode.Gui)
-{
-    GuiApplication.Launch(runtime);
-    return;
-}
-
-var session = await runtime.OpenSessionAsync(new SessionOpenRequest
-{
-    SessionId = "cli-session", SubjectId = "builtin-rin", AgentId = "companion", ClientType = "cli", ClientId = "local"
-});
-await new openLuo.Cli.CliApplication(runtime).RunAsync(session, Console.In);

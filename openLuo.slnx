@@ -29,7 +29,6 @@
   <Project Path="openLuo.Protocol/openLuo.Protocol.csproj" />
   <Project Path="openLuo.Server/openLuo.Server.csproj" />
   <Project Path="openLuo.Client/openLuo.Client.csproj" />
-  <Project Path="openLuo.Client.Cli/openLuo.Client.Cli.csproj" />
   <Project Path="tests/openLuo.Capabilities.Tests/openLuo.Capabilities.Tests.csproj" />
   <Project Path="tests/openLuo.AgentContext.Tests/openLuo.AgentContext.Tests.csproj" />
   <Project Path="tests/openLuo.Extensions.Tests/openLuo.Extensions.Tests.csproj" />

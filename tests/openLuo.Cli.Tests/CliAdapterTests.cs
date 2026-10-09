@@ -1,5 +1,5 @@
-using openLuo.Capabilities.Core;
-using openLuo.Capabilities.Core.Models;
+using System.Text.Json.Nodes;
+using openLuo.Protocol;
 using Xunit;
 
 namespace openLuo.Cli.Tests;
@@ -23,7 +23,13 @@ public sealed class CliAdapterTests
     [Fact]
     public void Renderer_HandlesTextAndMediaKinds()
     {
-        Assert.Equal("hello", openLuo.Cli.CliRenderer.Render(new OutputItem { Kind = ReplyItemKind.Text, Payload = "hello" }));
-        Assert.StartsWith("[image]", openLuo.Cli.CliRenderer.Render(new OutputItem { Kind = ReplyItemKind.Image, Payload = "data:image/png;base64,x" }));
+        Assert.Equal("hello", openLuo.Cli.CliRenderer.Render(
+            new OutputDto { Kind = OutputKind.Text, Payload = JsonValue.Create("hello") }));
+
+        Assert.StartsWith("[image]", openLuo.Cli.CliRenderer.Render(
+            new OutputDto { Kind = OutputKind.Image, Payload = JsonValue.Create("data:image/png;base64,x") }));
+
+        Assert.Equal("[card] https://x/y", openLuo.Cli.CliRenderer.Render(
+            new OutputDto { Kind = OutputKind.Card, Payload = JsonNode.Parse("""{"url":"https://x/y"}""") }));
     }
 }
