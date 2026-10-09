@@ -30,6 +30,8 @@
   <Project Path="openLuo.Server/openLuo.Server.csproj" />
   <Project Path="openLuo.Client/openLuo.Client.csproj" />
   <Project Path="openLuo.Modules.WorldState/openLuo.Modules.WorldState.csproj" />
+  <Project Path="openLuo.Domain/openLuo.Domain.csproj" />
+  <Project Path="openLuo.Modules.Agent/openLuo.Modules.Agent.csproj" />
   <Project Path="tests/openLuo.Capabilities.Tests/openLuo.Capabilities.Tests.csproj" />
   <Project Path="tests/openLuo.AgentContext.Tests/openLuo.AgentContext.Tests.csproj" />
   <Project Path="tests/openLuo.Extensions.Tests/openLuo.Extensions.Tests.csproj" />

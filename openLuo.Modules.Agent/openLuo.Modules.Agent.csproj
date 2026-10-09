@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>openLuo.Modules.Agent</RootNamespace>
+    <AssemblyName>openLuo.Modules.Agent</AssemblyName>
+    <Description>角色 Agent 运行层（Ports + RuntimeHub + Roster）。独立于宿主 exe，供扩展依赖。</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\openLuo.Capabilities\openLuo.Capabilities.csproj" />
+    <ProjectReference Include="..\openLuo.Domain\openLuo.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

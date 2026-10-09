@@ -55,6 +55,8 @@
     <ProjectReference Include="..\openLuo.Server\openLuo.Server.csproj" />
     <ProjectReference Include="..\openLuo.Client\openLuo.Client.csproj" />
     <ProjectReference Include="..\openLuo.Modules.WorldState\openLuo.Modules.WorldState.csproj" />
+    <ProjectReference Include="..\openLuo.Domain\openLuo.Domain.csproj" />
+    <ProjectReference Include="..\openLuo.Modules.Agent\openLuo.Modules.Agent.csproj" />
   </ItemGroup>
 
   <ItemGroup>

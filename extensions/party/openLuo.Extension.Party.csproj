@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\openLuo.Abstractions\openLuo.Abstractions.csproj" />
-    <ProjectReference Include="..\..\openLuo\openLuo.csproj" />
+    <ProjectReference Include="..\..\openLuo.Modules.Agent\openLuo.Modules.Agent.csproj" />
+    <ProjectReference Include="..\..\openLuo.Domain\openLuo.Domain.csproj" />
   </ItemGroup>
 </Project>
