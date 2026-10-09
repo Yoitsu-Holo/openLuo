@@ -22,8 +22,25 @@ public sealed class HubServerOptions
     public string ServerVersion { get; init; } = "0.1.0";
 }
 
+/// <summary>Hub 运行指标（进程内计数）。</summary>
+internal sealed class HubMetrics
+{
+    private long _turns;
+    private long _errors;
+    private int _clients;
+
+    public long Turns => Interlocked.Read(ref _turns);
+    public long Errors => Interlocked.Read(ref _errors);
+    public int Clients => Volatile.Read(ref _clients);
+
+    public void TurnStarted() => Interlocked.Increment(ref _turns);
+    public void ErrorReported() => Interlocked.Increment(ref _errors);
+    public void ClientOpened() => Interlocked.Increment(ref _clients);
+    public void ClientClosed() => Interlocked.Decrement(ref _clients);
+}
+
 /// <summary>
-/// 最小 Hub：HTTP 控制面（health/version/sessions）+ WebSocket 数据面
+/// 最小 Hub：HTTP 控制面（health/version/sessions） + WebSocket 数据面
 /// （hello/welcome、session.open、turn.submit → 真流式事件 → turn.final）。
 /// 内核经 <see cref="IAgentRuntime"/> 注入，Hub 不感知内核实现。
 /// </summary>
@@ -41,6 +58,7 @@ public static class HubServer
         app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
 
         var startedAt = DateTimeOffset.UtcNow;
+        var metrics = new HubMetrics();
         string[] features = [Features.Streaming, Features.MultiSession, Features.Confirm, Features.Config];
 
         app.MapGet("/v1/health", () => Json(EnvelopeFactory.Create("health", new HealthDto
@@ -178,6 +196,19 @@ public static class HubServer
                 : Json(EnvelopeFactory.Create("context", new ContextResponse { Summary = summary }));
         });
 
+        app.MapGet("/v1/metrics", async (CancellationToken requestCt) =>
+        {
+            var sessions = await runtime.ListSessionsAsync(requestCt);
+            return Json(EnvelopeFactory.Create("metrics", new MetricsDto
+            {
+                UptimeSec = (DateTimeOffset.UtcNow - startedAt).TotalSeconds,
+                SessionsActive = sessions.Count,
+                TurnsTotal = metrics.Turns,
+                ErrorsTotal = metrics.Errors,
+                ClientsConnected = metrics.Clients,
+            }));
+        });
+
         app.Map("/v1/stream", async (HttpContext ctx) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest)
@@ -188,7 +219,15 @@ public static class HubServer
             }
 
             using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
-            await HandleConnectionAsync(socket, runtime, options, features, ctx.RequestAborted);
+            metrics.ClientOpened();
+            try
+            {
+                await HandleConnectionAsync(socket, runtime, options, features, metrics, ctx.RequestAborted);
+            }
+            finally
+            {
+                metrics.ClientClosed();
+            }
         });
 
         await app.StartAsync(ct);
@@ -252,7 +291,7 @@ public static class HubServer
     }
 
     private static async Task HandleConnectionAsync(
-        WebSocket socket, IAgentRuntime runtime, HubServerOptions options, string[] features, CancellationToken ct)
+        WebSocket socket, IAgentRuntime runtime, HubServerOptions options, string[] features, HubMetrics metrics, CancellationToken ct)
     {
         var buffer = new byte[64 * 1024];
         var sessionId = string.Empty;
@@ -349,7 +388,8 @@ public static class HubServer
                     }
 
                     var req = envelope.DataAs<TurnRequestDto>() ?? new TurnRequestDto();
-                    await RunTurnStreamAsync(socket, runtime, sessionId, req, envelope.Id, ct);
+                    metrics.TurnStarted();
+                    await RunTurnStreamAsync(socket, runtime, sessionId, req, envelope.Id, metrics, ct);
                     break;
                 }
 
@@ -366,7 +406,7 @@ public static class HubServer
     }
 
     private static async Task RunTurnStreamAsync(
-        WebSocket socket, IAgentRuntime runtime, string sessionId, TurnRequestDto req, string requestId, CancellationToken ct)
+        WebSocket socket, IAgentRuntime runtime, string sessionId, TurnRequestDto req, string requestId, HubMetrics metrics, CancellationToken ct)
     {
         var turnId = string.IsNullOrWhiteSpace(req.TurnId) ? $"turn_{ProtocolIds.NewUlid()}" : req.TurnId!;
 
@@ -402,6 +442,9 @@ public static class HubServer
                     EnvelopeFactory.Create(EventTypes.TurnFinal, WireMapper.ToDto(result, turnId), sessionId: sessionId),
                 _ => null,
             };
+
+            if (evt.Kind == "final" && evt.Payload is TurnResult { Success: false })
+                metrics.ErrorReported();   // ErrorsTotal = 失败回合数
 
             if (envelope is not null)
                 await SendAsync(socket, envelope, ct);
