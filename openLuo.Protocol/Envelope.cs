@@ -9,6 +9,8 @@ namespace openLuo.Protocol;
 /// 统一协议信封：HTTP body 与 WebSocket 帧**共用同一结构**。
 /// <see cref="Data"/> 为类型特定载荷（弱类型 JSON 树）；类型化便捷见
 /// <see cref="EnvelopeFactory"/> 与 <see cref="EnvelopeExtensions"/>。
+/// 响应状态用 <see cref="ErrorCode"/>（int）+ <see cref="ErrorMsg"/> 表达：
+/// <see cref="ErrorCodes.Success"/>(1000) 表示成功，其余为错误。
 /// </summary>
 public sealed class Envelope
 {
@@ -36,10 +38,14 @@ public sealed class Envelope
     /// <summary>类型特定载荷。</summary>
     public JsonNode? Data { get; init; }
 
-    /// <summary>错误（成功时为 null）。</summary>
-    public ErrorInfo? Error { get; init; }
+    /// <summary>错误码（见 <see cref="ErrorCodes"/>）；成功为 1000。</summary>
+    public int ErrorCode { get; init; } = ErrorCodes.Success;
 
-    public bool IsError => Error is not null;
+    /// <summary>错误消息（人读）；成功时为空串。</summary>
+    public string ErrorMsg { get; init; } = string.Empty;
+
+    /// <summary>是否为错误响应。</summary>
+    public bool IsError => ErrorCode != ErrorCodes.Success;
 }
 
 /// <summary>协议 JSON 序列化约定：camelCase 属性名、枚举 camelCase 字符串、null 忽略。</summary>
@@ -99,7 +105,7 @@ public static class ProtocolIds
 /// <summary>信封构造工厂（自动生成 id、类型化 data → JSON 树）。</summary>
 public static class EnvelopeFactory
 {
-    /// <summary>构造一条 data 消息（命令或事件）。</summary>
+    /// <summary>构造一条成功消息（命令或事件）。</summary>
     public static Envelope Create<TData>(
         string type,
         TData? data,
@@ -115,10 +121,11 @@ public static class EnvelopeFactory
         Data = data is null ? null : JsonSerializer.SerializeToNode(data, ProtocolJson.Options),
     };
 
-    /// <summary>构造一条错误消息。</summary>
+    /// <summary>构造一条错误消息（errorCode + errorMsg）。</summary>
     public static Envelope CreateError(
         string type,
-        ErrorInfo error,
+        int errorCode,
+        string errorMsg,
         string? replyTo = null,
         string? sessionId = null,
         string? traceId = null) => new()
@@ -128,7 +135,8 @@ public static class EnvelopeFactory
         SessionId = sessionId,
         ReplyTo = replyTo,
         TraceId = traceId,
-        Error = error,
+        ErrorCode = errorCode,
+        ErrorMsg = errorMsg,
     };
 }
 

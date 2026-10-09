@@ -92,13 +92,15 @@ HTTP body 与 WS 帧**共用同一结构**：
   "traceId": "01J8Z...",           // 可选：链路追踪
   "replyTo": "01J8Z...",           // 可选：响应/结果指向请求 id
   "data": { },                     // 类型特定载荷
-  "error": { "code": "…", "message": "…", "retryable": false, "details": {} }
+  "errorCode": 1000,               // int：1000=成功；错误见 §4.5 码表
+  "errorMsg": ""                   // 成功为空串；错误为可读消息
 }
 ```
 
+- **状态一律由 `errorCode`（int）+ `errorMsg` 表达**：成功固定 `1000` / `""`，与是否携带 `data` 无关。
 - 请求/响应式消息：服务端以 `replyTo = 请求id` 回填；HTTP 端点直接返回 Envelope。
 - 事件式消息：服务端主动推送，`type` 为事件类型。
-- 未知 `type`：接收方**必须忽略**（前向兼容），并可选回 `protocol.unknown_type`。
+- 未知 `type`：接收方**必须忽略**（前向兼容），并可选回 `2003`（`protocol.unknown_type`）。
 
 ### 4.3 版本协商
 
@@ -119,24 +121,45 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 ### 4.5 错误模型
 
-`error.code` 命名：`<domain>.<reason>`，`domain ∈ {protocol, auth, session, turn, capability, asset, server, rate}`。
+状态由 **`errorCode`（int）+ `errorMsg`（string）** 表达（见 §4.2）。码值**分段**，段内递增；
+`errorMsg` 为人读消息，客户端**不得**依赖其文本，应依据码值/段判断。每个码的稳定标识
+（如 `protocol.version_mismatch`）由 `ErrorCodes.NameOf(code)` 提供，用于日志/文档/调试，**不入 wire**。
 
-| code | 语义 | retryable |
+**码值分段**
+
+| 段 | 区间 | 领域 |
 | --- | --- | --- |
-| `protocol.version_mismatch` | 协议 major 不符 | false |
-| `protocol.bad_envelope` | Envelope 结构非法 | false |
-| `auth.unauthorized` | token 缺失/无效 | false |
-| `auth.forbidden` | 无该会话/角色权限 | false |
-| `session.not_found` | 会话不存在或已关闭 | false |
-| `session.limit_exceeded` | 超过并发会话上限 | true |
-| `turn.busy` | 该会话已有进行中回合 | true |
-| `turn.cancelled` | 回合被取消 | false |
-| `turn.budget_exceeded` | 决策预算耗尽 | false |
-| `capability.confirmation_required` | 需用户确认（见 §8） | — |
-| `capability.failed` | 能力执行失败 | true |
-| `asset.not_found` | 资产引用失效 | true |
-| `rate.limited` | 限流 | true |
-| `server.internal` | 未分类错误 | true |
+| 1xxx | 1000–1999 | 通用 / 成功 |
+| 2xxx | 2000–2999 | 协议 |
+| 3xxx | 3000–3999 | 鉴权 |
+| 4xxx | 4000–4999 | 会话 |
+| 5xxx | 5000–5999 | 回合 |
+| 6xxx | 6000–6999 | 能力 |
+| 7xxx | 7000–7999 | 资产 |
+| 8xxx | 8000–8999 | 限流 |
+| 9xxx | 9000–9999 | 服务端 |
+
+**码表**
+
+| code | 标识 | 语义 | retryable |
+| --- | --- | --- | --- |
+| 1000 | success | 成功（`errorMsg` 为空串） | — |
+| 1001 | unknown | 未分类 | — |
+| 2001 | protocol.version_mismatch | 协议 major 不符 | false |
+| 2002 | protocol.bad_envelope | Envelope 结构非法 | false |
+| 2003 | protocol.unknown_type | 未知消息类型（可忽略） | — |
+| 3001 | auth.unauthorized | token 缺失/无效 | false |
+| 3002 | auth.forbidden | 无该会话/角色权限 | false |
+| 4001 | session.not_found | 会话不存在或已关闭 | false |
+| 4002 | session.limit_exceeded | 超过并发会话上限 | true |
+| 5001 | turn.busy | 该会话已有进行中回合 | true |
+| 5002 | turn.cancelled | 回合被取消 | false |
+| 5003 | turn.budget_exceeded | 决策预算耗尽 | false |
+| 6001 | capability.confirmation_required | 需用户确认（见 §8） | — |
+| 6002 | capability.failed | 能力执行失败 | true |
+| 7001 | asset.not_found | 资产引用失效 | true |
+| 8001 | rate.limited | 限流 | true |
+| 9001 | server.internal | 未分类服务端错误 | true |
 
 ### 4.6 幂等与顺序
 
@@ -424,5 +447,7 @@ sequenceDiagram
 | 3 | 持久化 | **v1 即落盘（SQLite）**：会话与资产复用 `game.db` 基础设施，Hub 重启可恢复 |
 | 4 | 实施顺序 | **先建 `openLuo.Protocol`（纯契约，零依赖）**，再 `openLuo.Server` 最小闭环 |
 | 5 | 端口 | `127.0.0.1:8674`（避让 LLBot 的 3001/3010） |
+| 6 | 流式实现 | **内核真流式**：`ComposedAgentRuntime.StreamTurnAsync` 还原为逐事件产出（改 `DefaultCapabilityDecisionLoop` + `ComposedAgentRuntime`），Server 直接消费；不做 Server 层近似流式 |
+| 7 | 错误模型 | **`errorCode`(int) + `errorMsg`**：码值分段（1000=成功；2xxx 协议 / 3xxx 鉴权 / 4xxx 会话 / 5xxx 回合 / 6xxx 能力 / 7xxx 资产 / 8xxx 限流 / 9xxx 服务端）；稳定标识经 `ErrorCodes.NameOf` 提供，**不入 wire** |
 
 仍开放：TLS 终结方式（Hub 直出 vs 反向代理）——实施 Server 时再定。

@@ -17,21 +17,6 @@ public enum OutputKind
     Asset,
 }
 
-/// <summary>错误信息（信封 error 字段 / 事件 data）。</summary>
-public sealed record ErrorInfo
-{
-    /// <summary>错误码（见 <see cref="ErrorCodes"/>）。</summary>
-    public string Code { get; init; } = string.Empty;
-
-    public string Message { get; init; } = string.Empty;
-
-    /// <summary>客户端是否可安全重试。</summary>
-    public bool Retryable { get; init; }
-
-    /// <summary>结构化补充信息（可选）。</summary>
-    public JsonNode? Details { get; init; }
-}
-
 /// <summary>会话（wire 镜像内核 <c>AgentSession</c>）。</summary>
 public sealed record SessionDto
 {

@@ -55,30 +55,64 @@ public static class EventTypes
     public const string Pong = "pong";
 }
 
-/// <summary>错误码（<c>&lt;domain&gt;.&lt;reason&gt;</c>）。</summary>
+/// <summary>
+/// 错误码（int，分段）：<c>1000</c>=成功；<c>2xxx</c>=协议；<c>3xxx</c>=鉴权；
+/// <c>4xxx</c>=会话；<c>5xxx</c>=回合；<c>6xxx</c>=能力；<c>7xxx</c>=资产；
+/// <c>8xxx</c>=限流；<c>9xxx</c>=服务端。码值入 wire；<see cref="NameOf"/> 提供稳定标识
+/// （日志/文档/调试用，不入 wire）。
+/// </summary>
 public static class ErrorCodes
 {
-    public const string VersionMismatch = "protocol.version_mismatch";
-    public const string BadEnvelope = "protocol.bad_envelope";
-    public const string UnknownType = "protocol.unknown_type";
+    public const int Success = 1000;
+    public const int Unknown = 1001;
 
-    public const string Unauthorized = "auth.unauthorized";
-    public const string Forbidden = "auth.forbidden";
+    public const int ProtocolVersionMismatch = 2001;
+    public const int ProtocolBadEnvelope = 2002;
+    public const int ProtocolUnknownType = 2003;
 
-    public const string SessionNotFound = "session.not_found";
-    public const string SessionLimitExceeded = "session.limit_exceeded";
+    public const int AuthUnauthorized = 3001;
+    public const int AuthForbidden = 3002;
 
-    public const string TurnBusy = "turn.busy";
-    public const string TurnCancelled = "turn.cancelled";
-    public const string TurnBudgetExceeded = "turn.budget_exceeded";
+    public const int SessionNotFound = 4001;
+    public const int SessionLimitExceeded = 4002;
 
-    public const string ConfirmationRequired = "capability.confirmation_required";
-    public const string CapabilityFailed = "capability.failed";
+    public const int TurnBusy = 5001;
+    public const int TurnCancelled = 5002;
+    public const int TurnBudgetExceeded = 5003;
 
-    public const string AssetNotFound = "asset.not_found";
+    public const int CapabilityConfirmationRequired = 6001;
+    public const int CapabilityFailed = 6002;
 
-    public const string RateLimited = "rate.limited";
-    public const string Internal = "server.internal";
+    public const int AssetNotFound = 7001;
+
+    public const int RateLimited = 8001;
+
+    public const int ServerInternal = 9001;
+
+    public static bool IsSuccess(int code) => code == Success;
+
+    /// <summary>码值 → 稳定标识（如 <c>protocol.version_mismatch</c>）。</summary>
+    public static string NameOf(int code) => code switch
+    {
+        Success => "success",
+        Unknown => "unknown",
+        ProtocolVersionMismatch => "protocol.version_mismatch",
+        ProtocolBadEnvelope => "protocol.bad_envelope",
+        ProtocolUnknownType => "protocol.unknown_type",
+        AuthUnauthorized => "auth.unauthorized",
+        AuthForbidden => "auth.forbidden",
+        SessionNotFound => "session.not_found",
+        SessionLimitExceeded => "session.limit_exceeded",
+        TurnBusy => "turn.busy",
+        TurnCancelled => "turn.cancelled",
+        TurnBudgetExceeded => "turn.budget_exceeded",
+        CapabilityConfirmationRequired => "capability.confirmation_required",
+        CapabilityFailed => "capability.failed",
+        AssetNotFound => "asset.not_found",
+        RateLimited => "rate.limited",
+        ServerInternal => "server.internal",
+        _ => "unknown",
+    };
 }
 
 /// <summary>特性开关名（<c>hello</c>/<c>welcome</c> 协商）。</summary>

@@ -24,6 +24,7 @@ public sealed class EnvelopeTests
         Assert.Contains("\"sessionId\":\"sess_1\"", json);
         Assert.Contains("\"kind\":\"card\"", json);          // enum → camelCase 字符串
         Assert.Contains("\"sourceCapability\":\"music:share_song\"", json);
+        Assert.Contains("\"errorCode\":1000", json);          // 成功 = 1000
         Assert.DoesNotContain("Payload", json);              // 无 PascalCase 泄漏
 
         var back = ProtocolJson.Deserialize<Envelope>(json);
@@ -33,6 +34,7 @@ public sealed class EnvelopeTests
         Assert.Equal(EventTypes.Output, back.Type);
         Assert.Equal("sess_1", back.SessionId);
         Assert.False(back.IsError);
+        Assert.Equal(ErrorCodes.Success, back.ErrorCode);
 
         var output = back.DataAs<OutputDto>();
         Assert.NotNull(output);
@@ -42,38 +44,37 @@ public sealed class EnvelopeTests
     }
 
     [Fact]
-    public void NullFields_AreOmitted()
+    public void Success_Envelope_CarriesSuccessCode_And_OmitsNullFields()
     {
         var envelope = EnvelopeFactory.Create(EventTypes.Pong, new PongEvent { Ts = DateTimeOffset.UnixEpoch });
         var json = ProtocolJson.Serialize(envelope);
 
+        Assert.Contains("\"errorCode\":1000", json);
         Assert.DoesNotContain("sessionId", json);
         Assert.DoesNotContain("traceId", json);
         Assert.DoesNotContain("replyTo", json);
-        Assert.DoesNotContain("error", json);
     }
 
     [Fact]
-    public void Error_Envelope_RoundTrips()
+    public void Error_Envelope_RoundTrips_WithIntCode_And_Msg()
     {
         var envelope = EnvelopeFactory.CreateError(
-            EventTypes.Error,
-            new ErrorInfo { Code = ErrorCodes.SessionNotFound, Message = "no session", Retryable = false },
-            replyTo: "req_1");
+            EventTypes.Error, ErrorCodes.SessionNotFound, "no session", replyTo: "req_1");
 
         var json = ProtocolJson.Serialize(envelope);
 
-        Assert.Contains("\"code\":\"session.not_found\"", json);
+        Assert.Contains("\"errorCode\":4001", json);
+        Assert.Contains("\"errorMsg\":\"no session\"", json);
         Assert.Contains("\"replyTo\":\"req_1\"", json);
 
         var back = ProtocolJson.Deserialize<Envelope>(json);
         Assert.True(back!.IsError);
-        Assert.Equal(ErrorCodes.SessionNotFound, back.Error!.Code);
-        Assert.False(back.Error.Retryable);
+        Assert.Equal(ErrorCodes.SessionNotFound, back.ErrorCode);
+        Assert.Equal("no session", back.ErrorMsg);
     }
 
     [Fact]
-    public void Option_TurnRequest_RoundTrips_WithAssetRefOutput()
+    public void TurnRequest_RoundTrips_And_BinaryOutput_UsesAssetRef()
     {
         var request = new TurnRequestDto
         {
@@ -111,6 +112,40 @@ public sealed class EnvelopeTests
         Assert.Equal("turn.final", EventTypes.TurnFinal);
         Assert.NotEqual(MessageTypes.TurnCancel, EventTypes.TurnFinal);
         Assert.NotEqual(MessageTypes.OutputAck, EventTypes.Output);
+    }
+}
+
+public sealed class ErrorCodesTests
+{
+    [Fact]
+    public void Success_Is1000_And_NamesAreStable()
+    {
+        Assert.Equal(1000, ErrorCodes.Success);
+        Assert.Equal(2001, ErrorCodes.ProtocolVersionMismatch);
+        Assert.Equal("success", ErrorCodes.NameOf(ErrorCodes.Success));
+        Assert.Equal("protocol.version_mismatch", ErrorCodes.NameOf(ErrorCodes.ProtocolVersionMismatch));
+        Assert.True(ErrorCodes.IsSuccess(1000));
+        Assert.False(ErrorCodes.IsSuccess(ErrorCodes.SessionNotFound));
+    }
+
+    [Fact]
+    public void Codes_AreUnique_And_Segmented()
+    {
+        int[] all =
+        [
+            ErrorCodes.Success, ErrorCodes.Unknown,
+            ErrorCodes.ProtocolVersionMismatch, ErrorCodes.ProtocolBadEnvelope, ErrorCodes.ProtocolUnknownType,
+            ErrorCodes.AuthUnauthorized, ErrorCodes.AuthForbidden,
+            ErrorCodes.SessionNotFound, ErrorCodes.SessionLimitExceeded,
+            ErrorCodes.TurnBusy, ErrorCodes.TurnCancelled, ErrorCodes.TurnBudgetExceeded,
+            ErrorCodes.CapabilityConfirmationRequired, ErrorCodes.CapabilityFailed,
+            ErrorCodes.AssetNotFound,
+            ErrorCodes.RateLimited,
+            ErrorCodes.ServerInternal,
+        ];
+
+        Assert.Equal(all.Length, all.Distinct().Count());
+        Assert.All(all, code => Assert.InRange(code, 1000, 9999));
     }
 }
 
