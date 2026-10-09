@@ -35,6 +35,9 @@ public sealed class Envelope
     /// <summary>响应/结果指向的请求 id。</summary>
     public string? ReplyTo { get; init; }
 
+    /// <summary>定向投递目标客户端（多客户端场景）；null = 广播给订阅者。</summary>
+    public string? TargetClientId { get; init; }
+
     /// <summary>类型特定载荷。</summary>
     public JsonNode? Data { get; init; }
 

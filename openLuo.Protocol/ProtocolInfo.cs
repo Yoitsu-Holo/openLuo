@@ -27,12 +27,30 @@ public static class MessageTypes
     public const string SessionSubscribe = "session.subscribe";
     public const string SessionUnsubscribe = "session.unsubscribe";
     public const string SessionClose = "session.close";
+
+    /// <summary>断线重连后按 sequence 续传（sinceSequence）。</summary>
+    public const string SessionResume = "session.resume";
+
     public const string TurnSubmit = "turn.submit";
     public const string TurnCancel = "turn.cancel";
     public const string MessageAppend = "message.append";
     public const string OutputAck = "output.ack";
     public const string OutputFail = "output.fail";
     public const string ConfirmResponse = "confirm.response";
+
+    /// <summary>订阅在线的客户端/连接状态（多客户端）。</summary>
+    public const string PresenceSubscribe = "presence.subscribe";
+    public const string PresenceUnsubscribe = "presence.unsubscribe";
+
+    /// <summary>外部/边缘上报设备（智能家居）状态。</summary>
+    public const string DeviceReport = "device.report";
+
+    /// <summary>客户端请求角色表现（互动触发，如点击/触摸）。</summary>
+    public const string AvatarCommand = "avatar.command";
+
+    /// <summary>订阅审计事件（需 admin）。</summary>
+    public const string AuditSubscribe = "audit.subscribe";
+
     public const string ConfigGet = "config.get";
     public const string ConfigSet = "config.set";
     public const string ConfigDel = "config.del";
@@ -46,6 +64,10 @@ public static class EventTypes
     public const string SessionOpened = "session.opened";
     public const string SessionClosed = "session.closed";
     public const string TurnAccepted = "turn.accepted";
+
+    /// <summary>服务端发起的回合（非客户端 turn.submit 触发）。</summary>
+    public const string TurnStarted = "turn.started";
+
     public const string Decision = "decision";
     public const string ToolCall = "tool.call";
     public const string ToolResult = "tool.result";
@@ -57,10 +79,38 @@ public static class EventTypes
     public const string ConfirmRequest = "confirm.request";
     public const string Error = "error";
     public const string Pong = "pong";
+
+    /// <summary>非回合绑定的服务端通知（主动搭话提示、提醒、告警）。</summary>
+    public const string Notification = "notification";
+
+    /// <summary>在线客户端/连接状态变化。</summary>
+    public const string PresenceUpdated = "presence.updated";
+
+    /// <summary>群成员加入 / 离开。</summary>
+    public const string MemberJoined = "member.joined";
+    public const string MemberLeft = "member.left";
+
+    /// <summary>设备（智能家居）状态变化。</summary>
+    public const string DeviceState = "device.state";
+
+    /// <summary>长任务（生成/批处理）生命周期。</summary>
+    public const string JobAccepted = "job.accepted";
+    public const string JobProgress = "job.progress";
+    public const string JobCompleted = "job.completed";
+    public const string JobFailed = "job.failed";
+
+    /// <summary>角色表现（Live2D/3D）：状态/动作/口型。</summary>
+    public const string AvatarState = "avatar.state";
+    public const string AvatarMotion = "avatar.motion";
+    public const string AvatarLipsync = "avatar.lipsync";
+
+    /// <summary>审计事件（admin 订阅）。</summary>
+    public const string AuditEvent = "audit.event";
 }
 
 /// <summary>
-/// 错误码（int，分段）：<c>1000</c>=成功（<c>11xx</c>=配置）；<c>2xxx</c>=协议；<c>3xxx</c>=鉴权；
+/// 错误码（int，分段）：<c>1000</c>=成功（<c>11xx</c> 配置 / <c>12xx</c> 调度 / <c>13xx</c> 作业 /
+/// <c>14xx</c> 设备 / <c>15xx</c> 在场 / <c>16xx</c> 表现）；<c>2xxx</c>=协议；<c>3xxx</c>=鉴权；
 /// <c>4xxx</c>=会话；<c>5xxx</c>=回合；<c>6xxx</c>=能力；<c>7xxx</c>=资产；
 /// <c>8xxx</c>=限流；<c>9xxx</c>=服务端。码值入 wire；<see cref="NameOf"/> 提供稳定标识
 /// （日志/文档/调试用，不入 wire）。
@@ -74,6 +124,20 @@ public static class ErrorCodes
     public const int ConfigInvalidValue = 1102;
     public const int ConfigReadOnly = 1103;
     public const int ConfigPersistFailed = 1104;
+
+    public const int ScheduleNotFound = 1201;
+    public const int ScheduleInvalid = 1202;
+
+    public const int JobNotFound = 1301;
+    public const int JobInvalid = 1302;
+    public const int JobFailed = 1303;
+
+    public const int DeviceNotFound = 1401;
+    public const int DeviceReportRejected = 1402;
+
+    public const int PresenceUnavailable = 1501;
+
+    public const int AvatarUnsupported = 1601;
 
     public const int ProtocolVersionMismatch = 2001;
     public const int ProtocolBadEnvelope = 2002;
@@ -93,6 +157,8 @@ public static class ErrorCodes
     public const int CapabilityFailed = 6002;
 
     public const int AssetNotFound = 7001;
+    public const int AssetTooLarge = 7002;
+    public const int AssetInvalid = 7003;
 
     public const int RateLimited = 8001;
 
@@ -109,6 +175,15 @@ public static class ErrorCodes
         ConfigInvalidValue => "config.invalid_value",
         ConfigReadOnly => "config.read_only",
         ConfigPersistFailed => "config.persist_failed",
+        ScheduleNotFound => "schedule.not_found",
+        ScheduleInvalid => "schedule.invalid",
+        JobNotFound => "job.not_found",
+        JobInvalid => "job.invalid",
+        JobFailed => "job.failed",
+        DeviceNotFound => "device.not_found",
+        DeviceReportRejected => "device.report_rejected",
+        PresenceUnavailable => "presence.unavailable",
+        AvatarUnsupported => "avatar.unsupported",
         ProtocolVersionMismatch => "protocol.version_mismatch",
         ProtocolBadEnvelope => "protocol.bad_envelope",
         ProtocolUnknownType => "protocol.unknown_type",
@@ -122,6 +197,8 @@ public static class ErrorCodes
         CapabilityConfirmationRequired => "capability.confirmation_required",
         CapabilityFailed => "capability.failed",
         AssetNotFound => "asset.not_found",
+        AssetTooLarge => "asset.too_large",
+        AssetInvalid => "asset.invalid",
         RateLimited => "rate.limited",
         ServerInternal => "server.internal",
         _ => "unknown",
@@ -138,6 +215,24 @@ public static class Features
 
     /// <summary>配置读写（get/set/del）。</summary>
     public const string Config = "config";
+
+    /// <summary>群/多用户（成员、定向回复、线程）。</summary>
+    public const string Group = "group";
+
+    /// <summary>多客户端在场与定向投递。</summary>
+    public const string Presence = "presence";
+
+    /// <summary>调度与主动回合（notification / turn.started）。</summary>
+    public const string Proactive = "proactive";
+
+    /// <summary>长任务作业（job.*）。</summary>
+    public const string Jobs = "jobs";
+
+    /// <summary>角色表现（avatar.*）。</summary>
+    public const string Avatar = "avatar";
+
+    /// <summary>观测/审计（traces/metrics/audit）。</summary>
+    public const string Observability = "observability";
 }
 
 /// <summary>配置来源层：有效值 = <c>default ⊕ file ⊕ runtime</c>（后者覆盖前者）。</summary>
@@ -151,6 +246,44 @@ public static class ConfigSources
 
     /// <summary>运行时覆盖（进程内，重启丢失，除非 persist）。</summary>
     public const string Runtime = "runtime";
+}
+
+/// <summary>回合来源（<see cref="EventTypes.TurnStarted"/>）：谁/什么触发了本回合。</summary>
+public static class TurnOrigins
+{
+    /// <summary>客户端提交（turn.submit）。</summary>
+    public const string Client = "client";
+
+    /// <summary>调度器（定时/条件）。</summary>
+    public const string Scheduled = "scheduled";
+
+    /// <summary>外部事件（设备、平台、webhook）。</summary>
+    public const string Event = "event";
+
+    /// <summary>在线状态变化（如用户上线）。</summary>
+    public const string Presence = "presence";
+
+    /// <summary>其它 Hub 的联邦请求。</summary>
+    public const string Hub = "hub";
+}
+
+/// <summary>在线客户端状态。</summary>
+public static class PresenceStatuses
+{
+    public const string Online = "online";
+    public const string Idle = "idle";
+    public const string Busy = "busy";
+    public const string Offline = "offline";
+}
+
+/// <summary>作业状态。</summary>
+public static class JobStatuses
+{
+    public const string Queued = "queued";
+    public const string Running = "running";
+    public const string Succeeded = "succeeded";
+    public const string Failed = "failed";
+    public const string Cancelled = "cancelled";
 }
 
 /// <summary>能力种类取值（对齐内核 <c>CapabilityKind</c>）。</summary>

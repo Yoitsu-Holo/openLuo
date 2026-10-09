@@ -68,6 +68,15 @@ public sealed record TurnRequestDto
 
     public DecisionBudgetsDto? Budgets { get; init; }
 
+    /// <summary>发送者稳定身份（平台用户 id；群聊必需，用于身份与记忆隔离）。</summary>
+    public string? UserId { get; init; }
+
+    /// <summary>被 @ 的目标（userId 或角色 id）；用于定向回复与提醒识别。</summary>
+    public IReadOnlyList<string>? Mentions { get; init; }
+
+    /// <summary>会话内线程 id（同一会话内并行话题 / 多用户线程隔离）。</summary>
+    public string? ThreadId { get; init; }
+
     /// <summary>幂等键：重复提交返回既有回合，不重复执行。</summary>
     public string? IdempotencyKey { get; init; }
 }
@@ -98,6 +107,15 @@ public sealed record OutputDto
 
     /// <summary>二进制资产引用（image/audio/file/asset）。</summary>
     public AssetRefDto? AssetRef { get; init; }
+
+    /// <summary>定向投递目标（userId / 频道 id）；null = 频道广播。</summary>
+    public string? Recipient { get; init; }
+
+    /// <summary>随输出一并 @ 的目标（userId 或角色 id）。</summary>
+    public IReadOnlyList<string>? Mentions { get; init; }
+
+    /// <summary>所属线程（回应该线程的输入）。</summary>
+    public string? ThreadId { get; init; }
 
     public string? SourceCapability { get; init; }
     public string? ConversationId { get; init; }
