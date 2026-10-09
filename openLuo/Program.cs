@@ -5,6 +5,7 @@ using openLuo.Capabilities.Core;
 using openLuo.Capabilities.Core.Models;
 using openLuo.Capabilities.Mcp;
 using openLuo.Cli;
+using openLuo.Client;
 using openLuo.Composition;
 using openLuo.Abstractions;
 using openLuo.Hosting;
@@ -15,6 +16,47 @@ using System.Diagnostics;
 
 var options = LaunchOptions.Parse(args);
 if (options is null) return;
+
+// QQ 桥：经协议连 Hub（不启动内核）
+if (options.Mode is LaunchMode.QqBot)
+{
+    var hubStream = Environment.GetEnvironmentVariable("OPENLUO_HUB_URL")
+        ?? $"ws://127.0.0.1:{openLuo.Protocol.ProtocolInfo.DefaultPort}{openLuo.Protocol.ProtocolInfo.StreamPath}";
+    var hubHttp = hubStream.Replace("ws://", "http://", StringComparison.Ordinal).Replace("/v1/stream", string.Empty, StringComparison.Ordinal);
+
+    var qqConfigPath = Path.Combine(Directory.GetCurrentDirectory(), "config", "qqbot.jsonc");
+    if (!File.Exists(qqConfigPath))
+    {
+        Console.Error.WriteLine($"QQbot config not found: {qqConfigPath}");
+        return;
+    }
+
+    using var qqConfig = new QqBotConfigCenter(qqConfigPath);
+    await using var qqHub = await HubClient.ConnectAsync(hubStream, "qq-bridge", "qq");
+    using var qqHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+    await new QqBotApplication(qqHub, qqHttp, hubHttp, qqConfig).RunAsync();
+    return;
+}
+if (options.Mode is LaunchMode.Cli or LaunchMode.Tui or LaunchMode.Gui)
+{
+    var hubUrl = Environment.GetEnvironmentVariable("OPENLUO_HUB_URL")
+        ?? $"ws://127.0.0.1:{openLuo.Protocol.ProtocolInfo.DefaultPort}{openLuo.Protocol.ProtocolInfo.StreamPath}";
+
+    if (options.Mode is LaunchMode.Cli)
+    {
+        await new openLuo.Cli.CliHubApp(hubUrl, "builtin-rin", "companion").RunAsync(Console.In);
+        return;
+    }
+
+    if (options.Mode is LaunchMode.Tui)
+    {
+        await new TuiApplication(hubUrl).RunAsync();
+        return;
+    }
+
+    GuiApplication.Launch(hubUrl);
+    return;
+}
 
 await using var host = await OpenLuoBootstrapper.BootstrapAsync(options.Mode);
 if (host is null) return;
@@ -95,31 +137,12 @@ if (options.Mode is LaunchMode.Serve)
 {
     var listen = Environment.GetEnvironmentVariable("OPENLUO_HUB_LISTEN")
         ?? $"http://127.0.0.1:{openLuo.Protocol.ProtocolInfo.DefaultPort}";
-    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen });
+    var directory = new openLuo.Composition.CatalogRuntimeDirectory(
+        serviceProvider.GetRequiredService<openLuo.Capabilities.Core.Models.ICapabilityCatalog>());
+    var configService = new openLuo.Modules.AppShell.Application.JsonConfigService(
+        Path.Combine(Directory.GetCurrentDirectory(), "config"));
+    var jobs = new openLuo.Modules.AppShell.Application.InMemoryJobService();
+    await using var scheduler = new openLuo.Modules.AppShell.Application.InMemorySchedulerService();
+    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler);
     return;
 }
-if (options.Mode is LaunchMode.Tui)
-{
-    await new TuiApplication(runtime).RunAsync();
-    return;
-}
-if (options.Mode is LaunchMode.QqBot)
-{
-    await new QqBotApplication(
-        runtime,
-        serviceProvider.GetRequiredService<IQqBotConfigCenter>(),
-        serviceProvider.GetRequiredService<openLuo.Capabilities.Core.IOutputQueue>(),
-        serviceProvider.GetService<openLuo.Core.Interfaces.IGameLogger>()).RunAsync();
-    return;
-}
-if (options.Mode is LaunchMode.Gui)
-{
-    GuiApplication.Launch(runtime);
-    return;
-}
-
-var session = await runtime.OpenSessionAsync(new SessionOpenRequest
-{
-    SessionId = "cli-session", SubjectId = "builtin-rin", AgentId = "companion", ClientType = "cli", ClientId = "local"
-});
-await new openLuo.Cli.CliApplication(runtime).RunAsync(session, Console.In);

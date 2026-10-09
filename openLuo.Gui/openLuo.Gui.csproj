@@ -5,14 +5,16 @@
     <Nullable>enable</Nullable>
     <RootNamespace>openLuo</RootNamespace>
     <AssemblyName>openLuo.Gui</AssemblyName>
+    <Description>GUI 客户端：经 Wire 协议连 Hub（只依赖 openLuo.Client）。</Description>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\openLuo.AgentContext\openLuo.AgentContext.csproj" />
-    <ProjectReference Include="..\openLuo.Capabilities\openLuo.Capabilities.csproj" />
+    <ProjectReference Include="..\openLuo.Client\openLuo.Client.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia.Desktop" Version="11.3.18" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.18" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.18" />
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.18" />
   </ItemGroup>
 </Project>

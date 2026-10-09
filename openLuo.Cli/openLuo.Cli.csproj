@@ -1,13 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>openLuo</RootNamespace>
+    <RootNamespace>openLuo.Cli</RootNamespace>
     <AssemblyName>openLuo.Cli</AssemblyName>
+    <Description>CLI 客户端：经 Wire 协议连 Hub（只依赖 openLuo.Client）。</Description>
   </PropertyGroup>
+
   <ItemGroup>
-    <ProjectReference Include="..\openLuo.AgentContext\openLuo.AgentContext.csproj" />
-    <ProjectReference Include="..\openLuo.Capabilities\openLuo.Capabilities.csproj" />
+    <ProjectReference Include="..\openLuo.Client\openLuo.Client.csproj" />
   </ItemGroup>
+
 </Project>

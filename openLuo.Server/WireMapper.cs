@@ -3,12 +3,11 @@ using System.Text.Json.Nodes;
 using openLuo.Capabilities.Core;
 using openLuo.Capabilities.Core.Models;
 using openLuo.Protocol;
-using WireDecision = openLuo.Protocol.DecisionEvent;
 
 namespace openLuo.Server;
 
 /// <summary>内核模型 → Wire DTO 的映射（Hub 唯一负责；内核不感知协议）。</summary>
-internal static class WireMapper
+public static class WireMapper
 {
     public static OutputDto ToDto(OutputItem item) => new()
     {
@@ -46,11 +45,68 @@ internal static class WireMapper
         CreatedAt = DateTimeOffset.UtcNow,
     };
 
-    public static WireDecision ToDecision(string turnId, int step, string? note = null) => new()
+    public static DecisionStepEvent ToDecision(string turnId, int step, string? note = null) => new()
     {
         TurnId = turnId,
         Step = step,
         Note = note,
+    };
+
+    public static ScheduleDto ToDto(ScheduleInfo info) => new()
+    {
+        Id = info.Id,
+        SessionId = info.SessionId,
+        Kind = info.Kind,
+        Cron = info.Cron,
+        At = info.At,
+        Enabled = info.Enabled,
+        NextRunAt = info.NextRunAt,
+        Payload = info.Payload,
+    };
+
+    public static JobDto ToDto(JobInfo job) => new()
+    {
+        Id = job.Id,
+        Kind = job.Kind,
+        Status = job.Status,
+        Progress = job.Progress,
+        Message = job.Message,
+        SessionId = job.SessionId,
+        CreatedAt = job.CreatedAt,
+        CompletedAt = job.CompletedAt,
+    };
+
+    public static CapabilityDto ToDto(CapabilityDescriptor descriptor) => new()
+    {
+        CanonicalId = descriptor.CanonicalId,
+        DisplayName = descriptor.DisplayName,
+        Summary = descriptor.Summary,
+        Usage = descriptor.Usage,
+        Kind = descriptor.Kind switch
+        {
+            CapabilityKind.Mcp => CapabilityKinds.Mcp,
+            CapabilityKind.Workflow => CapabilityKinds.Workflow,
+            CapabilityKind.RemoteAgent => CapabilityKinds.RemoteAgent,
+            _ => CapabilityKinds.Builtin,
+        },
+        ProviderId = descriptor.ProviderId,
+        Version = descriptor.Version,
+        SideEffect = descriptor.SideEffect switch
+        {
+            SideEffectClass.ReadOnly => SideEffects.ReadOnly,
+            SideEffectClass.External => SideEffects.External,
+            SideEffectClass.Mutation => SideEffects.Mutation,
+            SideEffectClass.Delegation => SideEffects.Delegation,
+            _ => SideEffects.Pure,
+        },
+        Risk = descriptor.Risk switch
+        {
+            RiskLevel.Medium => RiskLevels.Medium,
+            RiskLevel.High => RiskLevels.High,
+            _ => RiskLevels.Low,
+        },
+        RequiresConfirmation = descriptor.RequiresConfirmation,
+        InputSchema = JsonSerializer.SerializeToNode(descriptor.InputSchema, ProtocolJson.Options),
     };
 
     public static ToolCallEvent ToToolCall(string turnId, CapabilityCall call) => new()

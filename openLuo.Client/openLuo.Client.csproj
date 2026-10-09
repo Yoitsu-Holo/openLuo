@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>openLuo.Client</RootNamespace>
+    <AssemblyName>openLuo.Client</AssemblyName>
+    <Description>openLuo 客户端 SDK（只依赖 openLuo.Protocol，不引用内核）。</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\openLuo.Protocol\openLuo.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>
