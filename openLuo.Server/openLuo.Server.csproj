@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>openLuo.Server</RootNamespace>
+    <AssemblyName>openLuo.Server</AssemblyName>
+    <Description>openLuo Hub：HTTP 控制面 + WebSocket 数据面（把 IAgentRuntime 暴露为 Wire 协议）。</Description>
+    <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\openLuo.Protocol\openLuo.Protocol.csproj" />
+    <ProjectReference Include="..\openLuo.Capabilities\openLuo.Capabilities.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -86,5 +86,6 @@ internal sealed class NullOutputQueue : IOutputQueue
     public IAsyncEnumerable<OutputItem> ReadAsync(CancellationToken ct = default) => Empty();
     public Task AckAsync(long sequence, CancellationToken ct = default) => Task.CompletedTask;
     public Task FailAsync(long sequence, bool permanent, CancellationToken ct = default) => Task.CompletedTask;
+    public IReadOnlyList<OutputItem> ReadSince(string? conversationId, long sinceSequence) => [];
     private static async IAsyncEnumerable<OutputItem> Empty() { await Task.CompletedTask; yield break; }
 }

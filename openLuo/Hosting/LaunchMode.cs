@@ -5,5 +5,6 @@ public enum LaunchMode
     Cli,
     Tui,
     QqBot,
-    Gui
+    Gui,
+    Serve
 }

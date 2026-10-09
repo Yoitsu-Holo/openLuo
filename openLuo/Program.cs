@@ -91,6 +91,13 @@ bootLogger.LogInformation(
     "Startup complete: {McpHealthy}/{McpTotal} MCP server(s) connected, {ExtensionCount} extension(s) loaded, {ElapsedMs} ms",
     mcpHealthy, mcpTotal, extensionResult.Loaded.Count, bootwatch.ElapsedMilliseconds);
 
+if (options.Mode is LaunchMode.Serve)
+{
+    var listen = Environment.GetEnvironmentVariable("OPENLUO_HUB_LISTEN")
+        ?? $"http://127.0.0.1:{openLuo.Protocol.ProtocolInfo.DefaultPort}";
+    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen });
+    return;
+}
 if (options.Mode is LaunchMode.Tui)
 {
     await new TuiApplication(runtime).RunAsync();
