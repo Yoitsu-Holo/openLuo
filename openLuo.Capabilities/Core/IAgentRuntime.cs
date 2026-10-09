@@ -65,6 +65,16 @@ public sealed class TurnEvent
 public interface IAgentRuntime
 {
     Task<AgentSession> OpenSessionAsync(SessionOpenRequest request, CancellationToken ct = default);
+
+    /// <summary>获取已开会话（协议 `GET /v1/sessions/{id}`）；不存在返回 null。</summary>
+    Task<AgentSession?> GetSessionAsync(string sessionId, CancellationToken ct = default);
+
+    /// <summary>列出已开会话（协议 `GET /v1/sessions`）。</summary>
+    Task<IReadOnlyList<AgentSession>> ListSessionsAsync(CancellationToken ct = default);
+
+    /// <summary>关闭会话并释放上下文（协议 `DELETE /v1/sessions/{id}`）；返回是否曾存在。</summary>
+    Task<bool> CloseSessionAsync(string sessionId, CancellationToken ct = default);
+
     Task<TurnResult> RunTurnAsync(TurnRequest request, CancellationToken ct = default);
     IAsyncEnumerable<TurnEvent> StreamTurnAsync(TurnRequest request, CancellationToken ct = default);
 

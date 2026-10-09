@@ -71,6 +71,31 @@ public static class HubServer
             return Json(EnvelopeFactory.Create("session.opened", WireMapper.ToDto(session, req.ClientType, req.ClientId)));
         });
 
+        app.MapGet("/v1/sessions", async (CancellationToken requestCt) =>
+        {
+            var sessions = await runtime.ListSessionsAsync(requestCt);
+            return Json(EnvelopeFactory.Create("sessions", new SessionsResponse
+            {
+                Sessions = sessions.Select(s => WireMapper.ToDto(s)).ToList(),
+            }));
+        });
+
+        app.MapGet("/v1/sessions/{id}", async (string id, CancellationToken requestCt) =>
+        {
+            var session = await runtime.GetSessionAsync(id, requestCt);
+            return session is null
+                ? Error(ErrorCodes.SessionNotFound, $"session not found: {id}")
+                : Json(EnvelopeFactory.Create(EventTypes.SessionOpened, WireMapper.ToDto(session)));
+        });
+
+        app.MapDelete("/v1/sessions/{id}", async (string id, CancellationToken requestCt) =>
+        {
+            var removed = await runtime.CloseSessionAsync(id, requestCt);
+            return removed
+                ? Json(EnvelopeFactory.Create(EventTypes.SessionClosed, new SessionClosedEvent { SessionId = id }))
+                : Error(ErrorCodes.SessionNotFound, $"session not found: {id}");
+        });
+
         app.Map("/v1/stream", async (HttpContext ctx) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest)
@@ -90,6 +115,9 @@ public static class HubServer
     }
 
     private static IResult Json(Envelope envelope) => Results.Json(envelope, ProtocolJson.Options);
+
+    private static IResult Error(int errorCode, string message) =>
+        Results.Json(EnvelopeFactory.CreateError(EventTypes.Error, errorCode, message), ProtocolJson.Options);
 
     private static async Task HandleConnectionAsync(
         WebSocket socket, IAgentRuntime runtime, HubServerOptions options, string[] features, CancellationToken ct)

@@ -55,6 +55,12 @@ public sealed record AgentsResponse
     public IReadOnlyList<AgentSummaryDto> Agents { get; init; } = [];
 }
 
+/// <summary>`GET /v1/sessions` 响应。</summary>
+public sealed record SessionsResponse
+{
+    public IReadOnlyList<SessionDto> Sessions { get; init; } = [];
+}
+
 /// <summary>`GET /v1/capabilities` 响应。</summary>
 public sealed record CapabilitiesResponse
 {

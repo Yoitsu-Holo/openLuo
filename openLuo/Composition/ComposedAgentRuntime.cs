@@ -72,8 +72,19 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         await EnsureInitializedAsync(ct);
         var conversationId = request.ConversationId ?? request.SessionId;
         _sessions.GetOrAdd(request.SessionId, _ => new DefaultAgentContextSession(request.SessionId, request.SubjectId, _assembler, _conversationStore, _tagPipeline));
-        return new AgentSession { SessionId = request.SessionId, SubjectId = request.SubjectId, AgentId = request.AgentId, ConversationId = conversationId };
+        var session = new AgentSession { SessionId = request.SessionId, SubjectId = request.SubjectId, AgentId = request.AgentId, ConversationId = conversationId };
+        _sessions.SetMeta(session);
+        return session;
     }
+
+    public Task<AgentSession?> GetSessionAsync(string sessionId, CancellationToken ct = default) =>
+        Task.FromResult(_sessions.GetMeta(sessionId));
+
+    public Task<IReadOnlyList<AgentSession>> ListSessionsAsync(CancellationToken ct = default) =>
+        Task.FromResult(_sessions.ListMeta());
+
+    public Task<bool> CloseSessionAsync(string sessionId, CancellationToken ct = default) =>
+        Task.FromResult(_sessions.Remove(sessionId));
 
     /// <summary>回合准备结果（快照/目录/决策上下文/请求），供非流式与流式共用。</summary>
     private sealed record PreparedTurn(

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>openLuo.Client.Cli</RootNamespace>
+    <AssemblyName>openLuo.Client.Cli</AssemblyName>
+    <Description>openLuo CLI 客户端：经 Wire 协议连 Hub（只依赖 openLuo.Client + Protocol）。</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\openLuo.Client\openLuo.Client.csproj" />
+  </ItemGroup>
+
+</Project>

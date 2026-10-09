@@ -105,7 +105,7 @@ public sealed record TurnAcceptedEvent
 }
 
 /// <summary>`decision`：模型决策步骤。</summary>
-public sealed record DecisionEvent
+public sealed record DecisionStepEvent
 {
     public string TurnId { get; init; } = string.Empty;
     public int Step { get; init; }

@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 using openLuo.Capabilities.Core;
 using openLuo.Capabilities.Core.Models;
 using openLuo.Protocol;
-using WireDecision = openLuo.Protocol.DecisionEvent;
 
 namespace openLuo.Server;
 
@@ -46,7 +45,7 @@ internal static class WireMapper
         CreatedAt = DateTimeOffset.UtcNow,
     };
 
-    public static WireDecision ToDecision(string turnId, int step, string? note = null) => new()
+    public static DecisionStepEvent ToDecision(string turnId, int step, string? note = null) => new()
     {
         TurnId = turnId,
         Step = step,
