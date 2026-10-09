@@ -47,7 +47,8 @@ public sealed class Envelope
     /// <summary>错误消息（人读）；成功时为空串。</summary>
     public string ErrorMsg { get; init; } = string.Empty;
 
-    /// <summary>是否为错误响应。</summary>
+    /// <summary>是否为错误响应（本地判定，不入 wire）。</summary>
+    [JsonIgnore]
     public bool IsError => ErrorCode != ErrorCodes.Success;
 }
 

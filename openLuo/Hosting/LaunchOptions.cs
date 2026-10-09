@@ -12,12 +12,13 @@ public sealed class LaunchOptions
         var useCli = args.Contains("--cli", StringComparer.OrdinalIgnoreCase);
         var useTui = args.Contains("--tui", StringComparer.OrdinalIgnoreCase);
         var useQq = args.Contains("--qq", StringComparer.OrdinalIgnoreCase);
+        var useServe = args.Contains("--serve", StringComparer.OrdinalIgnoreCase);
         var useGui = args.Contains("--gui", StringComparer.OrdinalIgnoreCase);
 
-        var selectedCount = (useCli ? 1 : 0) + (useTui ? 1 : 0) + (useQq ? 1 : 0) + (useGui ? 1 : 0);
+        var selectedCount = (useCli ? 1 : 0) + (useTui ? 1 : 0) + (useQq ? 1 : 0) + (useServe ? 1 : 0) + (useGui ? 1 : 0);
         if (selectedCount > 1)
         {
-            logger.LogError("--cli, --tui, --qq and --gui cannot be used together.");
+            logger.LogError("--cli, --tui, --qq, --serve and --gui cannot be used together.");
             return null;
         }
 
@@ -25,11 +26,13 @@ public sealed class LaunchOptions
         {
             Mode = useGui
                 ? LaunchMode.Gui
-                : useQq
-                    ? LaunchMode.QqBot
-                    : useTui
-                        ? LaunchMode.Tui
-                        : LaunchMode.Cli
+                : useServe
+                    ? LaunchMode.Serve
+                    : useQq
+                        ? LaunchMode.QqBot
+                        : useTui
+                            ? LaunchMode.Tui
+                            : LaunchMode.Cli
         };
     }
 }
