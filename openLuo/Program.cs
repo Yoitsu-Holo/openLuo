@@ -5,6 +5,7 @@ using openLuo.Capabilities.Core;
 using openLuo.Capabilities.Core.Models;
 using openLuo.Capabilities.Mcp;
 using openLuo.Cli;
+using openLuo.Client;
 using openLuo.Composition;
 using openLuo.Abstractions;
 using openLuo.Hosting;
@@ -16,7 +17,26 @@ using System.Diagnostics;
 var options = LaunchOptions.Parse(args);
 if (options is null) return;
 
-// 交互客户端（CLI / TUI / GUI）：经协议连 Hub（Hub 为唯一权威；不启动内核）
+// QQ 桥：经协议连 Hub（不启动内核）
+if (options.Mode is LaunchMode.QqBot)
+{
+    var hubStream = Environment.GetEnvironmentVariable("OPENLUO_HUB_URL")
+        ?? $"ws://127.0.0.1:{openLuo.Protocol.ProtocolInfo.DefaultPort}{openLuo.Protocol.ProtocolInfo.StreamPath}";
+    var hubHttp = hubStream.Replace("ws://", "http://", StringComparison.Ordinal).Replace("/v1/stream", string.Empty, StringComparison.Ordinal);
+
+    var qqConfigPath = Path.Combine(Directory.GetCurrentDirectory(), "config", "qqbot.jsonc");
+    if (!File.Exists(qqConfigPath))
+    {
+        Console.Error.WriteLine($"QQbot config not found: {qqConfigPath}");
+        return;
+    }
+
+    using var qqConfig = new QqBotConfigCenter(qqConfigPath);
+    await using var qqHub = await HubClient.ConnectAsync(hubStream, "qq-bridge", "qq");
+    using var qqHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+    await new QqBotApplication(qqHub, qqHttp, hubHttp, qqConfig).RunAsync();
+    return;
+}
 if (options.Mode is LaunchMode.Cli or LaunchMode.Tui or LaunchMode.Gui)
 {
     var hubUrl = Environment.GetEnvironmentVariable("OPENLUO_HUB_URL")
@@ -122,14 +142,5 @@ if (options.Mode is LaunchMode.Serve)
     var configService = new openLuo.Modules.AppShell.Application.JsonConfigService(
         Path.Combine(Directory.GetCurrentDirectory(), "config"));
     await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService);
-    return;
-}
-if (options.Mode is LaunchMode.QqBot)
-{
-    await new QqBotApplication(
-        runtime,
-        serviceProvider.GetRequiredService<IQqBotConfigCenter>(),
-        serviceProvider.GetRequiredService<openLuo.Capabilities.Core.IOutputQueue>(),
-        serviceProvider.GetService<openLuo.Core.Interfaces.IGameLogger>()).RunAsync();
     return;
 }

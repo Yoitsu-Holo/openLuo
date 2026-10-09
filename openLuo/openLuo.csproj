@@ -53,6 +53,7 @@
     <ProjectReference Include="..\openLuo.Qqbot\openLuo.Qqbot.csproj" />
     <ProjectReference Include="..\openLuo.OneBot\openLuo.OneBot.csproj" />
     <ProjectReference Include="..\openLuo.Server\openLuo.Server.csproj" />
+    <ProjectReference Include="..\openLuo.Client\openLuo.Client.csproj" />
   </ItemGroup>
 
   <ItemGroup>

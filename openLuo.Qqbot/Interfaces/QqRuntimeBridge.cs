@@ -1,105 +1,158 @@
+using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
-using openLuo.Capabilities.Core;
-using openLuo.Capabilities.Core.Models;
+using System.Text.Json.Nodes;
+using openLuo.Client;
+using openLuo.Protocol;
 
 namespace openLuo.Interfaces.QQbot;
 
+/// <summary>
+/// QQ ↔ Hub 桥：把一个 QQ 频道（群 / 好友）映射为一个 Hub 会话，经 Wire 协议驱动回合。
+/// **不引用内核**（Hub 为唯一权威）。
+/// </summary>
 public sealed class QqRuntimeBridge
 {
-    private readonly IAgentRuntime _runtime;
+    private readonly HubClient _hub;
+    private readonly HttpClient _http;
+    private readonly string _httpBase;
     private readonly QqBotConfig _config;
 
-    public QqRuntimeBridge(IAgentRuntime runtime, QqBotConfig config)
+    /// <summary>qq-{scene}-{targetId} → Hub sessionId（Task 缓存，避免并发重复开会话）。</summary>
+    private readonly ConcurrentDictionary<string, Task<string>> _sessions = new(StringComparer.Ordinal);
+
+    public QqRuntimeBridge(HubClient hub, HttpClient http, string httpBase, QqBotConfig config)
     {
-        _runtime = runtime;
+        _hub = hub;
+        _http = http;
+        _httpBase = httpBase.TrimEnd('/');
         _config = config;
     }
 
-    public async Task<TurnResult> HandleAsync(string scene, long targetId, long actorId, string text, string? senderName = null, IReadOnlyList<object>? blocks = null, CancellationToken ct = default)
+    public static string SessionKey(string scene, long targetId) => $"qq-{scene}-{targetId}";
+
+    /// <summary>确保该 QQ 频道已有 Hub 会话，返回 sessionId。</summary>
+    public Task<string> EnsureSessionAsync(string scene, long targetId, CancellationToken ct) =>
+        _sessions.GetOrAdd(SessionKey(scene, targetId), _ => OpenAsync(scene, targetId, ct));
+
+    private async Task<string> OpenAsync(string scene, long targetId, CancellationToken ct)
     {
-        var sessionId = $"qq-{scene}-{targetId}";
-        await _runtime.OpenSessionAsync(new SessionOpenRequest
+        var session = await _hub.OpenSessionAsync(
+            _config.DefaultSubjectId,
+            _config.DefaultAgentId,
+            conversationId: SessionKey(scene, targetId),
+            ct: ct);
+        return session.SessionId;
+    }
+
+    /// <summary>感知通道：消息写入会话历史但不触发回合（群聊未 @ 的消息）。</summary>
+    public async Task ObserveAsync(
+        string scene, long targetId, string text, string? senderName,
+        IReadOnlyList<JsonNode>? blocks, CancellationToken ct)
+    {
+        var sessionId = await EnsureSessionAsync(scene, targetId, ct);
+        await _hub.SendAsync(EnvelopeFactory.Create(MessageTypes.MessageAppend, new MessageAppendCommand
         {
-            SessionId = sessionId, SubjectId = _config.DefaultSubjectId, AgentId = _config.DefaultAgentId,
-            ClientType = "qqbot", ClientId = targetId.ToString(), ConversationId = sessionId
-        }, ct);
-        return await _runtime.RunTurnAsync(new TurnRequest
-        {
-            SessionId = sessionId, TurnId = Guid.NewGuid().ToString("N"), SourceId = "qqbot",
-            ChannelId = targetId.ToString(), ActorId = actorId.ToString(), SenderName = senderName, Text = text,
+            SessionId = sessionId,
+            SenderName = senderName,
+            Text = text,
             Blocks = blocks,
-            Meta = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["scene"] = scene,
-                ["senderName"] = senderName ?? actorId.ToString(),
-                ["channelId"] = targetId.ToString()
-            }
-        }, ct);
+        }, sessionId: sessionId), ct);
     }
 
-    /// <summary>感知通道：消息写入会话历史但不触发 LLM 回合（群聊未 @ 消息）。</summary>
-    public async Task ObserveAsync(string scene, long targetId, string text, string? senderName = null, IReadOnlyList<object>? blocks = null, CancellationToken ct = default)
+    /// <summary>
+    /// 执行回合并逐步产出回复片段：回合内的 `output` 事件**即发**（每项一个片段），
+    /// 回合结束再产出其 outputs + finalText（可直接逐片段发送）。
+    /// </summary>
+    public async IAsyncEnumerable<QqReplyPart> TurnAsync(
+        string scene, long targetId, long actorId, string text, string? senderName,
+        IReadOnlyList<JsonNode>? blocks,
+        [EnumeratorCancellation] CancellationToken ct)
     {
-        var sessionId = $"qq-{scene}-{targetId}";
-        await _runtime.OpenSessionAsync(new SessionOpenRequest
+        _ = await EnsureSessionAsync(scene, targetId, ct);
+
+        var request = new TurnRequestDto
         {
-            SessionId = sessionId, SubjectId = _config.DefaultSubjectId, AgentId = _config.DefaultAgentId,
-            ClientType = "qqbot", ClientId = targetId.ToString(), ConversationId = sessionId
-        }, ct);
-        await _runtime.AppendMessageAsync(sessionId, senderName, text, blocks, ct);
+            Text = text,
+            SourceId = "qq",
+            SenderName = senderName,
+            ChannelId = targetId.ToString(),
+            ActorId = actorId.ToString(),
+            UserId = actorId.ToString(),
+            Blocks = blocks,
+        };
+
+        await foreach (var evt in _hub.StreamTurnAsync(request, ct))
+        {
+            switch (evt.Type)
+            {
+                case EventTypes.Output:
+                    if (evt.DataAs<OutputDto>() is { } interim)
+                        yield return ToPart(interim);
+                    break;
+
+                case EventTypes.TurnFinal:
+                    if (evt.DataAs<TurnResultDto>() is { } result)
+                    {
+                        foreach (var output in result.Outputs)
+                            yield return ToPart(output);
+                        if (!string.IsNullOrWhiteSpace(result.FinalText))
+                            yield return new QqReplyPart("text", result.FinalText!);
+                    }
+                    break;
+
+                case EventTypes.Error:
+                    yield return new QqReplyPart("text", $"[错误] {evt.ErrorCode}: {evt.ErrorMsg}");
+                    break;
+            }
+        }
     }
 
-    public static IReadOnlyList<QqReplyPart> Render(TurnResult result)
+    /// <summary>读取会话上下文摘要（协议 `GET /v1/sessions/{id}/context`）。</summary>
+    public async Task<string> GetContextSummaryAsync(string scene, long targetId, CancellationToken ct)
     {
-        var parts = result.Outputs.Select(Render).Where(p => p is not null).Cast<QqReplyPart>().ToList();
-        if (!string.IsNullOrWhiteSpace(result.FinalText)) parts.Add(new QqReplyPart("text", result.FinalText));
-        return parts;
-    }
-
-    private static QqReplyPart? Render(OutputItem item) => item.Kind switch
-    {
-        ReplyItemKind.Text => new("text", Convert.ToString(item.Payload) ?? string.Empty),
-        ReplyItemKind.Image => new("image", Convert.ToString(item.Payload) ?? string.Empty),
-        ReplyItemKind.Audio => new("record", Convert.ToString(item.Payload) ?? string.Empty),
-        // Card = 结构化不透明载荷：与产出扩展（music:share_song）联合契约
-        // { Platform="163", Id, Title?, Url? }。解析失败按 Url/JSON 文本降级。
-        ReplyItemKind.Card => RenderCard(item),
-        _ => new("text", $"[{item.Kind.ToString().ToLowerInvariant()}] {item.Payload}")
-    };
-
-    /// <summary>供 QqBotApplication 复用（interim 队列等非回合路径）。</summary>
-    internal static QqReplyPart? TryRenderCard(OutputItem item) => RenderCard(item);
-
-    /// <summary>把 163 音乐分享卡渲染为 OneBot music 段（QQ 原生卡）；其它/未知结构 → 文本降级。</summary>
-    private static QqReplyPart? RenderCard(OutputItem item)
-    {
-        JsonElement root;
+        var sessionId = await EnsureSessionAsync(scene, targetId, ct);
         try
         {
-            root = JsonSerializer.SerializeToElement(item.Payload);
+            var json = await _http.GetStringAsync($"{_httpBase}/v1/sessions/{sessionId}/context", ct);
+            return ProtocolJson.Deserialize<Envelope>(json)?.DataAs<ContextResponse>()?.Summary ?? "session not open";
         }
-        catch
+        catch (Exception)
         {
-            return new("text", Convert.ToString(item.Payload) ?? string.Empty);
+            return "session not open";
         }
-        if (root.ValueKind == JsonValueKind.Object
-            && root.TryGetProperty("Platform", out var platform)
-            && platform.GetString() == "163"
-            && root.TryGetProperty("Id", out var id)
-            && id.ValueKind == JsonValueKind.Number
-            && id.TryGetInt64(out var songId))
-        {
-            return new QqReplyPart("music", songId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        }
-        // 降级：优先可点链接，其次紧凑 JSON
-        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("Url", out var url) && url.ValueKind == JsonValueKind.String)
-        {
-            var text = url.GetString();
-            return new("text", string.IsNullOrWhiteSpace(text) ? "[card]" : text);
-        }
-        return new("text", $"[card] {JsonSerializer.Serialize(item.Payload)}");
+    }
+
+    public static QqReplyPart ToPart(OutputDto item) => item.Kind switch
+    {
+        OutputKind.Image => new("image", PayloadString(item)),
+        OutputKind.Audio => new("record", PayloadString(item)),
+        OutputKind.Card => RenderCard(item) ?? new("text", "[card] " + PayloadString(item)),
+        _ => new("text", PayloadString(item)),
+    };
+
+    private static string PayloadString(OutputDto item) => item.Payload switch
+    {
+        null => item.AssetRef?.Id ?? string.Empty,
+        JsonValue value when value.GetValueKind() == JsonValueKind.String => value.GetValue<string>(),
+        JsonNode node => node.ToJsonString(),
+    };
+
+    /// <summary>163 音乐分享卡 → OneBot music 段（Value = 歌曲 id）；未知结构 → null（调用方降级为文本）。</summary>
+    private static QqReplyPart? RenderCard(OutputDto item)
+    {
+        if (item.Payload is not JsonObject obj)
+            return null;
+
+        var platform = obj["platform"]?.GetValue<string>();
+        var id = obj["id"];
+        return string.Equals(platform, "163", StringComparison.OrdinalIgnoreCase)
+               && id is not null
+               && long.TryParse(id.ToString(), out var songId)
+            ? new QqReplyPart("music", songId.ToString())
+            : null;
     }
 }
 
-/// <summary>Kind: text | image | music（OneBot music 段,Value 为平台资源 id）| record（语音,Value 为 data URL）。</summary>
+/// <summary>Kind: text | image | music（OneBot music 段，Value 为平台资源 id）| record（语音，Value 为 base64 data URL）。</summary>
 public sealed record QqReplyPart(string Kind, string Value);

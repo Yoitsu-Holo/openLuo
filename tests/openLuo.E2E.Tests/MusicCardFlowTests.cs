@@ -3,13 +3,14 @@ using openLuo.Abstractions;
 using openLuo.Capabilities.Core;
 using openLuo.Capabilities.Core.Models;
 using openLuo.Interfaces.QQbot;
+using openLuo.Server;
 using Xunit;
 
 namespace openLuo.E2E.Tests;
 
 /// <summary>
 /// Card 结构化载荷全链契约：产出扩展(music:share_song) → 内核 OutputItem(Card, 不透明 Payload)
-/// → QQ 平台渲染(OneBot music 段)。内核不在链上做任何平台判断，契约在两端。
+/// → Hub 映射为 wire OutputDto → QQ 渲染(OneBot music 段)。内核不做平台判断，契约在两端。
 /// </summary>
 public sealed class MusicCardFlowTests
 {
@@ -34,13 +35,10 @@ public sealed class MusicCardFlowTests
         Assert.Equal(ReplyItemKind.Card, card.Kind);
         Assert.Equal("music-card:163:1860163", card.Fingerprint);
 
-        // 内核透传的 Payload 到达 QQ 渲染层
-        var parts = QqRuntimeBridge.Render(new TurnResult
-        {
-            Success = true, Outputs = [card], TerminationReason = TerminationReason.FinalReply
-        });
-        var music = Assert.Single(parts.Where(p => p.Kind == "music"));
-        Assert.Equal("1860163", music.Value);
+        // 内核透传的 Payload → wire DTO → QQ 渲染层
+        var part = QqRuntimeBridge.ToPart(WireMapper.ToDto(card));
+        Assert.Equal("music", part.Kind);
+        Assert.Equal("1860163", part.Value);
     }
 
     [Fact]
@@ -52,24 +50,17 @@ public sealed class MusicCardFlowTests
         });
         Assert.Equal(ReplyItemKind.Card, card.Kind);
 
-        var parts = QqRuntimeBridge.Render(new TurnResult
-        {
-            Success = true, Outputs = [card], TerminationReason = TerminationReason.FinalReply
-        });
-        Assert.DoesNotContain(parts, p => p.Kind == "music");
-        var text = Assert.Single(parts.Where(p => p.Kind == "text"));
-        Assert.Contains("https://example.org/song/42", text.Value);
+        var part = QqRuntimeBridge.ToPart(WireMapper.ToDto(card));
+        Assert.Equal("text", part.Kind);
+        Assert.Contains("https://example.org/song/42", part.Value);
     }
 
     [Fact]
     public void CardWithoutUrl_FallsBackToCompactJson()
     {
         var card = InvokeShareSong(new Dictionary<string, string> { ["id"] = "7", ["platform"] = "unknown" });
-        var parts = QqRuntimeBridge.Render(new TurnResult
-        {
-            Success = true, Outputs = [card], TerminationReason = TerminationReason.FinalReply
-        });
-        var text = Assert.Single(parts.Where(p => p.Kind == "text"));
-        Assert.StartsWith("[card]", text.Value);
+        var part = QqRuntimeBridge.ToPart(WireMapper.ToDto(card));
+        Assert.Equal("text", part.Kind);
+        Assert.StartsWith("[card]", part.Value);
     }
 }

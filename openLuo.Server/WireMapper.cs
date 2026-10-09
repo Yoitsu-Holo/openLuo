@@ -7,7 +7,7 @@ using openLuo.Protocol;
 namespace openLuo.Server;
 
 /// <summary>内核模型 → Wire DTO 的映射（Hub 唯一负责；内核不感知协议）。</summary>
-internal static class WireMapper
+public static class WireMapper
 {
     public static OutputDto ToDto(OutputItem item) => new()
     {

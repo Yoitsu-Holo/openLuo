@@ -170,6 +170,14 @@ public static class HubServer
             });
         }
 
+        app.MapGet("/v1/sessions/{id}/context", async (string id, CancellationToken requestCt) =>
+        {
+            var summary = await runtime.GetContextSummaryAsync(id, requestCt);
+            return summary is null
+                ? Error(ErrorCodes.SessionNotFound, $"session not found: {id}")
+                : Json(EnvelopeFactory.Create("context", new ContextResponse { Summary = summary }));
+        });
+
         app.Map("/v1/stream", async (HttpContext ctx) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest)
@@ -192,6 +200,34 @@ public static class HubServer
 
     private static IResult Error(int errorCode, string message) =>
         Results.Json(EnvelopeFactory.CreateError(EventTypes.Error, errorCode, message), ProtocolJson.Options);
+
+    /// <summary>wire 图像块（kind=image）→ 内核 Block（供视觉模型消费）。</summary>
+    private static IReadOnlyList<object> MapBlocks(IReadOnlyList<JsonNode>? blocks)
+    {
+        if (blocks is null || blocks.Count == 0)
+            return [];
+
+        var mapped = new List<object>();
+        foreach (var block in blocks)
+        {
+            if (block is not JsonObject obj)
+                continue;
+
+            var kind = obj["kind"]?.GetValue<string>();
+            if (string.Equals(kind, "image", StringComparison.OrdinalIgnoreCase))
+            {
+                mapped.Add(new openLuo.Core.Models.ImageBlock
+                {
+                    Kind = openLuo.Core.Models.BlockKind.Image,
+                    DataUri = obj["dataUri"]?.GetValue<string>() ?? string.Empty,
+                    MimeType = obj["mime"]?.GetValue<string>() ?? "image/jpeg",
+                    AssetId = obj["assetId"]?.GetValue<string>() ?? obj["name"]?.GetValue<string>() ?? string.Empty,
+                    Name = obj["name"]?.GetValue<string>() ?? string.Empty,
+                });
+            }
+        }
+        return mapped;
+    }
 
     private static readonly string[] SensitiveMarkers = ["key", "secret", "token", "password"];
 
@@ -267,6 +303,20 @@ public static class HubServer
                     break;
                 }
 
+                case MessageTypes.MessageAppend:
+                {
+                    var append = envelope.DataAs<MessageAppendCommand>();
+                    if (append is null || string.IsNullOrWhiteSpace(append.SessionId))
+                    {
+                        await SendAsync(socket, EnvelopeFactory.CreateError("error",
+                            ErrorCodes.ProtocolBadEnvelope, "message.append requires sessionId", replyTo: envelope.Id), ct);
+                        break;
+                    }
+
+                    await runtime.AppendMessageAsync(append.SessionId, append.SenderName, append.Text, MapBlocks(append.Blocks), ct);
+                    break;
+                }
+
                 case MessageTypes.Ping:
                     await SendAsync(socket, EnvelopeFactory.Create(EventTypes.Pong, new PongEvent(), replyTo: envelope.Id), ct);
                     break;
@@ -333,7 +383,7 @@ public static class HubServer
             ActorId = req.ActorId ?? "player",
             SenderName = req.SenderName,
             Text = req.Text,
-            Blocks = req.Blocks?.Cast<object>().ToList(),
+            Blocks = MapBlocks(req.Blocks),
         };
 
         await foreach (var evt in runtime.StreamTurnAsync(turnRequest, ct))
