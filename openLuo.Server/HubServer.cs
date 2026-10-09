@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -29,7 +30,8 @@ public sealed class HubServerOptions
 public static class HubServer
 {
     public static async Task RunAsync(
-        IAgentRuntime runtime, HubServerOptions options, IRuntimeDirectory? directory = null, CancellationToken ct = default)
+        IAgentRuntime runtime, HubServerOptions options, IRuntimeDirectory? directory = null,
+        IConfigService? config = null, CancellationToken ct = default)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -110,6 +112,64 @@ public static class HubServer
             });
         }
 
+        if (config is not null)
+        {
+            app.MapGet("/v1/config", () => Json(EnvelopeFactory.Create("config", new ConfigListResponse
+            {
+                Namespaces = config.ListNamespaces().Select(n => new ConfigNamespaceDto
+                {
+                    Namespace = n.Namespace,
+                    Source = n.Source,
+                    Overridden = n.Overridden,
+                    UpdatedAt = n.UpdatedAt,
+                }).ToList(),
+            })));
+
+            app.MapGet("/v1/config/{ns}", async (string ns, CancellationToken requestCt) =>
+            {
+                var view = await config.GetAsync(ns, requestCt);
+                return view is null
+                    ? Error(ErrorCodes.ConfigNamespaceNotFound, $"config namespace not found: {ns}")
+                    : Json(EnvelopeFactory.Create("config", new ConfigGetResponse
+                    {
+                        Namespace = view.Namespace,
+                        Source = view.Source,
+                        Values = Mask(view.Values),
+                        Overrides = Mask(view.Overrides),
+                    }));
+            });
+
+            app.MapPost("/v1/config/{ns}", async (string ns, HttpContext ctx, CancellationToken requestCt) =>
+            {
+                var body = await JsonSerializer.DeserializeAsync<ConfigSetRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
+                           ?? new ConfigSetRequest();
+                if (body.Values is null)
+                    return Error(ErrorCodes.ConfigInvalidValue, "values is required");
+
+                var view = await config.SetAsync(ns, body.Values, body.Persist, requestCt);
+                return Json(EnvelopeFactory.Create("config", new ConfigSetResponse
+                {
+                    Namespace = view.Namespace,
+                    Source = view.Source,
+                    Values = Mask(view.Values),
+                }));
+            });
+
+            app.MapDelete("/v1/config/{ns}", async (string ns, HttpContext ctx, CancellationToken requestCt) =>
+            {
+                var persist = string.Equals(ctx.Request.Query["persist"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+                var view = await config.DeleteAsync(ns, persist, requestCt);
+                return view is null
+                    ? Error(ErrorCodes.ConfigNamespaceNotFound, $"config namespace not found: {ns}")
+                    : Json(EnvelopeFactory.Create("config", new ConfigDeleteResponse
+                    {
+                        Namespace = view.Namespace,
+                        Source = view.Source,
+                        Values = Mask(view.Values),
+                    }));
+            });
+        }
+
         app.Map("/v1/stream", async (HttpContext ctx) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest)
@@ -132,6 +192,28 @@ public static class HubServer
 
     private static IResult Error(int errorCode, string message) =>
         Results.Json(EnvelopeFactory.CreateError(EventTypes.Error, errorCode, message), ProtocolJson.Options);
+
+    private static readonly string[] SensitiveMarkers = ["key", "secret", "token", "password"];
+
+    /// <summary>敏感字段掩码（值 → `***`），递归处理对象与数组（§5.7）。</summary>
+    private static JsonNode? Mask(JsonNode? node) => node switch
+    {
+        null => null,
+        JsonObject obj => MaskObject(obj),
+        JsonArray arr => new JsonArray(arr.Select(Mask).ToArray()),
+        _ => node.DeepClone(),
+    };
+
+    private static JsonObject MaskObject(JsonObject source)
+    {
+        var result = new JsonObject();
+        foreach (var (key, value) in source)
+        {
+            var sensitive = SensitiveMarkers.Any(m => key.Contains(m, StringComparison.OrdinalIgnoreCase));
+            result[key] = sensitive && value is not null ? JsonValue.Create("***") : Mask(value);
+        }
+        return result;
+    }
 
     private static async Task HandleConnectionAsync(
         WebSocket socket, IAgentRuntime runtime, HubServerOptions options, string[] features, CancellationToken ct)

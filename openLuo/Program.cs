@@ -97,7 +97,9 @@ if (options.Mode is LaunchMode.Serve)
         ?? $"http://127.0.0.1:{openLuo.Protocol.ProtocolInfo.DefaultPort}";
     var directory = new openLuo.Composition.CatalogRuntimeDirectory(
         serviceProvider.GetRequiredService<openLuo.Capabilities.Core.Models.ICapabilityCatalog>());
-    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory);
+    var configService = new openLuo.Modules.AppShell.Application.JsonConfigService(
+        Path.Combine(Directory.GetCurrentDirectory(), "config"));
+    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService);
     return;
 }
 if (options.Mode is LaunchMode.Tui)
