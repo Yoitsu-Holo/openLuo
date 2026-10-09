@@ -8,7 +8,11 @@
 
 **openLuo** 是一个开源的"可扩展 AI 角色引擎"，目标是构建可持续演进的洛天依式虚拟角色交互体验底座。项目以"通用 Agent 内核 + 领域扩展"为架构核心：内核不绑定任何业务（RPG、桌宠还是聊天陪伴由加载的扩展决定），将 LLM 推理、能力调度、状态管理、记忆检索、多角色协作等能力解耦为独立模块，支持 CLI / TUI / QQ / GUI 四入口运行。
 
-QQ bot 是当前生产主入口（`./openLuo --qq`），通过 Milky WebSocket/HTTP API 对接 QQ 消息。
+QQ bot 是当前生产主入口（`./openLuo --qq`），通过 **OneBot 11**（LLBot 正向 WebSocket）对接 QQ 消息。
+
+架构为**中心 Hub + 瘦客户端**：`./openLuo --serve` 启动 Hub（唯一持有内核：能力/记忆/状态/配置），
+CLI / TUI / GUI / QQ 桥均作为**协议客户端**经 HTTP 控制面 + WebSocket 数据面（`openLuo.Protocol`）连接 Hub；
+客户端程序集**不引用内核**（`OPENLUO_HUB_URL` 可指向远端 Hub）。
 
 ## 2. 技术栈
 
@@ -27,13 +31,18 @@ QQ bot 是当前生产主入口（`./openLuo --qq`），通过 Milky WebSocket/H
 
 | 层级     | 工程                                                            | 职责                                                         |
 | -------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
-| 基础     | `openLuo.Foundation` / `openLuo.Llm` / `openLuo.Memory`         | 基础设施、LLM、Embedding、记忆端口与实现                     |
+| 协议     | `openLuo.Protocol`                                              | Wire 契约：Envelope、消息类型表、DTO、错误码（零业务依赖）    |
+| 服务端   | `openLuo.Server`                                                | Hub：HTTP 控制面 + WebSocket 数据面，把 `IAgentRuntime` 暴露为协议 |
+| 客户端   | `openLuo.Client`                                                | 客户端 SDK（只依赖 Protocol）：连接、协商、回合流式          |
+| 客户端   | `openLuo.Cli` / `openLuo.Tui` / `openLuo.Gui` / `openLuo.Qqbot` | 各入口**协议客户端**（不引用内核）                           |
+| 领域     | `openLuo.Domain`                                                | 领域模型（Character / GameState / Message…）                 |
+| 基础     | `openLuo.Foundation` / `openLuo.Llm` / `openLuo.Embedding` / `openLuo.Memory` | 基础设施、LLM、Embedding、记忆端口与实现 |
 | 内核契约 | `openLuo.Capabilities` / `openLuo.AgentContext`                 | 能力目录、决策循环、并行调度、状态事务、上下文快照、输出队列 |
 | 桥接     | `openLuo.Capabilities.Llm` / `.Mcp` / `.A2A`                    | LLM 原生 tool calls、MCP、Agent2Agent 远程能力               |
-| 扩展宿主 | `openLuo.Extensions.Host`                                       | manifest、依赖拓扑、程序集加载、失败隔离                     |
-| 领域扩展 | `extensions/{memory,companion,world,party,sticker,music}` | 记忆、伴侣人格、世界状态、多角色、表情、音乐分享卡；每个扩展自带 manifest |
-| 平台     | `openLuo.Cli` / `openLuo.Tui` / `openLuo.Gui` / `openLuo.Qqbot` | 输入解析、输出渲染与平台传输                                 |
-| 宿主     | `openLuo`                                                       | 组合根、配置加载、入口分发                                   |
+| 模块     | `openLuo.Modules.WorldState` / `openLuo.Modules.Agent`          | 世界状态、角色 Agent 运行层（独立于宿主 exe）                |
+| 扩展宿主 | `openLuo.Abstractions`                                          | 扩展契约（`IAgentExtension` 等）+ manifest 加载             |
+| 领域扩展 | `extensions/{memory,companion,world,party,sticker,music}`       | 记忆、伴侣人格、世界状态、多角色、表情、音乐分享卡；均只依赖契约/模块程序集 |
+| 宿主     | `openLuo`                                                       | 组合根/入口：`--serve` 起 Hub；`--cli/--tui/--gui/--qq` 作客户端连接 |
 | Demo     | `openLuo.playgraound`（程序集名 `openLuo.Playground`）          | 新内核能力循环最小可运行演示                                 |
 
 架构约定：
@@ -41,7 +50,8 @@ QQ bot 是当前生产主入口（`./openLuo --qq`），通过 Milky WebSocket/H
 - 内核零业务配置硬编码；领域数据随扩展走
 - 扩展注册的 `canonicalId` 自动命名空间化为 `<extension-id>:<local-id>`；`core:` 保留给内核
 - 领域扩展目录以 `.disable` 结尾时完全跳过
-- `openLuo/Modules/` 保留 `AppShell`（配置加载）/ `WorldState` / `GameBridge` 等基础能力；业务宿主链路已迁移至新内核
+- **边界规则**：扩展不得引用宿主 exe（依赖 `openLuo.Abstractions` + 模块工程）；客户端不得引用内核（依赖 `openLuo.Protocol` + `openLuo.Client`）
+- `openLuo/Modules/` 仅保留宿主内部件（`AppShell` 配置加载 / `GameBridge`）；`WorldState`、`Agent` 已迁出为独立工程
 
 ## 4. 能力与协议
 
@@ -50,7 +60,8 @@ QQ bot 是当前生产主入口（`./openLuo --qq`），通过 Milky WebSocket/H
 - **原生 tool calls**：LLM 桥接只把无 tool-call 非空文本视为最终回复；tool-call 结果进入决策循环继续规划。
 - **工具调度**：`DefaultCapabilityDispatcher` 并行调度 + 决策循环（预算/终止条件/非法并行拒绝），调度日志归 `agent/dispatch`（start / ok / failed / batch done）。
 - **Inter-Agent**：最小 `ask_character` + `AgentAsk / AgentReply` 消息协议，角色间真实通信。
-- **记忆 / 状态 / 时间线 / 资产**：RAG 记忆检索（sqlite-vec + 降级回退）、状态事务（mutation 冲突检测）、Timeline 事件调度、资产与解锁。
+- **记忆 / 状态 / 调度 / 资产**：RAG 记忆检索（sqlite-vec + 降级回退）、状态事务（mutation 冲突检测）、定时/一次性调度（协议 `/v1/schedules` 到期发起**主动回合**）、资产与解锁。
+- **协议域**：会话、回合流式、输出与资产、能力目录、配置（get/post/del）、作业（`/v1/jobs`）、调度（`/v1/schedules`）、观测（`/v1/metrics`）——详见 `docs/architecture/hub-protocol.md`。
 
 ## 5. 配置
 
