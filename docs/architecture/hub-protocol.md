@@ -76,6 +76,19 @@ graph TD
 | 控制面 | `HTTP/1.1` + `application/json`                   | 会话增删查、目录、健康、鉴权、轮询 fallback、资产拉取 | 短连接   |
 | 数据面 | `WebSocket` 文本帧（JSON，与 HTTP 同一 Envelope） | 回合提交、事件流、输出推送与 ack、状态变更            | 长连接   |
 
+**职责划分（互补，非重叠）**
+
+| 判据 | 传输 | 典型 |
+| --- | --- | --- |
+| 高频 / 实时 / **单向推送** | **WS** | 表现流 `avatar.*`（Live2D）、`output`、`notification`、`state.updated` |
+| **双向 / 流式往返** | **WS** | `turn.submit` → `decision`/`tool.*`/`output`/`turn.final` |
+| 请求-响应 / 低频 / 管理 | **HTTP** | 会话 CRUD、目录、配置、调度、作业提交、观测 |
+| 二进制 / 大对象 | **HTTP** | 资产上传 / 下载（multipart / `Range` / `Content-Type`） |
+| 探针 / 无状态 | **HTTP** | `/v1/health`、`/v1/metrics` |
+
+**规则**：WS = 数据面（高频 / 实时 / 单向推送、双向流式回合）；HTTP = 控制面 + 二进制面（请求-响应管理、资产、探针）。
+**重叠处（回合提交）以 WS 为主，HTTP 仅 fallback**（§5.5）。二者互补，非二选一。
+
 > 所有 JSON 字段名 `camelCase`；时间为 RFC3339 UTC（`2026-10-09T16:39:17.677Z`）；id 为 ULID 字符串。
 
 ### 4.2 统一信封 Envelope
@@ -184,6 +197,43 @@ HTTP body 与 WS 帧**共用同一结构**：
   不得用 `seq+1` 推断丢失）；`output` 类需 `output.ack`（见 §6）。
 - 同一会话的回合由内核 **per-session 闸串行**执行（`turn.submit` 默认排队；`turn.busy` 仅用于超队列上限）。
 
+### 4.7 身份模型
+
+| 标识 | 域 | 含义 | 来源 |
+| --- | --- | --- | --- |
+| `clientId` | 连接 | 一个客户端实例 / 连接（设备、进程） | `hello` |
+| `clientType` | 连接 | 形态：`cli\|tui\|gui\|web\|qq\|hub` | `hello` |
+| `subjectId` | 会话 | 会话主体（用户 / 玩家）；**记忆与状态的 owner（隔离键）** | `session.open` |
+| `agentId` | 会话 | 角色 / Agent 身份 | `session.open` |
+| `userId` | 回合 | 频道 / 群内**说话人**稳定 id（平台用户 id） | `turn.submit` |
+| `actorId` | 回合 | 回合发起人（`player` 或角色 id）；表现层语义 | `turn.submit` |
+| `threadId` | 回合 | 会话内线程（群内每用户 / 每话题） | `turn.submit` |
+
+**关系**
+
+- 一个 `clientId` 可开/订阅**多个**会话；一个会话可被**多个** `clientId` 订阅（多端同看）。
+- `subjectId` 是记忆 / 状态的**隔离键**；`userId` 是会话内的**说话人身份**（一个会话可有多个）。
+- `token.role`（§4.4）决定可访问范围，见 §4.8。
+- 群聊场景：`subjectId` = 角色（如 `builtin-rin`），`userId` = 群成员 —— 二者的笛卡尔积才是「用户 × 角色」维度（当前内核仅按 `subjectId` 键控，见 `context-scope-risk.md` R3）。
+
+### 4.8 权限矩阵
+
+| 资源 / 操作 | `admin` | `user` | `edge` |
+| --- | --- | --- | --- |
+| 健康 / 版本 | ✓ | ✓ | ✓ |
+| 目录（agents / capabilities） | ✓ | ✓ | ✓ |
+| 会话（自有） | ✓ | ✓ | ✓（代表多用户） |
+| 会话（任意） | ✓ | ✗ | ✗ |
+| 回合（已订阅会话） | ✓ | ✓ | ✓ |
+| 配置读写（§5.7） | ✓ | ✗ | ✗ |
+| 调度（§5.8） | ✓ | ✗ | ✗ |
+| 作业（§5.9） | ✓ | ✓（自有） | ✓ |
+| 资产（§5.10 / §9） | ✓ | ✓（归属会话） | ✓ |
+| 观测 traces / metrics（§5.11） | ✓ | ✗ | ✗ |
+| 审计订阅（`audit.subscribe`） | ✓ | ✗ | ✗ |
+
+> 越权统一回 `3002 auth.forbidden`；未鉴权回 `3001 auth.unauthorized`。
+
 ---
 
 ## 5. HTTP 控制面接口
@@ -221,7 +271,10 @@ HTTP body 与 WS 帧**共用同一结构**：
 | GET    | `/v1/sessions/{id}/context` | `?region=&format=`                                                   | `{summary, regions: [{region, content, priority, source, status}]}` |
 | GET    | `/v1/sessions/{id}/state`   | —                                                                    | 世界状态只读投影 `{version, values: {...}}`（若扩展提供）           |
 
-### 5.5 回合（无 WS 客户端的 fallback + 异步提交）
+### 5.5 回合（**仅无 WS 客户端的 fallback**）
+
+> 有 WS 的客户端应一律走 `turn.submit`（§6.1）。此节供 QQ 桥 / 脚本等**无 WS** 客户端使用：
+> 提交后 `202 + turnId`，结果经 `GET /v1/turns/{turnId}` 轮询（因无 WS 无法接收流）。
 
 | 方法 | 路径                         | 请求 `data`                           | 响应                                                          |
 | ---- | ---------------------------- | ------------------------------------- | ------------------------------------------------------------- |
@@ -388,6 +441,12 @@ sequenceDiagram
 
 **主动 / 调度**：`/v1/schedules` 注册定时 / 条件触发；到期 Hub 自主发起回合并发 `turn.started{origin}`（`client|scheduled|event|presence|hub`），后续事件与普通回合一致；非回合的轻量提示走 `notification`。
 
+> **投递目标**：`notification` / `device.state` / `job.*` / `avatar.*` / `member.*` 等**非回合事件**默认
+> **广播给已订阅相关会话的客户端**；无 `sessionId` 的全局通知广播给所有已鉴权连接；需点对点时用 Envelope `targetClientId`。
+
+> **离线策略**：`turn.started`（主动回合）**不等客户端在线**照常执行；其 `output` 留存于会话日志，
+> 客户端上线后用 `session.resume{sinceSequence}` 补读（超出会话日志保留窗口的内容不可补，见 §9/§11）。
+
 **设备（智能家居）**：边缘 / 网关用 `device.report` 上报状态，Hub 广播 `device.state`；模型经能力（MCP / 内建）控制设备，高危操作（开锁 / 燃气）应声明 `requiresConfirmation`（§8）。
 
 **长任务 / 作业**：`POST /v1/jobs` 提交（CG 生成 / 批量 TTS / Live2D 构建），`job.accepted`→`job.progress`→`job.completed|failed`；产出复用 `OutputDto`（大内容走 assetRef）。作业与回合并行，不阻塞对话。
@@ -490,6 +549,10 @@ sequenceDiagram
 3. 未在超时内响应 → 该能力视为拒绝（`capability.failed`，`retryable:false`）。
 4. 客户端需声明 `features:["confirm"]`；不支持确认的客户端所连会话，Hub 对高危能力**直接拒绝**（安全默认）。
 
+> **依赖内核（当前为空转）**：内核现有能力（6 扩展）全部 `RiskLevel.Low` / `requiresConfirmation=false`
+> → 本节流程**尚无触发者**。需能力侧（插件 / MCP / 内建）在 `CapabilityDescriptor` 声明
+> `RequiresConfirmation=true` 后才生效；否则确认握手只是协议预留。
+
 ---
 
 ## 9. 资产与二进制（避免大帧）
@@ -569,5 +632,6 @@ sequenceDiagram
 | 8   | 配置协议       | **`get` / `post` / `del`** 三类（HTTP `/v1/config`；WS `config.get`/`set`/`del` + `config.updated` 广播）：有效值 = default ⊕ file ⊕ runtime，删除即回退默认；支持 `persist` 落盘；需 `admin`，敏感字段掩码                                                                                                                                                                  |
 | 9   | 协议域补全     | **补全 7 域**：群聊（`userId`/`mentions`/`threadId`/`recipient`/`member.*`）、多客户端（`targetClientId`/`presence.*`/`session.resume`）、主动调度（`/v1/schedules`/`turn.started`/`notification`）、设备（`device.report`/`device.state`）、作业（`/v1/jobs`/`job.*`）、表现（`avatar.*`）、观测（`/v1/traces`/`/v1/metrics`/`audit.event`）；新增码段 12xx–16xx、7002/7003 |
 | 10  | 内核流式与队列 | ✅ **已实现**：`InMemoryOutputQueue` 解耦（每会话日志、`Enqueue` 永不阻塞、`ReadSince` 续传）；`ICapabilityDecisionLoop.RunStreamAsync` 真流式（单写者 channel）；`ComposedAgentRuntime` per-session 回合闸串行化。上下文「全局 + 局部」改造风险另见 `docs/architecture/context-scope-risk.md`                                                                                |
+| 11 | 传输职责 | **HTTP + WS 互补双轨（非全 WS）**：WS = 数据面（高频 / 实时 / 单向推送、双向流式回合）；HTTP = 控制面 + 二进制面（请求-响应管理、资产上传下载、探针）；重叠处（回合提交）以 WS 为主、HTTP 为 fallback。理由：二进制大对象、探针 / 无状态运维、无实时需求的客户端（QQ 桥 / 脚本）都更适合 HTTP；全 WS 需把大对象与探针塞进 WS，得不偿失 |
 
 仍开放：TLS 终结方式（Hub 直出 vs 反向代理）——实施 Server 时再定。
