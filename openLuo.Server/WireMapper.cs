@@ -52,6 +52,39 @@ internal static class WireMapper
         Note = note,
     };
 
+    public static CapabilityDto ToDto(CapabilityDescriptor descriptor) => new()
+    {
+        CanonicalId = descriptor.CanonicalId,
+        DisplayName = descriptor.DisplayName,
+        Summary = descriptor.Summary,
+        Usage = descriptor.Usage,
+        Kind = descriptor.Kind switch
+        {
+            CapabilityKind.Mcp => CapabilityKinds.Mcp,
+            CapabilityKind.Workflow => CapabilityKinds.Workflow,
+            CapabilityKind.RemoteAgent => CapabilityKinds.RemoteAgent,
+            _ => CapabilityKinds.Builtin,
+        },
+        ProviderId = descriptor.ProviderId,
+        Version = descriptor.Version,
+        SideEffect = descriptor.SideEffect switch
+        {
+            SideEffectClass.ReadOnly => SideEffects.ReadOnly,
+            SideEffectClass.External => SideEffects.External,
+            SideEffectClass.Mutation => SideEffects.Mutation,
+            SideEffectClass.Delegation => SideEffects.Delegation,
+            _ => SideEffects.Pure,
+        },
+        Risk = descriptor.Risk switch
+        {
+            RiskLevel.Medium => RiskLevels.Medium,
+            RiskLevel.High => RiskLevels.High,
+            _ => RiskLevels.Low,
+        },
+        RequiresConfirmation = descriptor.RequiresConfirmation,
+        InputSchema = JsonSerializer.SerializeToNode(descriptor.InputSchema, ProtocolJson.Options),
+    };
+
     public static ToolCallEvent ToToolCall(string turnId, CapabilityCall call) => new()
     {
         TurnId = turnId,

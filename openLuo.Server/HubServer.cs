@@ -28,7 +28,8 @@ public sealed class HubServerOptions
 /// </summary>
 public static class HubServer
 {
-    public static async Task RunAsync(IAgentRuntime runtime, HubServerOptions options, CancellationToken ct = default)
+    public static async Task RunAsync(
+        IAgentRuntime runtime, HubServerOptions options, IRuntimeDirectory? directory = null, CancellationToken ct = default)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -95,6 +96,19 @@ public static class HubServer
                 ? Json(EnvelopeFactory.Create(EventTypes.SessionClosed, new SessionClosedEvent { SessionId = id }))
                 : Error(ErrorCodes.SessionNotFound, $"session not found: {id}");
         });
+
+        if (directory is not null)
+        {
+            app.MapGet("/v1/capabilities", async (string? sessionId, CancellationToken requestCt) =>
+            {
+                var capabilities = await directory.ListCapabilitiesAsync(sessionId, requestCt);
+                return Json(EnvelopeFactory.Create("capabilities", new CapabilitiesResponse
+                {
+                    Version = 1,
+                    Capabilities = capabilities.Select(WireMapper.ToDto).ToList(),
+                }));
+            });
+        }
 
         app.Map("/v1/stream", async (HttpContext ctx) =>
         {
@@ -209,7 +223,11 @@ public static class HubServer
 
                 default:
                     await SendAsync(socket, EnvelopeFactory.CreateError("error",
-                        ErrorCodes.ProtocolUnknownType, $"unknown type: {envelope.Type}", replyTo: envelope.Id), ct);
+                        ErrorCodes.ProtocolUnknownType,
+                        ProtocolRegistry.IsKnown(envelope.Type)
+                            ? $"type not handled: {envelope.Type}"
+                            : $"unknown type: {envelope.Type}",
+                        replyTo: envelope.Id), ct);
                     break;
             }
         }
