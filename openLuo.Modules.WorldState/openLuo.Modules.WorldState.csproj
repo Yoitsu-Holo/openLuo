@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>openLuo.Modules.WorldState</RootNamespace>
+    <AssemblyName>openLuo.Modules.WorldState</AssemblyName>
+    <Description>世界状态模块（Core 契约 + SQLite 实现）。独立于宿主 exe，供扩展直接依赖。</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\openLuo.Foundation\openLuo.Foundation.csproj" />
+  </ItemGroup>
+
+</Project>

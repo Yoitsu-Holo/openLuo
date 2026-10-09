@@ -54,6 +54,7 @@
     <ProjectReference Include="..\openLuo.OneBot\openLuo.OneBot.csproj" />
     <ProjectReference Include="..\openLuo.Server\openLuo.Server.csproj" />
     <ProjectReference Include="..\openLuo.Client\openLuo.Client.csproj" />
+    <ProjectReference Include="..\openLuo.Modules.WorldState\openLuo.Modules.WorldState.csproj" />
   </ItemGroup>
 
   <ItemGroup>

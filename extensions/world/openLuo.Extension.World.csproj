@@ -9,6 +9,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\openLuo.Abstractions\openLuo.Abstractions.csproj" />
     <ProjectReference Include="..\..\openLuo.Memory\openLuo.Memory.csproj" />
-    <ProjectReference Include="..\..\openLuo\openLuo.csproj" />
+    <ProjectReference Include="..\..\openLuo.Modules.WorldState\openLuo.Modules.WorldState.csproj" />
   </ItemGroup>
 </Project>
