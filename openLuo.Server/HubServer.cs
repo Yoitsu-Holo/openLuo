@@ -79,7 +79,8 @@ public static class HubServer
 {
     public static async Task RunAsync(
         IAgentRuntime runtime, HubServerOptions options, IRuntimeDirectory? directory = null,
-        IConfigService? config = null, IJobService? jobs = null, CancellationToken ct = default)
+        IConfigService? config = null, IJobService? jobs = null, ISchedulerService? scheduler = null,
+        CancellationToken ct = default)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -309,6 +310,51 @@ public static class HubServer
             };
         }
 
+        if (scheduler is not null)
+        {
+            app.MapGet("/v1/schedules", () => Json(EnvelopeFactory.Create("schedules", new ScheduleListResponse
+            {
+                Schedules = scheduler.List().Select(WireMapper.ToDto).ToList(),
+            })));
+
+            app.MapPost("/v1/schedules", async (HttpContext ctx, CancellationToken requestCt) =>
+            {
+                var body = await JsonSerializer.DeserializeAsync<CreateScheduleRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
+                           ?? new CreateScheduleRequest();
+                if (string.IsNullOrWhiteSpace(body.SessionId) || string.IsNullOrWhiteSpace(body.Kind))
+                    return Error(ErrorCodes.ScheduleInvalid, "sessionId and kind are required");
+
+                try
+                {
+                    var info = scheduler.Add(body.SessionId, body.Kind, body.At, body.Cron, body.Payload);
+                    return Json(EnvelopeFactory.Create("schedule", WireMapper.ToDto(info)));
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Error(ErrorCodes.ScheduleInvalid, ex.Message);
+                }
+            });
+
+            app.MapDelete("/v1/schedules/{id}", (string id) =>
+                scheduler.Remove(id)
+                    ? Json(EnvelopeFactory.Create("schedule", new { deleted = true }))
+                    : Error(ErrorCodes.ScheduleNotFound, $"schedule not found: {id}"));
+
+            // 到期 → 发起主动回合（§5.8/§6.4）
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await foreach (var due in scheduler.WatchAsync(ct))
+                        await RunProactiveTurnAsync(runtime, broadcaster, due, metrics, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    // 服务关闭
+                }
+            }, CancellationToken.None);
+        }
+
         app.Map("/v1/stream", async (HttpContext ctx) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest)
@@ -531,26 +577,71 @@ public static class HubServer
 
         await foreach (var evt in runtime.StreamTurnAsync(turnRequest, ct))
         {
-            var envelope = evt.Kind switch
-            {
-                "decision" when evt.Payload is int step =>
-                    EnvelopeFactory.Create(EventTypes.Decision, WireMapper.ToDecision(turnId, step), sessionId: sessionId),
-                "tool_call" when evt.Payload is CapabilityCall call =>
-                    EnvelopeFactory.Create(EventTypes.ToolCall, WireMapper.ToToolCall(turnId, call), sessionId: sessionId),
-                "tool_result" when evt.Payload is CapabilityResult result =>
-                    EnvelopeFactory.Create(EventTypes.ToolResult, WireMapper.ToToolResult(turnId, result), sessionId: sessionId),
-                "output" when evt.Payload is OutputItem item =>
-                    EnvelopeFactory.Create(EventTypes.Output, WireMapper.ToDto(item), sessionId: sessionId),
-                "final" when evt.Payload is TurnResult result =>
-                    EnvelopeFactory.Create(EventTypes.TurnFinal, WireMapper.ToDto(result, turnId), sessionId: sessionId),
-                _ => null,
-            };
+            var envelope = MapTurnEvent(evt, turnId, sessionId);
 
             if (evt.Kind == "final" && evt.Payload is TurnResult { Success: false })
                 metrics.ErrorReported();   // ErrorsTotal = 失败回合数
 
             if (envelope is not null)
                 await SendAsync(socket, envelope, ct);
+        }
+    }
+
+    /// <summary>内核回合事件 → wire 事件（回合与主动回合共用）。</summary>
+    private static Envelope? MapTurnEvent(TurnEvent evt, string turnId, string sessionId) => evt.Kind switch
+    {
+        "decision" when evt.Payload is int step =>
+            EnvelopeFactory.Create(EventTypes.Decision, WireMapper.ToDecision(turnId, step), sessionId: sessionId),
+        "tool_call" when evt.Payload is CapabilityCall call =>
+            EnvelopeFactory.Create(EventTypes.ToolCall, WireMapper.ToToolCall(turnId, call), sessionId: sessionId),
+        "tool_result" when evt.Payload is CapabilityResult result =>
+            EnvelopeFactory.Create(EventTypes.ToolResult, WireMapper.ToToolResult(turnId, result), sessionId: sessionId),
+        "output" when evt.Payload is OutputItem item =>
+            EnvelopeFactory.Create(EventTypes.Output, WireMapper.ToDto(item), sessionId: sessionId),
+        "final" when evt.Payload is TurnResult result =>
+            EnvelopeFactory.Create(EventTypes.TurnFinal, WireMapper.ToDto(result, turnId), sessionId: sessionId),
+        _ => null,
+    };
+
+    /// <summary>服务端发起的回合（调度到期等）：广播 turn.started 并推送回合事件。</summary>
+    private static async Task RunProactiveTurnAsync(
+        IAgentRuntime runtime, HubBroadcaster broadcaster, ScheduleDue due, HubMetrics metrics, CancellationToken ct)
+    {
+        var turnId = $"turn_{ProtocolIds.NewUlid()}";
+
+        await broadcaster.BroadcastAsync(EnvelopeFactory.Create(EventTypes.TurnStarted, new TurnStartedEvent
+        {
+            TurnId = turnId,
+            SessionId = due.SessionId,
+            Origin = TurnOrigins.Scheduled,
+            Trigger = due.Id,
+        }, sessionId: due.SessionId));
+
+        metrics.TurnStarted();
+
+        var request = new TurnRequest
+        {
+            SessionId = due.SessionId,
+            TurnId = turnId,
+            SourceId = "hub",
+            ChannelId = due.SessionId,
+            ActorId = "system",
+            Text = string.Empty,
+        };
+
+        try
+        {
+            await foreach (var evt in runtime.StreamTurnAsync(request, ct))
+            {
+                var envelope = MapTurnEvent(evt, turnId, due.SessionId);
+                if (envelope is not null)
+                    await broadcaster.BroadcastAsync(envelope);
+            }
+        }
+        catch (Exception ex)
+        {
+            await broadcaster.BroadcastAsync(EnvelopeFactory.CreateError(
+                EventTypes.Error, ErrorCodes.ServerInternal, ex.Message, sessionId: due.SessionId));
         }
     }
 

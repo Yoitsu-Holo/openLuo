@@ -142,6 +142,7 @@ if (options.Mode is LaunchMode.Serve)
     var configService = new openLuo.Modules.AppShell.Application.JsonConfigService(
         Path.Combine(Directory.GetCurrentDirectory(), "config"));
     var jobs = new openLuo.Modules.AppShell.Application.InMemoryJobService();
-    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs);
+    await using var scheduler = new openLuo.Modules.AppShell.Application.InMemorySchedulerService();
+    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler);
     return;
 }

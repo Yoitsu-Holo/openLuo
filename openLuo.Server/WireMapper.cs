@@ -52,6 +52,18 @@ public static class WireMapper
         Note = note,
     };
 
+    public static ScheduleDto ToDto(ScheduleInfo info) => new()
+    {
+        Id = info.Id,
+        SessionId = info.SessionId,
+        Kind = info.Kind,
+        Cron = info.Cron,
+        At = info.At,
+        Enabled = info.Enabled,
+        NextRunAt = info.NextRunAt,
+        Payload = info.Payload,
+    };
+
     public static JobDto ToDto(JobInfo job) => new()
     {
         Id = job.Id,
