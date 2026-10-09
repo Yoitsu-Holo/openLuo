@@ -511,8 +511,8 @@ sequenceDiagram
 | --- | --- |
 | `IAgentRuntime` | **保留**为 Hub 内部门面；`openLuo.Server` 做 wire 适配 |
 | `TurnEvent{decision\|tool_result\|output\|final}` | 直接映射为 `decision`/`tool_result`→`tool.result`/`output`/`turn.final` |
-| `IOutputQueue`(Enqueue/Read/Ack/Fail) | `Read` 循环 → 推 `output` 事件；`Ack/Fail` ← `output.ack/fail` 命令 |
-| `StreamTurnAsync`（当前退化实现） | 需还原为**真流式**（逐 `decision`/`tool`/`output` 产出），否则协议无法流式 |
+| `IOutputQueue`(Enqueue/Read/Ack/Fail) | ✅ **已解耦**：每会话日志 + `Enqueue` 永不阻塞 + `ReadSince` 续传；`Read` 循环 → 推 `output` 事件；`Ack/Fail` ← `output.ack/fail` 命令 |
+| `StreamTurnAsync` | ✅ **已还原真流式**：`ICapabilityDecisionLoop.RunStreamAsync` 逐事件（`decision`/`tool_call`/`tool_result`/`output`）；回合以 per-session 闸串行化 |
 | `CapabilityCatalogSnapshot`/`CapabilityDescriptor` | `GET /v1/capabilities` |
 | `SessionStore`（内存） | Hub 侧会话注册表，**改为 SQLite 持久化**（决策 #3） |
 | `openLuo.Cli/Tui/Gui/Qqbot`（进程内直连） | 改为 `openLuo.Client.*`（经 protocol 连 Hub） |
@@ -555,5 +555,6 @@ sequenceDiagram
 | 7 | 错误模型 | **`errorCode`(int) + `errorMsg`**：码值分段（1000=成功；2xxx 协议 / 3xxx 鉴权 / 4xxx 会话 / 5xxx 回合 / 6xxx 能力 / 7xxx 资产 / 8xxx 限流 / 9xxx 服务端）；稳定标识经 `ErrorCodes.NameOf` 提供，**不入 wire** |
 | 8 | 配置协议 | **`get` / `post` / `del`** 三类（HTTP `/v1/config`；WS `config.get`/`set`/`del` + `config.updated` 广播）：有效值 = default ⊕ file ⊕ runtime，删除即回退默认；支持 `persist` 落盘；需 `admin`，敏感字段掩码 |
 | 9 | 协议域补全 | **补全 7 域**：群聊（`userId`/`mentions`/`threadId`/`recipient`/`member.*`）、多客户端（`targetClientId`/`presence.*`/`session.resume`）、主动调度（`/v1/schedules`/`turn.started`/`notification`）、设备（`device.report`/`device.state`）、作业（`/v1/jobs`/`job.*`）、表现（`avatar.*`）、观测（`/v1/traces`/`/v1/metrics`/`audit.event`）；新增码段 12xx–16xx、7002/7003 |
+| 10 | 内核流式与队列 | ✅ **已实现**：`InMemoryOutputQueue` 解耦（每会话日志、`Enqueue` 永不阻塞、`ReadSince` 续传）；`ICapabilityDecisionLoop.RunStreamAsync` 真流式（单写者 channel）；`ComposedAgentRuntime` per-session 回合闸串行化。上下文「全局 + 局部」改造风险另见 `docs/architecture/context-scope-risk.md` |
 
 仍开放：TLS 终结方式（Hub 直出 vs 反向代理）——实施 Server 时再定。

@@ -19,4 +19,10 @@ public interface IOutputQueue
 
     /// <summary>标记发送失败。permanent=true 时放弃该条（以固定失败消息占位）；false 时保留可重试。</summary>
     Task FailAsync(long sequence, bool permanent, CancellationToken ct = default);
+
+    /// <summary>
+    /// 按会话读取序号大于 <paramref name="sinceSequence"/> 且**尚未确认投递**的输出项（断线续传）。
+    /// <paramref name="conversationId"/> 为空表示所有会话。此读取不推进消费游标、不改变任何状态。
+    /// </summary>
+    IReadOnlyList<OutputItem> ReadSince(string? conversationId, long sinceSequence);
 }

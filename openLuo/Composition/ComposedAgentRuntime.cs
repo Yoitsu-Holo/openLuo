@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using openLuo.AgentContext.Core;
 using openLuo.AgentContext.Core.Models;
 using openLuo.AgentContext.Infrastructure;
@@ -21,6 +22,15 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
     private readonly SessionStore _sessions;
     private readonly DatabaseInitializer? _databaseInitializer;
     private readonly SemaphoreSlim _initGate = new(1, 1);
+
+    /// <summary>
+    /// 每会话回合并发闸：同一会话的回合（含流式）串行执行。
+    /// 会话快照推进（CreateTurnSnapshot → ApplyToolResults → Commit）不是一个原子事务；
+    /// 若同会话两个回合交错，会基于同一基础快照互相覆盖（逻辑竞态，非内存损坏）。
+    /// 平台层（如 QQ fire-and-forget）可能并发投递，故在此收口。会话关闭后条目不回收，量级可控。
+    /// </summary>
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _turnGates = new(StringComparer.Ordinal);
+
     private bool _initialized;
 
     public ComposedAgentRuntime(
@@ -65,8 +75,16 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         return new AgentSession { SessionId = request.SessionId, SubjectId = request.SubjectId, AgentId = request.AgentId, ConversationId = conversationId };
     }
 
-    public async Task<TurnResult> RunTurnAsync(TurnRequest request, CancellationToken ct = default)
+    /// <summary>回合准备结果（快照/目录/决策上下文/请求），供非流式与流式共用。</summary>
+    private sealed record PreparedTurn(
+        DefaultAgentContextSession Session,
+        AgentDecisionContext Built,
+        CapabilityCatalogSnapshot Snapshot,
+        DecisionLoopRequest LoopRequest);
+
+    private async Task<PreparedTurn> PrepareTurnAsync(TurnRequest request, CancellationToken ct)
     {
+        await EnsureInitializedAsync(ct);
         var session = _sessions.Get(request.SessionId)
             ?? throw new InvalidOperationException($"Session is not open: {request.SessionId}");
         var budgets = request.Budgets ?? DecisionBudgets.Default;
@@ -84,7 +102,7 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         }, ct);
         var context = AgentContextConverter.ToDecisionContext(built, snapshot, budgets);
         var systemBlocks = built.Contributions.Select(c => $"[{c.Region}]\n{c.Content}\n[/{c.Region}]").ToList();
-        var result = await _loop.RunAsync(new DecisionLoopRequest
+        var loopRequest = new DecisionLoopRequest
         {
             SessionId = request.SessionId, TurnId = request.TurnId, SubjectId = session.SubjectId,
             Context = context, Catalog = snapshot, Budgets = budgets,
@@ -95,14 +113,21 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
                 DeadlineUtc = DateTimeOffset.UtcNow + budgets.OverallDeadline, OutputQueue = _outputQueue,
                 SystemBlocks = systemBlocks, UserBlocks = request.Blocks
             }
-        }, ct);
+        };
+        return new PreparedTurn(session, built, snapshot, loopRequest);
+    }
+
+    /// <summary>净化输出并提交回合，产出对外 TurnResult。</summary>
+    private async Task<TurnResult> CommitTurnAsync(
+        TurnRequest request, PreparedTurn prepared, DecisionLoopResult result, CancellationToken ct)
+    {
         var sanitizedOutputs = result.Outputs
             .Select(o => o.Kind == ReplyItemKind.Text && o.Payload is string text
                 ? o with { Payload = AgentContextConverter.SanitizeMetadataPrefix(text) }
                 : o)
             .ToList();
         var sanitizedFinalText = AgentContextConverter.SanitizeMetadataPrefix(result.FinalText);
-        await session.CommitTurnAsync(new TurnCompletion
+        await prepared.Session.CommitTurnAsync(new TurnCompletion
         {
             TurnId = request.TurnId, FinalText = sanitizedFinalText, Outputs = sanitizedOutputs, Success = result.Success,
             UserText = request.Text, SenderName = request.SenderName
@@ -111,8 +136,27 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         {
             Success = result.Success, FinalText = sanitizedFinalText, Outputs = sanitizedOutputs,
             Steps = result.Steps, TerminationReason = result.TerminationReason,
-            TerminationDetail = result.TerminationDetail, StateVersion = built.SnapshotVersion
+            TerminationDetail = result.TerminationDetail, StateVersion = prepared.Built.SnapshotVersion
         };
+    }
+
+    private SemaphoreSlim TurnGate(string sessionId) =>
+        _turnGates.GetOrAdd(sessionId, static _ => new SemaphoreSlim(1, 1));
+
+    public async Task<TurnResult> RunTurnAsync(TurnRequest request, CancellationToken ct = default)
+    {
+        var gate = TurnGate(request.SessionId);
+        await gate.WaitAsync(ct);
+        try
+        {
+            var prepared = await PrepareTurnAsync(request, ct);
+            var result = await _loop.RunAsync(prepared.LoopRequest, ct);
+            return await CommitTurnAsync(request, prepared, result, ct);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     public async Task AppendMessageAsync(string sessionId, string? senderName, string text, IReadOnlyList<object>? blocks = null, CancellationToken ct = default)
@@ -162,12 +206,53 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         return sb.ToString();
     }
 
-    public async IAsyncEnumerable<TurnEvent> StreamTurnAsync(TurnRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    /// <summary>
+    /// 真流式回合：准备 → 消费决策循环事件（decision/tool_call/tool_result/output）→ 提交 → final。
+    /// 与 <see cref="RunTurnAsync"/> 共用准备与提交逻辑，并以同一会话闸串行化。
+    /// </summary>
+    public async IAsyncEnumerable<TurnEvent> StreamTurnAsync(
+        TurnRequest request,
+        [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var result = await RunTurnAsync(request, ct);
-        foreach (var output in result.Outputs)
-            yield return new TurnEvent { TurnId = request.TurnId, Kind = "output", Payload = output };
-        yield return new TurnEvent { TurnId = request.TurnId, Kind = "final", Payload = result };
+        var gate = TurnGate(request.SessionId);
+        await gate.WaitAsync(ct);
+        try
+        {
+            var prepared = await PrepareTurnAsync(request, ct);
+            DecisionLoopResult? final = null;
+
+            await foreach (var evt in _loop.RunStreamAsync(prepared.LoopRequest, ct))
+            {
+                switch (evt.Kind)
+                {
+                    case DecisionEventKind.Final:
+                        final = evt.Payload as DecisionLoopResult;
+                        break;
+                    case DecisionEventKind.Decision:
+                        yield return new TurnEvent { TurnId = request.TurnId, Kind = "decision", Payload = evt.Payload };
+                        break;
+                    case DecisionEventKind.ToolCall:
+                        yield return new TurnEvent { TurnId = request.TurnId, Kind = "tool_call", Payload = evt.Payload };
+                        break;
+                    case DecisionEventKind.ToolResult:
+                        yield return new TurnEvent { TurnId = request.TurnId, Kind = "tool_result", Payload = evt.Payload };
+                        break;
+                    case DecisionEventKind.Output:
+                        yield return new TurnEvent { TurnId = request.TurnId, Kind = "output", Payload = evt.Payload };
+                        break;
+                }
+            }
+
+            if (final is null)
+                yield break;
+
+            var result = await CommitTurnAsync(request, prepared, final, ct);
+            yield return new TurnEvent { TurnId = request.TurnId, Kind = "final", Payload = result };
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 }
 

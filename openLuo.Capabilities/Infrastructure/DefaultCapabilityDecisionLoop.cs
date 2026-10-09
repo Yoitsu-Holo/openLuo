@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Threading.Channels;
 using openLuo.Capabilities.Core;
 using openLuo.Capabilities.Core.Models;
 
@@ -6,6 +8,8 @@ namespace openLuo.Capabilities.Infrastructure;
 
 /// <summary>
 /// 默认决策循环实现（D2/D17/D18/D41）。
+/// <para>非流式 <see cref="RunAsync"/> 与流式 <see cref="RunStreamAsync"/> 共享同一循环体
+/// <see cref="ExecuteAsync"/>；后者在循环各阶段顺序 emit 事件（单写者，无竞态）。</para>
 /// </summary>
 public sealed class DefaultCapabilityDecisionLoop : ICapabilityDecisionLoop
 {
@@ -29,7 +33,66 @@ public sealed class DefaultCapabilityDecisionLoop : ICapabilityDecisionLoop
         _idempotency = idempotency ?? new InMemoryIdempotencyRegistry();
     }
 
-    public async Task<DecisionLoopResult> RunAsync(DecisionLoopRequest request, CancellationToken ct = default)
+    public Task<DecisionLoopResult> RunAsync(DecisionLoopRequest request, CancellationToken ct = default)
+        => ExecuteAsync(request, emit: null, ct);
+
+    public async IAsyncEnumerable<DecisionEvent> RunStreamAsync(
+        DecisionLoopRequest request,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        // 无界 channel + 单写者：ExecuteAsync 在循环体内顺序 emit，消费者（此迭代器）跨上下文读取。
+        // 生产者异常经 channel 传递；消费者提前退出时经 linked 取消生产者，避免后台任务泄漏。
+        var channel = Channel.CreateUnbounded<DecisionEvent>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            AllowSynchronousContinuations = false,
+        });
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        var producer = Task.Run(async () =>
+        {
+            try
+            {
+                var result = await ExecuteAsync(request, e => channel.Writer.TryWrite(e), linked.Token)
+                    .ConfigureAwait(false);
+
+                channel.Writer.TryWrite(new DecisionEvent
+                {
+                    TurnId = request.TurnId,
+                    Kind = DecisionEventKind.Final,
+                    Payload = result,
+                });
+                channel.Writer.TryComplete();
+            }
+            catch (OperationCanceledException) when (linked.IsCancellationRequested)
+            {
+                channel.Writer.TryComplete();
+            }
+            catch (Exception ex)
+            {
+                channel.Writer.TryComplete(ex);
+            }
+        }, CancellationToken.None);
+
+        try
+        {
+            await foreach (var evt in channel.Reader.ReadAllAsync(linked.Token).ConfigureAwait(false))
+                yield return evt;
+        }
+        finally
+        {
+            linked.Cancel();
+            try { await producer.ConfigureAwait(false); }
+            catch { /* 异常已经由 channel 传递，或取消所致 */ }
+        }
+    }
+
+    private async Task<DecisionLoopResult> ExecuteAsync(
+        DecisionLoopRequest request,
+        Action<DecisionEvent>? emit,
+        CancellationToken ct)
     {
         var budgets = request.Budgets;
         var deadline = _clock.UtcNow + budgets.OverallDeadline;
@@ -43,6 +106,7 @@ public sealed class DefaultCapabilityDecisionLoop : ICapabilityDecisionLoop
         {
             ct.ThrowIfCancellationRequested();
             decisionsUsed = decision;
+            emit?.Invoke(new DecisionEvent { TurnId = request.TurnId, Kind = DecisionEventKind.Decision, Payload = decision });
 
             if (_clock.UtcNow >= deadline)
                 return Finish(steps, outputs, decisionsUsed, TerminationReason.OverallTimeout, "overall deadline exceeded");
@@ -99,15 +163,25 @@ public sealed class DefaultCapabilityDecisionLoop : ICapabilityDecisionLoop
             // 不加入 outputs（工具产出才走 TurnResult 同步路径，避免平台双发）。
             foreach (var message in decisionResult.Messages.Where(m => m.Mode == FlowMode.Inqueue))
             {
-                await request.BaseExecutionContext.OutputQueue.EnqueueAsync(new OutputItem
+                var item = new OutputItem
                 {
                     Id = Guid.NewGuid().ToString("N"),
                     Kind = message.Kind,
                     Payload = message.Payload,
                     SourceCapability = message.SourceCapability,
                     ConversationId = request.SessionId
-                }, ct);
+                };
+                var sequence = await request.BaseExecutionContext.OutputQueue.EnqueueAsync(item, ct);
+                emit?.Invoke(new DecisionEvent
+                {
+                    TurnId = request.TurnId,
+                    Kind = DecisionEventKind.Output,
+                    Payload = item with { Sequence = sequence }
+                });
             }
+
+            foreach (var call in decisionResult.Calls)
+                emit?.Invoke(new DecisionEvent { TurnId = request.TurnId, Kind = DecisionEventKind.ToolCall, Payload = call });
 
             // 执行批次（D7-D10）
             var batch = await _dispatcher.ExecuteBatchAsync(
@@ -136,6 +210,9 @@ public sealed class DefaultCapabilityDecisionLoop : ICapabilityDecisionLoop
                     Status = CapabilityStatus.Rejected,
                     Error = batch.RejectionReason ?? "batch rejected"
                 }).ToList();
+                foreach (var rejected in rejectedResults)
+                    emit?.Invoke(new DecisionEvent { TurnId = request.TurnId, Kind = DecisionEventKind.ToolResult, Payload = rejected });
+
                 context = await _contextUpdater.ApplyToolResultsAsync(
                     request.SessionId, request.TurnId, decisionResult.Calls, rejectedResults, ct);
                 continue;
@@ -143,6 +220,8 @@ public sealed class DefaultCapabilityDecisionLoop : ICapabilityDecisionLoop
 
             foreach (var result in batch.Results)
             {
+                emit?.Invoke(new DecisionEvent { TurnId = request.TurnId, Kind = DecisionEventKind.ToolResult, Payload = result });
+
                 if (result.Success && result.Outputs is { Count: > 0 })
                 {
                     foreach (var output in result.Outputs)
@@ -153,7 +232,7 @@ public sealed class DefaultCapabilityDecisionLoop : ICapabilityDecisionLoop
                             // (D50,如 QQ ConsumeInterimQueueAsync 按 ConversationId 路由)。
                             // 带 ConversationId 供平台路由;不加入回合 outputs,
                             // 避免"回合结束又发一次"导致同一段双发。
-                            await request.BaseExecutionContext.OutputQueue.EnqueueAsync(new OutputItem
+                            var item = new OutputItem
                             {
                                 Id = output.Id,
                                 Kind = output.Kind,
@@ -161,7 +240,14 @@ public sealed class DefaultCapabilityDecisionLoop : ICapabilityDecisionLoop
                                 SourceCapability = output.SourceCapability,
                                 Fingerprint = output.Fingerprint,
                                 ConversationId = request.SessionId
-                            }, ct);
+                            };
+                            var sequence = await request.BaseExecutionContext.OutputQueue.EnqueueAsync(item, ct);
+                            emit?.Invoke(new DecisionEvent
+                            {
+                                TurnId = request.TurnId,
+                                Kind = DecisionEventKind.Output,
+                                Payload = item with { Sequence = sequence }
+                            });
                         }
                         else
                         {
@@ -204,6 +290,7 @@ public sealed class DefaultCapabilityDecisionLoop : ICapabilityDecisionLoop
 
         return Finish(steps, outputs, decisionsUsed, TerminationReason.MaxDecisionsReached, $"max decisions reached: {budgets.MaxDecisions}");
     }
+
     private static DecisionLoopResult Finish(
         List<AgentToolUseStep> steps,
         List<OutputItem> outputs,
