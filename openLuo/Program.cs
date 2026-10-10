@@ -176,6 +176,6 @@ if (options.Mode is LaunchMode.Serve)
     var logs = serviceProvider.GetService<openLuo.Core.Interfaces.ILogStore>();
     var assets = serviceProvider.GetService<openLuo.Core.Interfaces.IAssetStore>();
     var outputQueue = serviceProvider.GetService<openLuo.Capabilities.Core.IOutputQueue>();
-    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth, assets, hubStore, outputQueue);
+    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth, assets, hubStore, outputQueue, hubStore);
     return;
 }

@@ -152,7 +152,8 @@ public static class HubServer
         IAgentRuntime runtime, HubServerOptions options, IRuntimeDirectory? directory = null,
         IConfigService? config = null, IJobService? jobs = null, ISchedulerService? scheduler = null,
         ILogStore? logs = null, HubAuthOptions? auth = null, IAssetStore? assets = null,
-        ITokenStore? tokenStore = null, IOutputQueue? outputQueue = null, CancellationToken ct = default)
+        ITokenStore? tokenStore = null, IOutputQueue? outputQueue = null, ITraceStore? traces = null,
+        CancellationToken ct = default)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -170,7 +171,7 @@ public static class HubServer
         string[] features = [Features.Streaming, Features.MultiSession, Features.Confirm, Features.Config];
 
         // 权限守卫（§4.8）：admin-only 路径未鉴权 → 3001，越权 → 3002。
-        string[] adminPrefixes = ["/v1/config", "/v1/logs", "/v1/metrics", "/v1/schedules"];
+        string[] adminPrefixes = ["/v1/config", "/v1/logs", "/v1/metrics", "/v1/schedules", "/v1/traces"];
         app.Use(async (ctx, next) =>
         {
             var path = ctx.Request.Path.Value ?? string.Empty;
@@ -460,7 +461,7 @@ public static class HubServer
                 try
                 {
                     await foreach (var due in scheduler.WatchAsync(ct))
-                        await RunProactiveTurnAsync(runtime, broadcaster, due, metrics, assets, ct);
+                        await RunProactiveTurnAsync(runtime, broadcaster, due, metrics, assets, traces, ct);
                 }
                 catch (OperationCanceledException)
                 {
@@ -577,6 +578,27 @@ public static class HubServer
             });
         }
 
+        if (traces is not null)
+        {
+            app.MapGet("/v1/traces/{turnId}", (string turnId) =>
+            {
+                var trace = traces.Get(turnId);
+                return trace is null
+                    ? Error(ErrorCodes.Unknown, $"trace not found: {turnId}")
+                    : Json(EnvelopeFactory.Create("trace", new TurnTraceDto
+                    {
+                        TurnId = trace.TurnId,
+                        SessionId = trace.SessionId,
+                        Events = trace.Events.Select(e => new TraceEventDto
+                        {
+                            Ts = e.Ts,
+                            Type = e.Type,
+                            Data = TryParseNode(e.Data),
+                        }).ToList(),
+                    }));
+            });
+        }
+
         app.Map("/v1/stream", async (HttpContext ctx) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest)
@@ -592,7 +614,7 @@ public static class HubServer
             try
             {
                 await HandleConnectionAsync(connection, runtime, options, features, metrics, tokens, assets, broadcaster,
-                    presenceSubscribers, outputQueue, ctx.RequestAborted);
+                    presenceSubscribers, outputQueue, traces, ctx.RequestAborted);
             }
             finally
             {
@@ -621,6 +643,14 @@ public static class HubServer
         ctx.Response.ContentType = "application/json; charset=utf-8";
         await ctx.Response.WriteAsync(ProtocolJson.Serialize(
             EnvelopeFactory.CreateError(EventTypes.Error, errorCode, message)));
+    }
+
+    private static JsonNode? TryParseNode(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+        try { return JsonNode.Parse(json); }
+        catch { return JsonValue.Create(json); }
     }
 
     private static PresenceUpdatedEvent PresenceOf(HubConnection connection, string status) => new()
@@ -775,7 +805,8 @@ public static class HubServer
     private static async Task HandleConnectionAsync(
         HubConnection connection, IAgentRuntime runtime, HubServerOptions options, string[] features,
         HubMetrics metrics, TokenRegistry tokens, IAssetStore? assets, HubBroadcaster broadcaster,
-        ConcurrentDictionary<string, HubConnection> presenceSubscribers, IOutputQueue? outputQueue, CancellationToken ct)
+        ConcurrentDictionary<string, HubConnection> presenceSubscribers, IOutputQueue? outputQueue,
+        ITraceStore? traces, CancellationToken ct)
     {
         var socket = connection.Socket;
         var buffer = new byte[64 * 1024];
@@ -943,7 +974,7 @@ public static class HubServer
 
                     var req = envelope.DataAs<TurnRequestDto>() ?? new TurnRequestDto();
                     metrics.TurnStarted();
-                    await RunTurnStreamAsync(connection, broadcaster, runtime, sessionId, req, envelope.Id, metrics, assets, ct);
+                    await RunTurnStreamAsync(connection, broadcaster, runtime, sessionId, req, envelope.Id, metrics, assets, traces, ct);
                     break;
                 }
 
@@ -961,9 +992,14 @@ public static class HubServer
 
     private static async Task RunTurnStreamAsync(
         HubConnection connection, HubBroadcaster broadcaster, IAgentRuntime runtime, string sessionId,
-        TurnRequestDto req, string requestId, HubMetrics metrics, IAssetStore? assets, CancellationToken ct)
+        TurnRequestDto req, string requestId, HubMetrics metrics, IAssetStore? assets, ITraceStore? traces, CancellationToken ct)
     {
         var turnId = string.IsNullOrWhiteSpace(req.TurnId) ? $"turn_{ProtocolIds.NewUlid()}" : req.TurnId!;
+
+        traces?.StartTurn(turnId, sessionId, TurnOrigins.Client, DateTimeOffset.UtcNow);
+        var success = false;
+        string? termination = null;
+        string? finalText = null;
 
         await broadcaster.DeliverAsync(EnvelopeFactory.Create(EventTypes.TurnAccepted,
             new TurnAcceptedEvent { TurnId = turnId, SessionId = sessionId },
@@ -988,9 +1024,21 @@ public static class HubServer
             if (evt.Kind == "final" && evt.Payload is TurnResult { Success: false })
                 metrics.ErrorReported();   // ErrorsTotal = 失败回合数
 
+            if (evt.Kind == "final" && evt.Payload is TurnResult final)
+            {
+                success = final.Success;
+                termination = final.TerminationReason.ToString();
+                finalText = final.FinalText;
+            }
+
             if (envelope is not null)
+            {
+                traces?.AddEvent(turnId, envelope.Type, envelope.Data?.ToJsonString());
                 await broadcaster.DeliverAsync(envelope, sessionId: sessionId, includeConnectionId: connection.Id, ct: ct);
+            }
         }
+
+        traces?.CompleteTurn(turnId, success, termination, finalText);
     }
 
     /// <summary>内核回合事件 → wire 事件（回合与主动回合共用）；二进制输出改资产引用（§9）。</summary>
@@ -1072,9 +1120,11 @@ public static class HubServer
     /// <summary>服务端发起的回合（调度到期等）：广播 turn.started 并推送回合事件。</summary>
     private static async Task RunProactiveTurnAsync(
         IAgentRuntime runtime, HubBroadcaster broadcaster, ScheduleDue due, HubMetrics metrics,
-        IAssetStore? assets, CancellationToken ct)
+        IAssetStore? assets, ITraceStore? traces, CancellationToken ct)
     {
         var turnId = $"turn_{ProtocolIds.NewUlid()}";
+
+        traces?.StartTurn(turnId, due.SessionId, TurnOrigins.Scheduled, DateTimeOffset.UtcNow);
 
         await broadcaster.DeliverAsync(EnvelopeFactory.Create(EventTypes.TurnStarted, new TurnStartedEvent
         {
@@ -1102,8 +1152,13 @@ public static class HubServer
             {
                 var envelope = await MapTurnEventAsync(assets, evt, turnId, due.SessionId, ct);
                 if (envelope is not null)
+                {
+                    traces?.AddEvent(turnId, envelope.Type, envelope.Data?.ToJsonString());
                     await broadcaster.DeliverAsync(envelope, sessionId: due.SessionId, ct: ct);
+                }
             }
+
+            traces?.CompleteTurn(turnId, true, null, null);
         }
         catch (Exception ex)
         {

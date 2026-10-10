@@ -9,7 +9,7 @@ namespace openLuo.Infrastructure.Persistence;
 /// Hub 控制面状态持久化（<c>hub.db</c>，WAL，独立于业务 <c>game.db</c>）：
 /// 会话元数据、作业、调度、已签发令牌。供 Hub 重启后保守恢复（决策 #3）。
 /// </summary>
-public sealed class HubStore : ITokenStore
+public sealed class HubStore : ITokenStore, ITraceStore
 {
     private readonly string _dbPath;
 
@@ -55,6 +55,21 @@ public sealed class HubStore : ITokenStore
               token TEXT PRIMARY KEY, client_id TEXT NOT NULL, role TEXT NOT NULL, expires_at_ms INTEGER NOT NULL
             );
             """);
+        Execute(conn, """
+            CREATE TABLE IF NOT EXISTS traces (
+              turn_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, origin TEXT,
+              started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER, success INTEGER,
+              termination_reason TEXT, final_text TEXT
+            );
+            """);
+        Execute(conn, """
+            CREATE TABLE IF NOT EXISTS trace_events (
+              turn_id TEXT NOT NULL, seq INTEGER NOT NULL, ts_ms INTEGER NOT NULL,
+              type TEXT NOT NULL, data TEXT, PRIMARY KEY (turn_id, seq)
+            );
+            """);
+        Execute(conn, "CREATE INDEX IF NOT EXISTS ix_trace_events_ts ON trace_events(ts_ms);");
+        Execute(conn, "CREATE INDEX IF NOT EXISTS ix_traces_started ON traces(started_at_ms);");
     }
 
     private static void Execute(SqliteConnection conn, string sql)
@@ -229,6 +244,149 @@ public sealed class HubStore : ITokenStore
                 reader.IsDBNull(7) ? null : JsonNode.Parse(reader.GetString(7))));
         }
         return result;
+    }
+
+    // ── 回合轨迹（§5.11 观测/回放） ──────────────────────────────
+
+    private const int TraceRetainDays = 14;
+    private const int TraceMaxEvents = 200_000;
+    private long _traceEventsSinceTrim;
+
+    public void StartTurn(string turnId, string sessionId, string? origin, DateTimeOffset startedAt)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO traces (turn_id, session_id, origin, started_at_ms)
+            VALUES ($id, $sess, $origin, $ts)
+            ON CONFLICT(turn_id) DO NOTHING;
+            """;
+        cmd.Parameters.AddWithValue("$id", turnId);
+        cmd.Parameters.AddWithValue("$sess", sessionId);
+        cmd.Parameters.AddWithValue("$origin", (object?)origin ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$ts", startedAt.ToUnixTimeMilliseconds());
+        cmd.ExecuteNonQuery();
+    }
+
+    public void AddEvent(string turnId, string type, string? data)
+    {
+        if (data is { Length: > 4096 })
+            data = data[..4096] + "…(truncated)";
+
+        using (var conn = Open())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO trace_events (turn_id, seq, ts_ms, type, data)
+                VALUES ($id, (SELECT COALESCE(MAX(seq), 0) + 1 FROM trace_events WHERE turn_id = $id), $ts, $type, $data);
+                """;
+            cmd.Parameters.AddWithValue("$id", turnId);
+            cmd.Parameters.AddWithValue("$ts", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            cmd.Parameters.AddWithValue("$type", type);
+            cmd.Parameters.AddWithValue("$data", (object?)data ?? DBNull.Value);
+            cmd.ExecuteNonQuery();
+        }
+
+        if (Interlocked.Increment(ref _traceEventsSinceTrim) >= 500)
+        {
+            Interlocked.Exchange(ref _traceEventsSinceTrim, 0);
+            TrimTraces();
+        }
+    }
+
+    public void CompleteTurn(string turnId, bool success, string? terminationReason, string? finalText)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE traces SET ended_at_ms = $ts, success = $ok, termination_reason = $reason, final_text = $final
+            WHERE turn_id = $id;
+            """;
+        cmd.Parameters.AddWithValue("$id", turnId);
+        cmd.Parameters.AddWithValue("$ts", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        cmd.Parameters.AddWithValue("$ok", success ? 1 : 0);
+        cmd.Parameters.AddWithValue("$reason", (object?)terminationReason ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$final", (object?)finalText ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    public TurnTraceInfo? Get(string turnId)
+    {
+        using var conn = Open();
+
+        string sessionId;
+        string? origin, reason, finalText;
+        long startedAt;
+        long? endedAt;
+        bool? success;
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT session_id, origin, started_at_ms, ended_at_ms, success, termination_reason, final_text FROM traces WHERE turn_id = $id;";
+            cmd.Parameters.AddWithValue("$id", turnId);
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+                return null;
+
+            sessionId = reader.GetString(0);
+            origin = reader.IsDBNull(1) ? null : reader.GetString(1);
+            startedAt = reader.GetInt64(2);
+            endedAt = reader.IsDBNull(3) ? null : reader.GetInt64(3);
+            success = reader.IsDBNull(4) ? null : reader.GetInt32(4) == 1;
+            reason = reader.IsDBNull(5) ? null : reader.GetString(5);
+            finalText = reader.IsDBNull(6) ? null : reader.GetString(6);
+        }
+
+        var events = new List<TraceEventInfo>();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT seq, ts_ms, type, data FROM trace_events WHERE turn_id = $id ORDER BY seq;";
+            cmd.Parameters.AddWithValue("$id", turnId);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                events.Add(new TraceEventInfo(
+                    reader.GetInt32(0),
+                    DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(1)),
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3)));
+            }
+        }
+
+        return new TurnTraceInfo(turnId, sessionId, origin,
+            DateTimeOffset.FromUnixTimeMilliseconds(startedAt),
+            endedAt is null ? null : DateTimeOffset.FromUnixTimeMilliseconds(endedAt.Value),
+            success, reason, finalText, events);
+    }
+
+    /// <summary>轨迹裁剪：保留 14 天 / 20 万事件（超窗删最旧）。</summary>
+    private void TrimTraces()
+    {
+        using var conn = Open();
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "DELETE FROM trace_events WHERE ts_ms < $cutoff;";
+            cmd.Parameters.AddWithValue("$cutoff", DateTimeOffset.UtcNow.AddDays(-TraceRetainDays).ToUnixTimeMilliseconds());
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                DELETE FROM trace_events WHERE rowid IN (
+                  SELECT rowid FROM trace_events ORDER BY ts_ms DESC LIMIT -1 OFFSET $max);
+                """;
+            cmd.Parameters.AddWithValue("$max", TraceMaxEvents);
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "DELETE FROM traces WHERE turn_id NOT IN (SELECT DISTINCT turn_id FROM trace_events) AND started_at_ms < $cutoff;";
+            cmd.Parameters.AddWithValue("$cutoff", DateTimeOffset.UtcNow.AddDays(-TraceRetainDays).ToUnixTimeMilliseconds());
+            cmd.ExecuteNonQuery();
+        }
     }
 
     // ── 令牌 ────────────────────────────────────────────────────

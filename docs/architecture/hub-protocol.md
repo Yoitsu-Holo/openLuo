@@ -359,6 +359,15 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 审计事件经 WS `audit.event` 推送（`audit.subscribe`）。
 
+**实现状态（已落地）**
+
+- `/v1/metrics`：Hub 计数（uptime / 在线连接 / 回合数 / 失败回合数 / 活跃会话）。
+- `/v1/traces/{turnId}`：**回合轨迹**入 `hub.db`（`traces` + `trace_events`），记录
+  `decision`/`tool.call`/`tool.result`/`output`/`turn.final` 事件序列（JSON 载荷，>4KB 截断）
+  与结果摘要（success / terminationReason / finalText）；保留 **14 天 / 20 万事件**（超窗裁剪）。
+- 两个端点均为 **admin-only**（接入 §4.8 守卫）。
+- 未做：`audit.event` 审计流；错误码 `/v1/traces` 未知回合目前回 `1001 unknown`（可后续收紧为专用码）。
+
 ---
 
 ## 6. WebSocket 数据面协议

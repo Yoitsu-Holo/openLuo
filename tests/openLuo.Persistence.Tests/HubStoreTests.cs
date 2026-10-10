@@ -90,6 +90,32 @@ public sealed class HubStoreTests : IDisposable
     }
 
     [Fact]
+    public void Traces_RecordSequenceAndResult()
+    {
+        var store = Create();
+        store.StartTurn("t1", "s1", "client", DateTimeOffset.UtcNow);
+        store.AddEvent("t1", "decision", """{"step":1}""");
+        store.AddEvent("t1", "turn.final", null);
+        store.CompleteTurn("t1", true, "FinalReply", "done");
+
+        var trace = Create().Get("t1");
+        Assert.NotNull(trace);
+        Assert.Equal("s1", trace!.SessionId);
+        Assert.Equal("client", trace.Origin);
+        Assert.Equal(2, trace.Events.Count);
+        Assert.Equal(1, trace.Events[0].Seq);
+        Assert.Equal("decision", trace.Events[0].Type);
+        Assert.Equal(2, trace.Events[1].Seq);
+        Assert.True(trace.Success);
+        Assert.Equal("FinalReply", trace.TerminationReason);
+        Assert.Equal("done", trace.FinalText);
+        Assert.NotNull(trace.EndedAt);
+    }
+
+    [Fact]
+    public void Traces_UnknownTurn_ReturnsNull() => Assert.Null(Create().Get("turn_missing"));
+
+    [Fact]
     public void Tokens_SaveLoadFilterExpired_Remove()
     {
         var store = Create();
