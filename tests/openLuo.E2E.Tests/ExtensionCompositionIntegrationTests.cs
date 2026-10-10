@@ -354,10 +354,12 @@ public sealed class ExtensionCompositionIntegrationTests
         var result = await invoker.InvokeAsync(
             new CapabilityCall { InvocationId = "inv-env", CanonicalId = "mcp:cloud-music-env:cloud_music_official_status" },
             new CapabilityExecutionContext(), CancellationToken.None);
-        Assert.True(result.Success, result.Error);
+        // 凭据无效 → server raise ToolError（isError）→ 能力结果为失败；错误原文仍回填给模型。
+        Assert.False(result.Success, result.Text);
+        Assert.Equal(CapabilityStatus.Failed, result.Status);
         // env 已注入 → server 进入"已配置但凭据无效"路径（配置检查失败），而非"官方后端未配置"引导。
+        Assert.Contains("配置检查失败", result.Error);
         Assert.DoesNotContain("官方后端未配置。", result.Text);
-        Assert.Contains("配置检查失败", result.Text);
     }
 
     [Fact]

@@ -31,6 +31,7 @@ import urllib.parse
 import urllib.request
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 _SEARCH_URL = "https://music.163.com/api/cloudsearch/pc"
 _OPENAPI_BASE = "https://openapi.music.163.com/openapi"
@@ -295,7 +296,7 @@ def cloud_music_search(keyword: str, category: str = "song", limit: int = 5) -> 
     try:
         return _search(keyword, category, limit)
     except Exception as ex:  # noqa: BLE001 - 错误文本直接回填给模型
-        return f"搜索失败: {ex}"
+        raise ToolError(f"搜索失败: {ex}") from ex
 
 
 @mcp.tool(
@@ -317,7 +318,7 @@ def cloud_music_official_search(keyword: str, limit: int = 10, offset: int = 0) 
     try:
         return _official_search(cfg, keyword, limit, offset)
     except Exception as ex:  # noqa: BLE001
-        return f"官方搜索失败: {ex}"
+        raise ToolError(f"官方搜索失败: {ex}") from ex
 
 
 @mcp.tool(description="检查官方开放平台后端配置与令牌状态（appId 尾号脱敏显示）。")
@@ -333,7 +334,7 @@ def cloud_music_official_status() -> str:
         session.token()
         return f"官方后端已配置：appId={cfg['appId'][:6]}...{cfg['appId'][-6:]}，anonymous token 已获取（进程内缓存 7 天）。"
     except Exception as ex:  # noqa: BLE001
-        return f"官方后端配置检查失败: {ex}"
+        raise ToolError(f"官方后端配置检查失败: {ex}") from ex
 
 
 if __name__ == "__main__":

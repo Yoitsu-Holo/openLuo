@@ -56,6 +56,8 @@ CLI / TUI / GUI / QQ 桥均作为**协议客户端**经 HTTP 控制面 + WebSock
 ## 4. 能力与协议
 
 - **MCP**：`openLuo.Capabilities.Mcp` 使用官方 `ModelContextProtocol`，支持 stdio / http / streamable-http 三种传输，per-server 请求头（含 `{env:VAR}` 占位展开）；连接失败结构化降级（server 标记不可用，不阻塞宿主）。server 列表见 `config/mcp-servers.jsonc`。
+- **MCP 工具失败语义（重要约定）**：工具失败必须让结果带 `isError=true` —— 客户端据此记 `CapabilityStatus.Failed`（调度日志 / 轨迹如实为 `failed`），并把错误原文同时放进 `Text` 与 `Error` 回填给模型。
+  Python MCP 服务器（`mcp/`）因此**不能把异常吞成普通文本返回**（那会被记成 `ok`，真实错误只剩日志可查）：应 `raise ToolError(f"...失败: {ex}") from ex`（`mcp.server.mcpserver.exceptions`），或让异常自然冒泡——官方 SDK 会自动转成 `isError`。
 - **A2A**：`openLuo.Capabilities.A2A` 通过 Agent Card 发现 skills 并映射为 `RemoteAgent` 能力。
 - **原生 tool calls**：LLM 桥接只把无 tool-call 非空文本视为最终回复；tool-call 结果进入决策循环继续规划。
 - **工具调度**：`DefaultCapabilityDispatcher` 并行调度 + 决策循环（预算/终止条件/非法并行拒绝），调度日志归 `agent/dispatch`（start / ok / failed / batch done）。

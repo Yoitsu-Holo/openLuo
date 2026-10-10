@@ -92,6 +92,18 @@ public sealed class McpCapabilityInvoker : ICapabilityInvoker
         }
 
         var result = await _client.CallToolAsync(toolName, arguments, cancellationToken: ct);
+        return MapToolResult(call.InvocationId, _serverId, toolName, call.CanonicalId, result);
+    }
+
+    /// <summary>
+    /// MCP 工具结果 → 能力结果（纯函数，便于测试）。**服务端约定**：工具失败必须让 SDK 产出
+    /// <c>isError=true</c>（Python 侧 <c>raise ToolError(...)</c>，或让异常自然冒泡），
+    /// **不要**把异常吞成普通文本返回——那样 Hub/轨迹会记成 `ok`，真实错误只剩日志可查。
+    /// 错误原文同时进 <see cref="CapabilityResult.Text"/> 与 <see cref="CapabilityResult.Error"/>，模型仍看得到失败原因。
+    /// </summary>
+    internal static CapabilityResult MapToolResult(
+        string invocationId, string serverId, string toolName, string canonicalId, CallToolResult result)
+    {
         var blocks = result.Content.OfType<TextContentBlock>().Select(b => b.Text).ToList();
 
         // 内联 data URL（图片/音频）转公共输出项；剩余文本回传 LLM
@@ -106,8 +118,8 @@ public sealed class McpCapabilityInvoker : ICapabilityInvoker
                     Id = Guid.NewGuid().ToString("N"),
                     Kind = isAudio ? ReplyItemKind.Audio : ReplyItemKind.Image,
                     Payload = dataUrl,
-                    SourceCapability = call.CanonicalId,
-                    Fingerprint = $"mcp:{_serverId}:{dataUrl.GetHashCode()}"
+                    SourceCapability = canonicalId,
+                    Fingerprint = $"mcp:{serverId}:{dataUrl.GetHashCode()}"
                 });
                 // 前置文本(如"本次朗读完成...")保留给 LLM，让模型知道本次结果的语义；
                 // 仅当无前置文本时用通用占位符。
@@ -123,15 +135,17 @@ public sealed class McpCapabilityInvoker : ICapabilityInvoker
                 textParts.Add(block);
             }
         }
+
         var text = string.Join("\n", textParts);
+        var failed = result.IsError is true;
         return new CapabilityResult
         {
-            InvocationId = call.InvocationId,
-            Success = result.IsError is not true,
-            Status = result.IsError is true ? CapabilityStatus.Failed : CapabilityStatus.Ok,
+            InvocationId = invocationId,
+            Success = !failed,
+            Status = failed ? CapabilityStatus.Failed : CapabilityStatus.Ok,
             Text = text,
             Outputs = outputs,
-            Error = result.IsError is true ? (string.IsNullOrWhiteSpace(text) ? $"mcp tool failed: {toolName}" : text) : null
+            Error = failed ? (string.IsNullOrWhiteSpace(text) ? $"mcp tool failed: {toolName}" : text) : null
         };
     }
 
