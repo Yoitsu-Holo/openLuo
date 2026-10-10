@@ -35,13 +35,9 @@
     <ProjectReference Include="..\openLuo.Capabilities.Mcp\openLuo.Capabilities.Mcp.csproj" />
     <ProjectReference Include="..\openLuo.Capabilities.A2A\openLuo.Capabilities.A2A.csproj" />
     <ProjectReference Include="..\openLuo.Abstractions\openLuo.Abstractions.csproj" />
-    <ProjectReference Include="..\openLuo.Cli\openLuo.Cli.csproj" />
-    <ProjectReference Include="..\openLuo.Tui\openLuo.Tui.csproj" />
-    <ProjectReference Include="..\openLuo.Gui\openLuo.Gui.csproj" />
-    <ProjectReference Include="..\openLuo.Qqbot\openLuo.Qqbot.csproj" />
-    <ProjectReference Include="..\openLuo.OneBot\openLuo.OneBot.csproj" />
+    <!-- 客户端（Cli/Tui/Gui/Qqbot）是独立程序，服务端不再引用；
+         否则它们的 UI 驱动会经传递依赖回流进服务端产物（见 docs/architecture/hub-protocol.md §3）。 -->
     <ProjectReference Include="..\openLuo.Server\openLuo.Server.csproj" />
-    <ProjectReference Include="..\openLuo.Client\openLuo.Client.csproj" />
     <ProjectReference Include="..\openLuo.Modules.WorldState\openLuo.Modules.WorldState.csproj" />
     <ProjectReference Include="..\openLuo.Domain\openLuo.Domain.csproj" />
     <ProjectReference Include="..\openLuo.Modules.Agent\openLuo.Modules.Agent.csproj" />

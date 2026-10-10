@@ -59,10 +59,10 @@ graph TD
 | 层     | 程序集                                                                                                       | 职责                                                                       | 依赖              |
 | ------ | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- | ----------------- |
 | 协议   | **`openLuo.Protocol`（新）**                                                                                 | Envelope、消息类型表、DTO、错误码、版本常量                                | 无                |
-| 服务端 | **`openLuo.Server`（新）**                                                                                   | Kestrel 宿主、HTTP 端点、WS Hub、`IAgentRuntime`→wire 适配、鉴权、会话路由 | Protocol + 内核   |
-| 服务端 | `openLuo`（改造）                                                                                            | 组合根/入口：`--serve` 拉起 Hub                                            | Server + 内核     |
-| 客户端 | **`openLuo.Client`（新）**                                                                                   | 连接管理、重连、会话句柄、协议编解码、请求-响应关联                        | Protocol          |
-| 客户端 | **`openLuo.Client.Cli/.Tui/.Gui/.Qq`（新，或改造现有）**                                                     | 各入口 UI                                                                  | Protocol + Client |
+| 服务端 | `openLuo.Server`                                                                                             | Kestrel 宿主、HTTP 端点、WS Hub、`IAgentRuntime`→wire 适配、鉴权、会话路由 | Protocol + Capabilities |
+| 服务端 | `openLuo`（**可执行**）                                                                                      | 组合根 + 内核启动：`--serve` 拉起 Hub（**不含任何 UI 驱动**）              | Server + 内核     |
+| 客户端 | `openLuo.Client`                                                                                             | 连接管理、重连、会话句柄、协议编解码、请求-响应关联                        | Protocol          |
+| 客户端 | `openLuo.Cli` / `openLuo.Tui` / `openLuo.Gui` / `openLuo.Qqbot`（**各为可执行**）                            | 入口 UI，产物分别为 `openluo-cli` / `openluo-tui` / `openluo-gui` / `openluo-qq` | Protocol + Client（+ 自己的 UI 驱动） |
 | 内核   | `openLuo.Foundation`（拆） / `Capabilities` / `AgentContext` / `Llm` / `Memory` / `Embedding` / `WorldState` | 见 §11 迁移                                                                | —                 |
 
 **实际依赖边（由 `tests/openLuo.E2E.Tests/ArchitectureBoundaryTests.cs` 守护，越界即测试失败）**
@@ -74,6 +74,17 @@ graph TD
   Server **不**依赖宿主 `openLuo`，也不依赖 `Domain` / `AgentContext` / `Persistence` 等内核其余部分——
   内核只经 `IAgentRuntime` 注入（见 §11）。若将来要让 Hub 成为"纯网关"，把这批 wire 映射搬回宿主即可。
 - 扩展（`openLuo.Extension.*`）→ **不得依赖宿主 exe**（`openLuo`），只经契约程序集交互。
+
+**已落实（本轮拆分）**
+
+- 四个客户端已是**独立可执行**：`openluo-cli` / `openluo-tui` / `openluo-gui` / `openluo-qq`（`OutputType=Exe` + 各自 `Program.cs`），
+  服务端 `openLuo` 不再引用它们（连带删掉了宿主里 16 个零使用的驱动包 pin，见其 csproj 注释）。
+- 服务端只认 `--serve`；其余旧入口（`--cli/--tui/--gui/--qq`）会明确报错并提示对应客户端程序。
+- Makefile：**服务端与客户端是两个独立构建目标**（`build-server` / `build-clients`，`publish-server` / `publish-clients`）；
+  `publish` 产出 **n+1 份独立程序**（1 服务端 + N 客户端）平铺在 `publish/linux-x64/`，共享同一份 `config/`；
+  客户端不需要内核、不需要 `extensions/`，用 `OPENLUO_HUB_URL` 即可连远端 Hub（多机部署）。
+- 上述边界由 `tests/openLuo.E2E.Tests/ArchitectureBoundaryTests.cs` 反射断言：
+  「服务端不含客户端与 UI 驱动」「客户端不带内核且不互相暴露」。
 
 ---
 
@@ -728,7 +739,7 @@ Hub 侧：连接循环内的异常不再**静默**终止连接，而是打印 `[
 | `CapabilityCatalogSnapshot`/`CapabilityDescriptor` | `GET /v1/capabilities`                                                                                                                            |
 | `SessionStore`（内存）                             | Hub 侧会话注册表，**改为 SQLite 持久化**（决策 #3）                                                                                               |
 | `openLuo.Cli/Tui/Gui/Qqbot`（进程内直连）          | 改为 `openLuo.Client.*`（经 protocol 连 Hub）                                                                                                     |
-| 宿主 `openLuo`（多入口 exe）                       | 拆为 `--serve`（Hub）与各客户端 exe；不再聚合 UI 框架                                                                                             |
+| 宿主 `openLuo`（多入口 exe）                       | **已完成**：拆为 `--serve`（Hub 服务端）与四个客户端可执行（`openluo-cli/tui/gui/qq`）；宿主不再聚合 UI 框架                                                       |
 
 **建议实施顺序**（与既有架构重构 P1–P5 合流）：
 

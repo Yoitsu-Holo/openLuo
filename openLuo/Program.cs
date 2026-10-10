@@ -4,18 +4,26 @@ using openLuo.Capabilities.A2A;
 using openLuo.Capabilities.Core;
 using openLuo.Capabilities.Core.Models;
 using openLuo.Capabilities.Mcp;
-using openLuo.Cli;
-using openLuo.Client;
 using openLuo.Composition;
 using openLuo.Abstractions;
 using openLuo.Hosting;
-using openLuo.Interfaces.GUI;
-using openLuo.Interfaces.QQbot;
-using openLuo.Interfaces.TUI;
 using System.Diagnostics;
 
-var options = LaunchOptions.Parse(args);
-if (options is null) return;
+// openLuo 服务端（独立程序）：内核 + Hub（HTTP 控制面 + WebSocket 数据面）。
+// 客户端已拆为独立程序（openluo-cli / openluo-tui / openluo-gui / openluo-qq）：各自连 Hub，均不启动内核。
+if (args.Length == 0 || args.Contains("--help") || args.Contains("-h"))
+{
+    PrintUsage();
+    return args.Length == 0 ? 1 : 0;
+}
+
+if (!args.Contains("--serve"))
+{
+    Console.Error.WriteLine($"unknown arguments: {string.Join(' ', args)}");
+    Console.Error.WriteLine("提示：客户端已独立为 openluo-cli / openluo-tui / openluo-gui / openluo-qq（各自连 Hub）。");
+    PrintUsage();
+    return 2;
+}
 
 // Hub 鉴权配置来自环境变量（后续可迁至 server.jsonc）。
 static openLuo.Server.HubAuthOptions BuildHubAuth()
@@ -45,51 +53,8 @@ static openLuo.Server.HubAuthOptions BuildHubAuth()
     };
 }
 
-// QQ 桥：经协议连 Hub（不启动内核）
-if (options.Mode is LaunchMode.QqBot)
-{
-    var hubStream = Environment.GetEnvironmentVariable("OPENLUO_HUB_URL")
-        ?? $"ws://127.0.0.1:{openLuo.Protocol.ProtocolInfo.DefaultPort}{openLuo.Protocol.ProtocolInfo.StreamPath}";
-    var hubHttp = hubStream.Replace("ws://", "http://", StringComparison.Ordinal).Replace("/v1/stream", string.Empty, StringComparison.Ordinal);
-
-    var qqConfigPath = Path.Combine(Directory.GetCurrentDirectory(), "config", "qqbot.jsonc");
-    if (!File.Exists(qqConfigPath))
-    {
-        Console.Error.WriteLine($"QQbot config not found: {qqConfigPath}");
-        return;
-    }
-
-    using var qqConfig = new QqBotConfigCenter(qqConfigPath);
-    using var qqHttp = new HttpClient(new SocketsHttpHandler { UseProxy = !new Uri(hubStream).IsLoopback }) { Timeout = TimeSpan.FromSeconds(30) };
-    // QQ 桥是长期连接：Hub 未起/中途重启都自己重连（见 QqBotApplication.EnsureHubAsync），故这里只传连接工厂
-    await new QqBotApplication(
-        ct => HubClient.ConnectAsync(hubStream, "qq-bridge", "qq", ct: ct),
-        qqHttp, hubHttp, qqConfig).RunAsync();
-    return;
-}
-if (options.Mode is LaunchMode.Cli or LaunchMode.Tui or LaunchMode.Gui)
-{
-    var hubUrl = Environment.GetEnvironmentVariable("OPENLUO_HUB_URL")
-        ?? $"ws://127.0.0.1:{openLuo.Protocol.ProtocolInfo.DefaultPort}{openLuo.Protocol.ProtocolInfo.StreamPath}";
-
-    if (options.Mode is LaunchMode.Cli)
-    {
-        await new openLuo.Cli.CliHubApp(hubUrl, "builtin-rin", "companion").RunAsync(Console.In);
-        return;
-    }
-
-    if (options.Mode is LaunchMode.Tui)
-    {
-        await new TuiApplication(hubUrl).RunAsync();
-        return;
-    }
-
-    GuiApplication.Launch(hubUrl);
-    return;
-}
-
-await using var host = await OpenLuoBootstrapper.BootstrapAsync(options.Mode);
-if (host is null) return;
+await using var host = await OpenLuoBootstrapper.BootstrapAsync();
+if (host is null) return 1;
 var serviceProvider = host.ServiceProvider;
 
 // 连接远程能力源（MCP / A2A），配置缺失时为空集，不影响启动
@@ -163,37 +128,50 @@ bootLogger.LogInformation(
     "Startup complete: {McpHealthy}/{McpTotal} MCP server(s) connected, {ExtensionCount} extension(s) loaded, {ElapsedMs} ms",
     mcpHealthy, mcpTotal, extensionResult.Loaded.Count, bootwatch.ElapsedMilliseconds);
 
-if (options.Mode is LaunchMode.Serve)
+var listen = Environment.GetEnvironmentVariable("OPENLUO_HUB_LISTEN")
+    ?? $"http://127.0.0.1:{openLuo.Protocol.ProtocolInfo.DefaultPort}";
+var directory = new openLuo.Composition.CatalogRuntimeDirectory(
+    serviceProvider.GetRequiredService<openLuo.Capabilities.Core.Models.ICapabilityCatalog>());
+var configService = new openLuo.Modules.AppShell.Application.JsonConfigService(
+    Path.Combine(Directory.GetCurrentDirectory(), "config"));
+var hubStore = serviceProvider.GetRequiredService<openLuo.Infrastructure.Persistence.HubStore>();
+var jobs = new openLuo.Modules.AppShell.Application.InMemoryJobService(store: hubStore);
+await using var scheduler = new openLuo.Modules.AppShell.Application.InMemorySchedulerService(hubStore);
+var auth = BuildHubAuth();
+var logs = serviceProvider.GetService<openLuo.Core.Interfaces.ILogStore>();
+var assets = serviceProvider.GetService<openLuo.Core.Interfaces.IAssetStore>();
+var outputQueue = serviceProvider.GetService<openLuo.Capabilities.Core.IOutputQueue>();
+// 资产 TTL 清理（OPENLUO_ASSET_TTL_MINUTES > 0 时启用；仅清创建超期的资产）
+var assetTtlMinutes = int.TryParse(Environment.GetEnvironmentVariable("OPENLUO_ASSET_TTL_MINUTES"), out var ttlMinutes) ? ttlMinutes : 0;
+if (assetTtlMinutes > 0 && assets is not null)
 {
-    var listen = Environment.GetEnvironmentVariable("OPENLUO_HUB_LISTEN")
-        ?? $"http://127.0.0.1:{openLuo.Protocol.ProtocolInfo.DefaultPort}";
-    var directory = new openLuo.Composition.CatalogRuntimeDirectory(
-        serviceProvider.GetRequiredService<openLuo.Capabilities.Core.Models.ICapabilityCatalog>());
-    var configService = new openLuo.Modules.AppShell.Application.JsonConfigService(
-        Path.Combine(Directory.GetCurrentDirectory(), "config"));
-    var hubStore = serviceProvider.GetRequiredService<openLuo.Infrastructure.Persistence.HubStore>();
-    var jobs = new openLuo.Modules.AppShell.Application.InMemoryJobService(store: hubStore);
-    await using var scheduler = new openLuo.Modules.AppShell.Application.InMemorySchedulerService(hubStore);
-    var auth = BuildHubAuth();
-    var logs = serviceProvider.GetService<openLuo.Core.Interfaces.ILogStore>();
-    var assets = serviceProvider.GetService<openLuo.Core.Interfaces.IAssetStore>();
-    var outputQueue = serviceProvider.GetService<openLuo.Capabilities.Core.IOutputQueue>();
-    // 资产 TTL 清理（OPENLUO_ASSET_TTL_MINUTES > 0 时启用；仅清创建超期的资产）
-    var assetTtlMinutes = int.TryParse(Environment.GetEnvironmentVariable("OPENLUO_ASSET_TTL_MINUTES"), out var ttlMinutes) ? ttlMinutes : 0;
-    if (assetTtlMinutes > 0 && assets is not null)
+    _ = Task.Run(async () =>
     {
-        _ = Task.Run(async () =>
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(10));
+        while (await timer.WaitForNextTickAsync())
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(10));
-            while (await timer.WaitForNextTickAsync())
-            {
-                try { assets.PurgeExpired(TimeSpan.FromMinutes(assetTtlMinutes)); }
-                catch { /* 清理失败不影响服务 */ }
-            }
-        });
-    }
-
-    var confirmationGate = serviceProvider.GetRequiredService<openLuo.Server.HubConfirmationGate>();
-    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth, assets, hubStore, outputQueue, hubStore, confirmationGate);
-    return;
+            try { assets.PurgeExpired(TimeSpan.FromMinutes(assetTtlMinutes)); }
+            catch { /* 清理失败不影响服务 */ }
+        }
+    });
 }
+
+var confirmationGate = serviceProvider.GetRequiredService<openLuo.Server.HubConfirmationGate>();
+await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth, assets, hubStore, outputQueue, hubStore, confirmationGate);
+return 0;
+
+static void PrintUsage() => Console.WriteLine("""
+用法: openLuo --serve
+
+OpenLuo 服务端（Hub）：内核 + HTTP 控制面 + WebSocket 数据面。
+  --serve          启动服务端
+  -h, --help       显示本帮助
+
+客户端是各自独立的程序（连 Hub，不启动内核）：
+  openluo-cli      CLI 客户端        openluo-tui      TUI 客户端
+  openluo-gui      GUI 客户端        openluo-qq       QQ 桥客户端
+
+环境变量：
+  OPENLUO_HUB_LISTEN   服务端监听地址（默认 http://127.0.0.1:8674）
+  OPENLUO_HUB_URL      客户端连接的 Hub 地址（默认 ws://127.0.0.1:8674/v1/stream）
+""");

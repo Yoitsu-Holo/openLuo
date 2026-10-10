@@ -8,11 +8,13 @@
 
 **openLuo** 是一个开源的"可扩展 AI 角色引擎"，目标是构建可持续演进的洛天依式虚拟角色交互体验底座。项目以"通用 Agent 内核 + 领域扩展"为架构核心：内核不绑定任何业务（RPG、桌宠还是聊天陪伴由加载的扩展决定），将 LLM 推理、能力调度、状态管理、记忆检索、多角色协作等能力解耦为独立模块，支持 CLI / TUI / QQ / GUI 四入口运行。
 
-QQ bot 是当前生产主入口（`./openLuo --qq`），通过 **OneBot 11**（LLBot 正向 WebSocket）对接 QQ 消息。
+QQ bot 是当前生产主入口（`./openluo-qq`），通过 **OneBot 11**（LLBot 正向 WebSocket）对接 QQ 消息。
 
 架构为**中心 Hub + 瘦客户端**：`./openLuo --serve` 启动 Hub（唯一持有内核：能力/记忆/状态/配置），
-CLI / TUI / GUI / QQ 桥均作为**协议客户端**经 HTTP 控制面 + WebSocket 数据面（`openLuo.Protocol`）连接 Hub；
-客户端程序集**不引用内核**（`OPENLUO_HUB_URL` 可指向远端 Hub）。
+CLI / TUI / GUI / QQ 桥都是**各自独立的程序**（`openluo-cli` / `openluo-tui` / `openluo-gui` / `openluo-qq`），
+经 HTTP 控制面 + WebSocket 数据面（`openLuo.Protocol`）连接 Hub；
+客户端程序集**只依赖 `openLuo.Protocol` + `openLuo.Client`，不引用内核**（`OPENLUO_HUB_URL` 可指向远端 Hub），
+服务端也不含任何 UI 驱动——两侧互不暴露，由 `ArchitectureBoundaryTests` 守着。
 
 ## 2. 技术栈
 
@@ -42,7 +44,8 @@ CLI / TUI / GUI / QQ 桥均作为**协议客户端**经 HTTP 控制面 + WebSock
 | 模块     | `openLuo.Modules.WorldState` / `openLuo.Modules.Agent`          | 世界状态、角色 Agent 运行层（独立于宿主 exe）                |
 | 扩展宿主 | `openLuo.Abstractions`                                          | 扩展契约（`IAgentExtension` 等）+ manifest 加载             |
 | 领域扩展 | `extensions/{memory,companion,world,party,sticker,music}`       | 记忆、伴侣人格、世界状态、多角色、表情、音乐分享卡；均只依赖契约/模块程序集 |
-| 宿主     | `openLuo`                                                       | 组合根/入口：`--serve` 起 Hub；`--cli/--tui/--gui/--qq` 作客户端连接 |
+| 宿主/服务端 | `openLuo`（可执行）                                            | 组合根 + 内核启动；`--serve` 起 Hub（**不含任何 UI 驱动**）    |
+| 客户端   | `openLuo.Client` + `openLuo.{Cli,Tui,Gui,Qqbot}`（各为可执行）  | 协议客户端：`openluo-cli` / `openluo-tui` / `openluo-gui` / `openluo-qq`；只依赖 Protocol + Client（+ 自己的 UI 驱动） |
 | Demo     | `openLuo.playgraound`（程序集名 `openLuo.Playground`）          | 新内核能力循环最小可运行演示                                 |
 
 架构约定：
@@ -101,18 +104,26 @@ CLI / TUI / GUI / QQ 桥均作为**协议客户端**经 HTTP 控制面 + WebSock
 常用目标（`Makefile`）：
 
 ```bash
-make run            # CLI 模式运行（dotnet run --project openLuo）
+make run            # 服务端本地运行（dotnet run --project openLuo -- --serve）
 make run-playground # Playground 演示
 make test           # 全量测试（slnx）
 make test-kernel    # 内核测试（Capabilities + AgentContext）
 make test-e2e       # E2E 测试
-make build          # Release 构建（slnx）
-make publish        # 生产发布 linux-x64（单文件 + native 独立）
+make build          # Release 构建（= build-server + build-clients）
+make build-server   # 只构建服务端（内核 + Hub）
+make build-clients  # 只构建四个客户端（openluo-cli/tui/gui/qq）
+make publish        # 生产发布：n+1 份独立程序 → publish/linux-x64/
+make publish-server # 只发布服务端
+make publish-clients  # 只发布四个客户端
 make publish-fast   # 目录形态发布（无单文件打包，迭代用）
 make clean          # 清理（白名单清空发布目录，保留 build.sh/config/game.db）
 ```
 
-`make publish` 流程：扩展 DLL 增量构建（无改动 0s）→ `dotnet publish` 到 tmpfs 空目录（~12s，绕开非空目录的 36s 黑盒清理）→ 白名单清空 `publish/linux-x64`（`KEEP_ENTRIES = build.sh config game.db`，保留生产密钥/数据库/自定义脚本，其余同步为最新）→ 组装 data/native/mcp/extensions。全程 ~13-34s，目录 inode 保持不变。
+`make publish` 流程：扩展 DLL 增量构建（无改动 0s）→ 服务端与 4 个客户端**各自** `dotnet publish` 到 tmpfs 空目录（~12s/个，绕开非空目录的 36s 黑盒清理）→ 白名单清空 `publish/linux-x64`（`KEEP_ENTRIES = build.sh config game.db`，保留生产密钥/数据库/自定义脚本，其余同步为最新）→ 组装 data/native/mcp/extensions + 5 个可执行。
+
+发布目录是**平铺的 n+1 份独立程序**，共享同一份 `config/`：
+`openLuo`（服务端，含 `extensions/`）+ `openluo-cli` / `openluo-tui` / `openluo-gui` / `openluo-qq`（客户端，各自自包含单文件）。
+多机部署时把 `openLuo` 放服务端，客户端程序放到任意机器、用 `OPENLUO_HUB_URL` 指向 Hub 即可（客户端不需要内核、不需要 `extensions/`）。
 
 ## 8. 测试
 
@@ -146,20 +157,23 @@ cp openLuo/data/config/*.example.jsonc config/
 # 将需要的 .example.jsonc 重命名为 .jsonc 并编辑，至少填写 llm.apiKey
 # 例如：cp config/llm.example.jsonc config/llm.jsonc && 编辑 config/llm.jsonc
 
-# 3) 启动（四入口之一）
-make run                    # CLI（默认）
-dotnet run --project openLuo -- --tui   # TUI
-dotnet run --project openLuo -- --qq    # QQ bot（生产主入口，需 qqbot.jsonc）
-dotnet run --project openLuo -- --gui   # GUI（Avalonia）
+# 3) 启动服务端（Hub），另开终端启动任选客户端
+make run                            # 服务端（= dotnet run --project openLuo -- --serve）
+dotnet run --project openLuo.Cli    # CLI 客户端
+dotnet run --project openLuo.Tui    # TUI 客户端
+dotnet run --project openLuo.Qqbot  # QQ bot 客户端（生产主入口，需 config/qqbot.jsonc）
+dotnet run --project openLuo.Gui    # GUI 客户端（Avalonia）
 ```
 
-> `--cli / --tui / --qq / --gui` 互斥，只能选一个。
+> 客户端与服务端是**独立进程**：客户端不含内核，只经 `OPENLUO_HUB_URL`（默认 `ws://127.0.0.1:8674/v1/stream`）
+> 连到 Hub。旧的多入口用法（`./openLuo --qq` 等）已移除，服务端会明确报错并提示对应的客户端程序。
 
 ### 9.3 生产部署
 
 ```bash
-make publish                              # 产物 → publish/linux-x64/
-cd publish/linux-x64 && ./openLuo --qq    # 启动 QQ bot
+make publish                                     # 产物 → publish/linux-x64/（1 服务端 + 4 客户端）
+cd publish/linux-x64 && ./openLuo --serve        # 启动服务端
+cd publish/linux-x64 && ./openluo-qq             # 另开终端启动 QQ bot（读 config/qqbot.jsonc）
 ```
 
 发布目录白名单保留 `build.sh` / `config/`（密钥）/ `game.db`，其余每次同步为最新产物；部署需拷贝整个 `publish/linux-x64/` 目录（含独立 native 库与 `extensions/`）。

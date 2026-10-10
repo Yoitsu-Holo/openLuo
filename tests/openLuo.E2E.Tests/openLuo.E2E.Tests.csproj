@@ -20,6 +20,11 @@
     <ProjectReference Include="..\..\openLuo.Cli\openLuo.Cli.csproj" />
     <ProjectReference Include="..\..\openLuo\openLuo.csproj" />
     <ProjectReference Include="..\..\openLuo.Server\openLuo.Server.csproj" />
+    <!-- MusicCardFlowTests 用到 openLuo.Interfaces.QQbot：宿主拆分后需显式声明 -->
+    <ProjectReference Include="..\..\openLuo.Qqbot\openLuo.Qqbot.csproj" />
+    <!-- ArchitectureBoundaryTests 需反射检查四个客户端程序集的引用边 -->
+    <ProjectReference Include="..\..\openLuo.Tui\openLuo.Tui.csproj" />
+    <ProjectReference Include="..\..\openLuo.Gui\openLuo.Gui.csproj" />
     <ProjectReference Include="..\..\extensions\music\openLuo.Extension.Music.csproj" />
   </ItemGroup>
 

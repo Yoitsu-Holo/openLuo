@@ -3,7 +3,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using openLuo.Core.Interfaces;
 using openLuo.Infrastructure.IO;
-using openLuo.Interfaces.QQbot;
 using openLuo.Modules.AppShell.Application;
 using openLuo.Modules.Llm.Core.Models;
 
@@ -11,7 +10,8 @@ namespace openLuo.Hosting;
 
 public static class OpenLuoBootstrapper
 {
-    public static async Task<OpenLuoRuntimeContext?> BootstrapAsync(LaunchMode mode)
+    /// <summary>启动内核并组装服务提供者（服务端专用；客户端进程不启动内核）。</summary>
+    public static async Task<OpenLuoRuntimeContext?> BootstrapAsync()
     {
         var logger = BootstrapLogger.Create(nameof(OpenLuoBootstrapper));
         var baseDir = AppContext.BaseDirectory;
@@ -64,22 +64,6 @@ public static class OpenLuoBootstrapper
         var services = new ServiceCollection()
             .AddOpenLuo(config, baseDir);
 
-        if (mode is LaunchMode.QqBot)
-        {
-            var qqBotConfigPath = ResolveQqBotConfigPath();
-            if (qqBotConfigPath is null)
-            {
-                var defaultConfigPath = Path.Combine(Directory.GetCurrentDirectory(), "config", "qqbot.jsonc");
-                logger.LogWarning("QQbot config file not found, creating default: {ConfigPath}", defaultConfigPath);
-                CreateDefaultQqBotConfig(defaultConfigPath);
-                logger.LogWarning("Edit the QQbot config file and restart.");
-                configCenter.Dispose();
-                return null;
-            }
-
-            services.AddSingleton<IQqBotConfigCenter>(_ => new QqBotConfigCenter(qqBotConfigPath));
-        }
-
         services.AddSingleton<IGameStreams, ConsoleStreams>();
         RegisterRemoteCapabilitySources(services, configDir, logger);
 
@@ -103,20 +87,6 @@ public static class OpenLuoBootstrapper
             configCenter.Dispose();
             throw;
         }
-    }
-
-    static void CreateDefaultQqBotConfig(string path)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var example = File.ReadAllText(
-            Path.Combine(AppContext.BaseDirectory, "data", "config", "qqbot.example.jsonc"));
-        File.WriteAllText(path, example);
-    }
-
-    static string? ResolveQqBotConfigPath()
-    {
-        var path = Path.Combine(Directory.GetCurrentDirectory(), "config", "qqbot.jsonc");
-        return File.Exists(path) ? path : null;
     }
 
     /// <summary>按 config/mcp-servers.jsonc / config/a2a-agents.jsonc 注册远程能力源（文件缺失则跳过）。</summary>

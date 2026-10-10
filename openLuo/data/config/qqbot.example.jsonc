@@ -1,6 +1,6 @@
 {
   // QQbot 独立配置
-  // 仅在 --qq 启动模式下使用
+  // 供 openluo-qq（独立客户端程序；旧的 `openLuo --qq` 已移除）使用，置于 config/qqbot.jsonc
 
   "enabled": false, // [热加载] true=启用 QQ 机器人入口
   "baseAddress": "ws://localhost:3001/", // [热加载] LLBot(幸运莉莉娅) OneBot 11 正向 WebSocket 地址（在 LLBot 设置中开启 WS 正向）

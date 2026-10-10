@@ -68,4 +68,60 @@ public sealed class ArchitectureBoundaryTests
         var extension = Assembly.Load("openLuo.Extension.Music");
         Assert.DoesNotContain("openLuo", RepoRefs(extension));
     }
+
+    /// <summary>内核 + Hub：客户端进程**一律不许**引用其中任何一个（客户端只经协议连 Hub）。</summary>
+    private static readonly string[] KernelAssemblies =
+    [
+        "openLuo", "openLuo.Server", "openLuo.Abstractions",
+        "openLuo.Capabilities", "openLuo.Capabilities.Mcp", "openLuo.Capabilities.Llm", "openLuo.Capabilities.A2A",
+        "openLuo.AgentContext", "openLuo.Domain", "openLuo.Memory", "openLuo.Llm", "openLuo.Embedding",
+        "openLuo.Foundation", "openLuo.Modules.Agent", "openLuo.Modules.WorldState", "openLuo.Persistence",
+    ];
+
+    /// <summary>UI / 协议驱动：每个客户端只允许出现"自己那份"。</summary>
+    private static bool IsDriver(string name) =>
+        name.StartsWith("Avalonia", StringComparison.Ordinal)
+        || name.StartsWith("CommunityToolkit", StringComparison.Ordinal)
+        || name.StartsWith("SkiaSharp", StringComparison.Ordinal)
+        || name.StartsWith("Terminal.Gui", StringComparison.Ordinal)
+        || name.StartsWith("Microsoft.Extensions.AI", StringComparison.Ordinal)
+        || name.StartsWith("Milky", StringComparison.Ordinal)
+        || name.StartsWith("openLuo.OneBot", StringComparison.Ordinal);
+
+    [Fact]
+    public void 服务端不含客户端与UI驱动()
+    {
+        var refs = RepoRefs(Assembly.Load("openLuo"));
+        foreach (var client in new[] { "openluo-cli", "openluo-tui", "openluo-gui", "openluo-qq", "openLuo.OneBot", "openLuo.Client" })
+            Assert.DoesNotContain(client, refs);
+        Assert.Empty(refs.Where(IsDriver));
+    }
+
+    [Fact]
+    public void 客户端不带内核且不互相暴露()
+    {
+        // 每个客户端：只允许 Protocol + Client + 自己那份驱动
+        var owners = new (string Assembly, string[] OwnDrivers)[]
+        {
+            ("openluo-cli", []),
+            ("openluo-tui", ["Terminal.Gui"]),
+            ("openluo-gui", ["Avalonia", "CommunityToolkit", "SkiaSharp"]),
+            ("openluo-qq", ["openLuo.OneBot"]),
+        };
+
+        foreach (var (name, ownDrivers) in owners)
+        {
+            var refs = RepoRefs(Assembly.Load(name));
+
+            Assert.Empty(refs.Intersect(KernelAssemblies));
+            Assert.Contains("openLuo.Protocol", refs);
+            Assert.Contains("openLuo.Client", refs);
+
+            var foreignDrivers = refs
+                .Where(IsDriver)
+                .Where(r => !ownDrivers.Any(prefix => r.StartsWith(prefix, StringComparison.Ordinal)))
+                .ToArray();
+            Assert.Empty(foreignDrivers);
+        }
+    }
 }

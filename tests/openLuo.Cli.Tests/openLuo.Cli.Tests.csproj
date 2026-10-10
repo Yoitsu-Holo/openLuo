@@ -18,6 +18,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\openLuo.Cli\openLuo.Cli.csproj" />
     <ProjectReference Include="..\..\openLuo\openLuo.csproj" />
+    <!-- QQ 桥测试用到 openLuo.Interfaces.QQbot（QqBotConfig 等）：宿主拆分后需显式声明 -->
+    <ProjectReference Include="..\..\openLuo.Qqbot\openLuo.Qqbot.csproj" />
   </ItemGroup>
 
 </Project>

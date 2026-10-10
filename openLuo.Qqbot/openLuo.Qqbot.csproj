@@ -1,17 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>openLuo.Interfaces.QQbot</RootNamespace>
-    <AssemblyName>openLuo.Qqbot</AssemblyName>
-    <Description>QQ 桥：经 Wire 协议连 Hub（只依赖 openLuo.Client + openLuo.OneBot）。</Description>
+    <AssemblyName>openluo-qq</AssemblyName>
+    <Description>QQ 桥（独立程序）：经 Wire 协议连 Hub（只依赖 openLuo.Protocol + openLuo.Client + openLuo.OneBot）。</Description>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\openLuo.Client\openLuo.Client.csproj" />
     <ProjectReference Include="..\openLuo.OneBot\openLuo.OneBot.csproj" />
+    <ProjectReference Include="..\openLuo.Protocol\openLuo.Protocol.csproj" />
   </ItemGroup>
 
   <ItemGroup>

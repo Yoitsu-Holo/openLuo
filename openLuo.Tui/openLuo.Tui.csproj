@@ -1,12 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>openLuo.Interfaces.TUI</RootNamespace>
-    <AssemblyName>openLuo.Tui</AssemblyName>
-    <Description>TUI 客户端：经 Wire 协议连 Hub（只依赖 openLuo.Client）。</Description>
+    <AssemblyName>openluo-tui</AssemblyName>
+    <Description>TUI 客户端（独立程序）：经 Wire 协议连 Hub（只依赖 openLuo.Protocol + openLuo.Client）。</Description>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\openLuo.Client\openLuo.Client.csproj" />
+    <ProjectReference Include="..\openLuo.Protocol\openLuo.Protocol.csproj" />
   </ItemGroup>
 
 </Project>
