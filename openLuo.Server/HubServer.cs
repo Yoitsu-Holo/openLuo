@@ -81,7 +81,7 @@ public static class HubServer
     public static async Task RunAsync(
         IAgentRuntime runtime, HubServerOptions options, IRuntimeDirectory? directory = null,
         IConfigService? config = null, IJobService? jobs = null, ISchedulerService? scheduler = null,
-        ILogStore? logs = null, CancellationToken ct = default)
+        ILogStore? logs = null, HubAuthOptions? auth = null, CancellationToken ct = default)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -93,7 +93,46 @@ public static class HubServer
         var startedAt = DateTimeOffset.UtcNow;
         var metrics = new HubMetrics();
         var broadcaster = new HubBroadcaster();
+        var authOptions = auth ?? new HubAuthOptions();
+        var tokens = new TokenRegistry(authOptions);
         string[] features = [Features.Streaming, Features.MultiSession, Features.Confirm, Features.Config];
+
+        // 权限守卫（§4.8）：admin-only 路径未鉴权 → 3001，越权 → 3002。
+        string[] adminPrefixes = ["/v1/config", "/v1/logs", "/v1/metrics", "/v1/schedules"];
+        app.Use(async (ctx, next) =>
+        {
+            var path = ctx.Request.Path.Value ?? string.Empty;
+            var needsAdmin = adminPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase))
+                || (path.StartsWith("/v1/jobs", StringComparison.OrdinalIgnoreCase) && !HttpMethods.IsGet(ctx.Request.Method));
+
+            if (needsAdmin)
+            {
+                var role = tokens.Authorize(TokenRegistry.BearerOf(ctx.Request.Headers.Authorization.ToString()));
+                if (role is null)
+                {
+                    await WriteErrorAsync(ctx, ErrorCodes.AuthUnauthorized, "missing or invalid token");
+                    return;
+                }
+                if (HubRoles.Rank(role) < HubRoles.Rank(HubRoles.Admin))
+                {
+                    await WriteErrorAsync(ctx, ErrorCodes.AuthForbidden, "requires role: admin");
+                    return;
+                }
+            }
+            await next();
+        });
+
+        app.MapPost("/v1/auth/token", async (HttpContext ctx, CancellationToken requestCt) =>
+        {
+            var request = await JsonSerializer.DeserializeAsync<TokenRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
+                          ?? new TokenRequest();
+            return tokens.TryIssue(request, out var response, out var errorCode, out var error)
+                ? Json(EnvelopeFactory.Create("auth.token", response))
+                : Results.Json(
+                    EnvelopeFactory.CreateError(EventTypes.Error, errorCode, error),
+                    ProtocolJson.Options,
+                    statusCode: StatusCodes.Status401Unauthorized);
+        });
 
         app.MapGet("/v1/health", () => Json(EnvelopeFactory.Create("health", new HealthDto
         {
@@ -412,7 +451,7 @@ public static class HubServer
             broadcaster.Add(clientKey, socket);
             try
             {
-                await HandleConnectionAsync(socket, runtime, options, features, metrics, ctx.RequestAborted);
+                await HandleConnectionAsync(socket, runtime, options, features, metrics, tokens, ctx.RequestAborted);
             }
             finally
             {
@@ -430,6 +469,17 @@ public static class HubServer
 
     private static IResult Error(int errorCode, string message) =>
         Results.Json(EnvelopeFactory.CreateError(EventTypes.Error, errorCode, message), ProtocolJson.Options);
+
+    /// <summary>中间件使用的错误写回（带 HTTP 状态码）。</summary>
+    private static async Task WriteErrorAsync(HttpContext ctx, int errorCode, string message)
+    {
+        ctx.Response.StatusCode = errorCode == ErrorCodes.AuthUnauthorized
+            ? StatusCodes.Status401Unauthorized
+            : StatusCodes.Status403Forbidden;
+        ctx.Response.ContentType = "application/json; charset=utf-8";
+        await ctx.Response.WriteAsync(ProtocolJson.Serialize(
+            EnvelopeFactory.CreateError(EventTypes.Error, errorCode, message)));
+    }
 
     /// <summary>时间参数：Unix 毫秒或 ISO8601。</summary>
     private static DateTimeOffset? ParseTime(string? value)
@@ -509,7 +559,8 @@ public static class HubServer
     }
 
     private static async Task HandleConnectionAsync(
-        WebSocket socket, IAgentRuntime runtime, HubServerOptions options, string[] features, HubMetrics metrics, CancellationToken ct)
+        WebSocket socket, IAgentRuntime runtime, HubServerOptions options, string[] features,
+        HubMetrics metrics, TokenRegistry tokens, CancellationToken ct)
     {
         var buffer = new byte[64 * 1024];
         var sessionId = string.Empty;
@@ -546,6 +597,15 @@ public static class HubServer
                             $"protocol major mismatch: client {hello.ProtocolVersion} vs server {ProtocolInfo.MajorVersion}",
                             replyTo: envelope.Id), ct);
                         await socket.CloseAsync(WebSocketCloseStatus.ProtocolError, "version mismatch", ct);
+                        return;
+                    }
+
+                    var role = tokens.Authorize(hello.Token);
+                    if (role is null)
+                    {
+                        await SendAsync(socket, EnvelopeFactory.CreateError(EventTypes.Error,
+                            ErrorCodes.AuthUnauthorized, "missing or invalid token", replyTo: envelope.Id), ct);
+                        await socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "unauthorized", ct);
                         return;
                     }
 

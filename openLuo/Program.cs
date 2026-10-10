@@ -17,6 +17,34 @@ using System.Diagnostics;
 var options = LaunchOptions.Parse(args);
 if (options is null) return;
 
+// Hub 鉴权配置来自环境变量（后续可迁至 server.jsonc）。
+static openLuo.Server.HubAuthOptions BuildHubAuth()
+{
+    static bool Bool(string name, bool fallback) =>
+        bool.TryParse(Environment.GetEnvironmentVariable(name), out var v) ? v : fallback;
+
+    var keys = new Dictionary<string, string>(StringComparer.Ordinal);
+    var raw = Environment.GetEnvironmentVariable("OPENLUO_HUB_API_KEYS");
+    if (!string.IsNullOrWhiteSpace(raw))
+    {
+        foreach (var pair in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var idx = pair.IndexOf(':');
+            if (idx > 0)
+                keys[pair[..idx]] = pair[(idx + 1)..];
+        }
+    }
+
+    return new openLuo.Server.HubAuthOptions
+    {
+        AllowAnonymous = Bool("OPENLUO_HUB_ALLOW_ANONYMOUS", true),
+        AnonymousRole = Environment.GetEnvironmentVariable("OPENLUO_HUB_ANONYMOUS_ROLE") ?? openLuo.Server.HubRoles.User,
+        SharedSecret = Environment.GetEnvironmentVariable("OPENLUO_HUB_SECRET"),
+        ApiKeys = keys,
+        TokenTtlMinutes = int.TryParse(Environment.GetEnvironmentVariable("OPENLUO_HUB_TOKEN_TTL_MINUTES"), out var ttl) ? ttl : 720,
+    };
+}
+
 // QQ 桥：经协议连 Hub（不启动内核）
 if (options.Mode is LaunchMode.QqBot)
 {
@@ -143,7 +171,8 @@ if (options.Mode is LaunchMode.Serve)
         Path.Combine(Directory.GetCurrentDirectory(), "config"));
     var jobs = new openLuo.Modules.AppShell.Application.InMemoryJobService();
     await using var scheduler = new openLuo.Modules.AppShell.Application.InMemorySchedulerService();
+    var auth = BuildHubAuth();
     var logs = serviceProvider.GetService<openLuo.Core.Interfaces.ILogStore>();
-    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs);
+    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth);
     return;
 }

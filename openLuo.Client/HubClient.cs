@@ -43,6 +43,9 @@ public sealed class HubClient : IAsyncDisposable
         await socket.ConnectAsync(new Uri(streamUrl), ct);
         var client = new HubClient(socket);
 
+        // token 未显式给出时，回退环境变量（OPENLUO_HUB_TOKEN），便于各客户端统一鉴权
+        token ??= Environment.GetEnvironmentVariable("OPENLUO_HUB_TOKEN");
+
         await client.SendAsync(EnvelopeFactory.Create(MessageTypes.Hello, new HelloCommand
         {
             ProtocolVersion = ProtocolInfo.MajorVersion,

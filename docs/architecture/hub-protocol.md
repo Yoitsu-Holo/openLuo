@@ -132,6 +132,17 @@ HTTP body 与 WS 帧**共用同一结构**：
 - 角色：`admin`（管理/目录全量）、`user`（自有会话）、`edge`（平台桥，代表多用户）。
 - v1 允许 `auth.anonymous` 开关用于本机开发（配置项 `server.allowAnonymous`）。
 
+**实现状态（已落地）**
+
+- `POST /v1/auth/token`：校验 `apiKey` → 角色映射（`OPENLUO_HUB_API_KEYS`），或 `sharedSecret` → `admin`；失败回 **401 + `3001`**。
+- HTTP **admin-only** 路径：`/v1/config*`、`/v1/logs*`、`/v1/metrics`、`/v1/schedules*`、`POST|DELETE /v1/jobs`。
+  未鉴权 → **401 + `3001`**；角色不足 → **403 + `3002`**。
+- WS：`hello.token` 校验，失败回 `3001` 并以 `PolicyViolation` 关闭。
+- 配置经环境变量（后续迁 `server.jsonc`）：`OPENLUO_HUB_ALLOW_ANONYMOUS`（默认 `true`）、`OPENLUO_HUB_ANONYMOUS_ROLE`、
+  `OPENLUO_HUB_SECRET`、`OPENLUO_HUB_API_KEYS`（`k1:admin,k2:user`）、`OPENLUO_HUB_TOKEN_TTL_MINUTES`；
+  客户端经 **`OPENLUO_HUB_TOKEN`** 携带 token（`HubClient` 自动读取）。
+- token 为进程内不透明令牌（`olt_<ULID>`，到期失效）；持久化/吊销随会话持久化一并演进。
+
 ### 4.5 错误模型
 
 状态由 **`errorCode`（int）+ `errorMsg`（string）** 表达（见 §4.2）。码值**分段**，段内递增；
