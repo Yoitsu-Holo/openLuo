@@ -450,6 +450,15 @@ sequenceDiagram
 
 > **投递与 ack（多客户端关键语义）**：`output` 事件由 Hub **广播给该会话的所有订阅客户端**；`output.ack` 记录「**某一端**已成功投递」，**不因个别端未 ack 而阻塞**（内核队列已解耦，`Enqueue` 永不等待 ack，见 §11）。需「确保某端收到」用 `session.resume{sinceSequence}` 补读。
 
+**实现状态（已落地）**
+
+- `session.subscribe` / `session.unsubscribe` 生效：**非回合事件**（作业 / 调度 / 通知）仅投给**已订阅该会话**的连接；未订阅不收到。
+- **回合事件**投给「**发起连接 + 该会话订阅者**」（多端同看同一会话）。
+- `session.resume{sinceSequence}` → `IOutputQueue.ReadSince` 补发**同会话**未 ack 输出（内存 ring；跨重启不保留，与决策 #3 一致）。
+- `presence.subscribe` / `presence.unsubscribe`：订阅后收在线快照与上下线 `presence.updated`。
+- Envelope `targetClientId` **定向优先**（只投给匹配 `clientId` 的连接）。
+- 未订阅时的跨会话泄漏已消除（冒烟实测：B 未订阅 A 时收不到 A 的回合事件）。
+
 **主动 / 调度**：`/v1/schedules` 注册定时 / 条件触发；到期 Hub 自主发起回合并发 `turn.started{origin}`（`client|scheduled|event|presence|hub`），后续事件与普通回合一致；非回合的轻量提示走 `notification`。
 
 > **投递目标**：`notification` / `device.state` / `job.*` / `avatar.*` / `member.*` 等**非回合事件**默认

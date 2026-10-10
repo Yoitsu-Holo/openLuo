@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -43,34 +44,100 @@ internal sealed class HubMetrics
     public void ClientClosed() => Interlocked.Decrement(ref _clients);
 }
 
-/// <summary>在线连接广播（作业 / 调度 / 通知等非回合事件）。</summary>
-internal sealed class HubBroadcaster
+/// <summary>一条在线连接：身份 + 已订阅会话（§6.1/§6.4）。</summary>
+internal sealed class HubConnection
 {
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, WebSocket> _sockets = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _sessions = new(StringComparer.Ordinal);
 
-    public void Add(string id, WebSocket socket) => _sockets[id] = socket;
+    public required string Id { get; init; }
+    public required WebSocket Socket { get; init; }
+    public string? ClientId { get; set; }
+    public string? ClientType { get; set; }
+    public string? Role { get; set; }
 
-    public void Remove(string id) => _sockets.TryRemove(id, out _);
-
-    public async Task BroadcastAsync(Envelope envelope)
+    public bool Subscribed(string sessionId)
     {
-        if (_sockets.IsEmpty)
+        lock (_sessions)
+            return _sessions.Contains(sessionId);
+    }
+
+    public bool Subscribe(string sessionId)
+    {
+        lock (_sessions)
+            return _sessions.Add(sessionId);
+    }
+
+    public bool Unsubscribe(string sessionId)
+    {
+        lock (_sessions)
+            return _sessions.Remove(sessionId);
+    }
+
+    public IReadOnlyList<string> Subscriptions
+    {
+        get { lock (_sessions) return _sessions.ToList(); }
+    }
+
+    public async Task SendAsync(Envelope envelope, CancellationToken ct = default)
+    {
+        if (Socket.State != WebSocketState.Open)
             return;
 
         var bytes = Encoding.UTF8.GetBytes(ProtocolJson.Serialize(envelope));
-        foreach (var (_, socket) in _sockets)
+        try
         {
-            if (socket.State != WebSocketState.Open)
-                continue;
-            try
-            {
-                await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
-            }
-            catch (WebSocketException)
-            {
-                // 断开：忽略（连接循环会清理）
-            }
+            await Socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct);
         }
+        catch (WebSocketException)
+        {
+            // 断开：忽略（连接循环会清理）
+        }
+    }
+}
+
+/// <summary>
+/// 在线连接注册与投递（§6.4）：非回合事件按**显式订阅**投递；
+/// 回合事件投给「发起连接 + 该会话订阅者」；`targetClientId` 定向优先。
+/// </summary>
+internal sealed class HubBroadcaster
+{
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, HubConnection> _connections = new(StringComparer.Ordinal);
+
+    public HubConnection Add(WebSocket socket)
+    {
+        var connection = new HubConnection { Id = ProtocolIds.NewUlid(), Socket = socket };
+        _connections[connection.Id] = connection;
+        return connection;
+    }
+
+    public void Remove(string id) => _connections.TryRemove(id, out _);
+
+    public IReadOnlyList<HubConnection> Connections => _connections.Values.ToList();
+
+    /// <summary>统一投递：<paramref name="targetClientId"/> 定向；否则按会话订阅 + 显式包含的连接；会话为空则全局。</summary>
+    public async Task DeliverAsync(
+        Envelope envelope, string? sessionId = null, string? includeConnectionId = null,
+        string? targetClientId = null, CancellationToken ct = default)
+    {
+        foreach (var connection in _connections.Values)
+        {
+            if (targetClientId is not null && !string.Equals(connection.ClientId, targetClientId, StringComparison.Ordinal))
+                continue;
+
+            var global = sessionId is null && targetClientId is null;
+            var included = includeConnectionId is not null && connection.Id == includeConnectionId;
+            var subscribed = sessionId is not null && connection.Subscribed(sessionId);
+
+            if (global || included || subscribed)
+                await connection.SendAsync(envelope, ct);
+        }
+    }
+
+    /// <summary>仅发给已订阅在线的连接（presence 等）。</summary>
+    public async Task DeliverToConnectionsAsync(IEnumerable<HubConnection> targets, Envelope envelope, CancellationToken ct = default)
+    {
+        foreach (var connection in targets)
+            await connection.SendAsync(envelope, ct);
     }
 }
 
@@ -85,7 +152,7 @@ public static class HubServer
         IAgentRuntime runtime, HubServerOptions options, IRuntimeDirectory? directory = null,
         IConfigService? config = null, IJobService? jobs = null, ISchedulerService? scheduler = null,
         ILogStore? logs = null, HubAuthOptions? auth = null, IAssetStore? assets = null,
-        ITokenStore? tokenStore = null, CancellationToken ct = default)
+        ITokenStore? tokenStore = null, IOutputQueue? outputQueue = null, CancellationToken ct = default)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -97,6 +164,7 @@ public static class HubServer
         var startedAt = DateTimeOffset.UtcNow;
         var metrics = new HubMetrics();
         var broadcaster = new HubBroadcaster();
+        var presenceSubscribers = new ConcurrentDictionary<string, HubConnection>(StringComparer.Ordinal);
         var authOptions = auth ?? new HubAuthOptions();
         var tokens = new TokenRegistry(authOptions, tokenStore);
         string[] features = [Features.Streaming, Features.MultiSession, Features.Confirm, Features.Config];
@@ -327,7 +395,7 @@ public static class HubServer
                 try
                 {
                     await foreach (var evt in jobs.WatchAsync(ct))
-                        await broadcaster.BroadcastAsync(ToEnvelope(evt));
+                        await broadcaster.DeliverAsync(ToEnvelope(evt), sessionId: evt.Job.SessionId, ct: ct);
                 }
                 catch (OperationCanceledException)
                 {
@@ -520,15 +588,16 @@ public static class HubServer
 
             using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
             metrics.ClientOpened();
-            var clientKey = ProtocolIds.NewUlid();
-            broadcaster.Add(clientKey, socket);
+            var connection = broadcaster.Add(socket);
             try
             {
-                await HandleConnectionAsync(socket, runtime, options, features, metrics, tokens, assets, ctx.RequestAborted);
+                await HandleConnectionAsync(connection, runtime, options, features, metrics, tokens, assets, broadcaster,
+                    presenceSubscribers, outputQueue, ctx.RequestAborted);
             }
             finally
             {
-                broadcaster.Remove(clientKey);
+                await BroadcastPresenceAsync(broadcaster, presenceSubscribers, connection, PresenceStatuses.Offline, CancellationToken.None);
+                broadcaster.Remove(connection.Id);
                 metrics.ClientClosed();
             }
         });
@@ -552,6 +621,31 @@ public static class HubServer
         ctx.Response.ContentType = "application/json; charset=utf-8";
         await ctx.Response.WriteAsync(ProtocolJson.Serialize(
             EnvelopeFactory.CreateError(EventTypes.Error, errorCode, message)));
+    }
+
+    private static PresenceUpdatedEvent PresenceOf(HubConnection connection, string status) => new()
+    {
+        ClientId = connection.ClientId ?? connection.Id,
+        Status = status,
+        Presence = new PresenceDto
+        {
+            ClientId = connection.ClientId ?? connection.Id,
+            ClientType = connection.ClientType ?? "unknown",
+            Status = status,
+            Sessions = connection.Subscriptions,
+            ConnectedAt = DateTimeOffset.UtcNow,
+        },
+    };
+
+    private static async Task BroadcastPresenceAsync(
+        HubBroadcaster broadcaster, ConcurrentDictionary<string, HubConnection> subscribers,
+        HubConnection connection, string status, CancellationToken ct)
+    {
+        if (subscribers.IsEmpty)
+            return;
+
+        var envelope = EnvelopeFactory.Create(EventTypes.PresenceUpdated, PresenceOf(connection, status));
+        await broadcaster.DeliverToConnectionsAsync(subscribers.Values.ToList(), envelope, ct);
     }
 
     /// <summary>资产归属：资产带 sessionId 且请求显式指定了不同的 sessionId → 拒绝（§9；未指定则不校验）。</summary>
@@ -679,9 +773,11 @@ public static class HubServer
     }
 
     private static async Task HandleConnectionAsync(
-        WebSocket socket, IAgentRuntime runtime, HubServerOptions options, string[] features,
-        HubMetrics metrics, TokenRegistry tokens, IAssetStore? assets, CancellationToken ct)
+        HubConnection connection, IAgentRuntime runtime, HubServerOptions options, string[] features,
+        HubMetrics metrics, TokenRegistry tokens, IAssetStore? assets, HubBroadcaster broadcaster,
+        ConcurrentDictionary<string, HubConnection> presenceSubscribers, IOutputQueue? outputQueue, CancellationToken ct)
     {
+        var socket = connection.Socket;
         var buffer = new byte[64 * 1024];
         var sessionId = string.Empty;
 
@@ -729,6 +825,11 @@ public static class HubServer
                         return;
                     }
 
+                    connection.ClientId = hello.ClientId;
+                    connection.ClientType = hello.ClientType;
+                    connection.Role = role;
+                    await BroadcastPresenceAsync(broadcaster, presenceSubscribers, connection, PresenceStatuses.Online, ct);
+
                     await SendAsync(socket, EnvelopeFactory.Create(EventTypes.Welcome, new WelcomeEvent
                     {
                         ProtocolVersion = ProtocolInfo.MajorVersion,
@@ -754,6 +855,60 @@ public static class HubServer
                         await MapBlocksAsync(assets, append.Blocks, ct), ct);
                     break;
                 }
+
+                case MessageTypes.SessionSubscribe:
+                case MessageTypes.SessionUnsubscribe:
+                {
+                    var sessionRef = envelope.DataAs<SessionRef>();
+                    if (sessionRef is null || string.IsNullOrWhiteSpace(sessionRef.SessionId))
+                    {
+                        await SendAsync(socket, EnvelopeFactory.CreateError("error",
+                            ErrorCodes.ProtocolBadEnvelope, $"{envelope.Type} requires sessionId", replyTo: envelope.Id), ct);
+                        break;
+                    }
+
+                    if (envelope.Type == MessageTypes.SessionSubscribe)
+                        connection.Subscribe(sessionRef.SessionId);
+                    else
+                        connection.Unsubscribe(sessionRef.SessionId);
+                    break;
+                }
+
+                case MessageTypes.SessionResume:
+                {
+                    var resume = envelope.DataAs<SessionResumeCommand>();
+                    if (resume is null || string.IsNullOrWhiteSpace(resume.SessionId))
+                    {
+                        await SendAsync(socket, EnvelopeFactory.CreateError("error",
+                            ErrorCodes.ProtocolBadEnvelope, "session.resume requires sessionId", replyTo: envelope.Id), ct);
+                        break;
+                    }
+
+                    connection.Subscribe(resume.SessionId);   // 续传隐含订阅
+                    if (outputQueue is not null)
+                    {
+                        foreach (var item in outputQueue.ReadSince(resume.SessionId, resume.SinceSequence))
+                        {
+                            await connection.SendAsync(EnvelopeFactory.Create(
+                                EventTypes.Output, WireMapper.ToDto(item),
+                                sessionId: resume.SessionId, replyTo: envelope.Id), ct);
+                        }
+                    }
+                    break;
+                }
+
+                case MessageTypes.PresenceSubscribe:
+                {
+                    presenceSubscribers[connection.Id] = connection;
+                    foreach (var peer in broadcaster.Connections)
+                        await connection.SendAsync(EnvelopeFactory.Create(EventTypes.PresenceUpdated,
+                            PresenceOf(peer, PresenceStatuses.Online)), ct);
+                    break;
+                }
+
+                case MessageTypes.PresenceUnsubscribe:
+                    presenceSubscribers.TryRemove(connection.Id, out _);
+                    break;
 
                 case MessageTypes.Ping:
                     await SendAsync(socket, EnvelopeFactory.Create(EventTypes.Pong, new PongEvent(), replyTo: envelope.Id), ct);
@@ -788,7 +943,7 @@ public static class HubServer
 
                     var req = envelope.DataAs<TurnRequestDto>() ?? new TurnRequestDto();
                     metrics.TurnStarted();
-                    await RunTurnStreamAsync(socket, runtime, sessionId, req, envelope.Id, metrics, assets, ct);
+                    await RunTurnStreamAsync(connection, broadcaster, runtime, sessionId, req, envelope.Id, metrics, assets, ct);
                     break;
                 }
 
@@ -805,14 +960,14 @@ public static class HubServer
     }
 
     private static async Task RunTurnStreamAsync(
-        WebSocket socket, IAgentRuntime runtime, string sessionId, TurnRequestDto req, string requestId,
-        HubMetrics metrics, IAssetStore? assets, CancellationToken ct)
+        HubConnection connection, HubBroadcaster broadcaster, IAgentRuntime runtime, string sessionId,
+        TurnRequestDto req, string requestId, HubMetrics metrics, IAssetStore? assets, CancellationToken ct)
     {
         var turnId = string.IsNullOrWhiteSpace(req.TurnId) ? $"turn_{ProtocolIds.NewUlid()}" : req.TurnId!;
 
-        await SendAsync(socket, EnvelopeFactory.Create(EventTypes.TurnAccepted,
+        await broadcaster.DeliverAsync(EnvelopeFactory.Create(EventTypes.TurnAccepted,
             new TurnAcceptedEvent { TurnId = turnId, SessionId = sessionId },
-            sessionId: sessionId, replyTo: requestId), ct);
+            sessionId: sessionId, replyTo: requestId), sessionId: sessionId, includeConnectionId: connection.Id, ct: ct);
 
         var turnRequest = new TurnRequest
         {
@@ -834,7 +989,7 @@ public static class HubServer
                 metrics.ErrorReported();   // ErrorsTotal = 失败回合数
 
             if (envelope is not null)
-                await SendAsync(socket, envelope, ct);
+                await broadcaster.DeliverAsync(envelope, sessionId: sessionId, includeConnectionId: connection.Id, ct: ct);
         }
     }
 
@@ -921,13 +1076,13 @@ public static class HubServer
     {
         var turnId = $"turn_{ProtocolIds.NewUlid()}";
 
-        await broadcaster.BroadcastAsync(EnvelopeFactory.Create(EventTypes.TurnStarted, new TurnStartedEvent
+        await broadcaster.DeliverAsync(EnvelopeFactory.Create(EventTypes.TurnStarted, new TurnStartedEvent
         {
             TurnId = turnId,
             SessionId = due.SessionId,
             Origin = TurnOrigins.Scheduled,
             Trigger = due.Id,
-        }, sessionId: due.SessionId));
+        }, sessionId: due.SessionId), sessionId: due.SessionId, ct: ct);
 
         metrics.TurnStarted();
 
@@ -947,13 +1102,14 @@ public static class HubServer
             {
                 var envelope = await MapTurnEventAsync(assets, evt, turnId, due.SessionId, ct);
                 if (envelope is not null)
-                    await broadcaster.BroadcastAsync(envelope);
+                    await broadcaster.DeliverAsync(envelope, sessionId: due.SessionId, ct: ct);
             }
         }
         catch (Exception ex)
         {
-            await broadcaster.BroadcastAsync(EnvelopeFactory.CreateError(
-                EventTypes.Error, ErrorCodes.ServerInternal, ex.Message, sessionId: due.SessionId));
+            await broadcaster.DeliverAsync(EnvelopeFactory.CreateError(
+                EventTypes.Error, ErrorCodes.ServerInternal, ex.Message, sessionId: due.SessionId),
+                sessionId: due.SessionId, ct: ct);
         }
     }
 
