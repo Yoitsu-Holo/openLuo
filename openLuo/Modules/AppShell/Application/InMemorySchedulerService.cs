@@ -19,7 +19,10 @@ public sealed class InMemorySchedulerService : ISchedulerService, IAsyncDisposab
         public DateTimeOffset? Due { get; set; }
     }
 
+    private static readonly TimeSpan CatchUpGrace = TimeSpan.FromMinutes(5);
+
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    private readonly Infrastructure.Persistence.HubStore? _store;
     private readonly Channel<ScheduleDue> _events = Channel.CreateUnbounded<ScheduleDue>(new UnboundedChannelOptions
     {
         SingleReader = true,
@@ -29,14 +32,50 @@ public sealed class InMemorySchedulerService : ISchedulerService, IAsyncDisposab
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _pump;
 
-    public InMemorySchedulerService()
+    public InMemorySchedulerService(Infrastructure.Persistence.HubStore? store = null)
     {
+        _store = store;
+        Restore(store);
+
         _pump = Task.Run(async () =>
         {
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
             while (await timer.WaitForNextTickAsync(_cts.Token).ConfigureAwait(false))
                 FireDue();
         });
+    }
+
+    /// <summary>重启恢复：一次性调度若已过期——未超宽限期则立即触发，超期则跳过（禁用）。</summary>
+    private void Restore(Infrastructure.Persistence.HubStore? store)
+    {
+        if (store is null)
+            return;
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var info in store.LoadSchedules())
+        {
+            var effective = info;
+            DateTimeOffset? due = null;
+
+            if (info.Enabled && info.At is { } at)
+            {
+                if (at > now)
+                {
+                    due = at;
+                }
+                else if (now - at <= CatchUpGrace)
+                {
+                    due = now;   // 宽限期内：启动后立即补发一次
+                }
+                else
+                {
+                    effective = info with { Enabled = false, NextRunAt = null };
+                    store.UpsertSchedule(effective);
+                }
+            }
+
+            _entries[info.Id] = new Entry { Info = effective, Due = due };
+        }
     }
 
     private void FireDue()
@@ -50,6 +89,7 @@ public sealed class InMemorySchedulerService : ISchedulerService, IAsyncDisposab
             // 一次性：触发后置为已禁用（周期调度后续再支持 Cron）
             entry.Due = null;
             entry.Info = entry.Info with { Enabled = false, NextRunAt = null };
+            _store?.UpsertSchedule(entry.Info);
             _events.Writer.TryWrite(new ScheduleDue(entry.Info.Id, entry.Info.SessionId, entry.Info.Kind, entry.Info.Payload));
         }
     }
@@ -73,6 +113,7 @@ public sealed class InMemorySchedulerService : ISchedulerService, IAsyncDisposab
             Payload: payload);
 
         _entries[info.Id] = new Entry { Info = info, Due = at };
+        _store?.UpsertSchedule(info);
         return info;
     }
 
@@ -80,7 +121,12 @@ public sealed class InMemorySchedulerService : ISchedulerService, IAsyncDisposab
 
     public IReadOnlyList<ScheduleInfo> List() => _entries.Values.Select(e => e.Info).OrderBy(i => i.NextRunAt ?? DateTimeOffset.MaxValue).ToList();
 
-    public bool Remove(string id) => _entries.TryRemove(id, out _);
+    public bool Remove(string id)
+    {
+        var removed = _entries.TryRemove(id, out _);
+        _store?.DeleteSchedule(id);
+        return removed;
+    }
 
     public async IAsyncEnumerable<ScheduleDue> WatchAsync([EnumeratorCancellation] CancellationToken ct = default)
     {

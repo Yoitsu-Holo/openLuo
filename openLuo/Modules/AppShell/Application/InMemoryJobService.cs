@@ -13,6 +13,7 @@ namespace openLuo.Modules.AppShell.Application;
 public sealed class InMemoryJobService : IJobService
 {
     private readonly Dictionary<string, IJobHandler> _handlers;
+    private readonly Infrastructure.Persistence.HubStore? _store;
     private readonly ConcurrentDictionary<string, JobInfo> _jobs = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _running = new(StringComparer.Ordinal);
     private readonly Channel<JobEvent> _events = Channel.CreateUnbounded<JobEvent>(new UnboundedChannelOptions
@@ -22,8 +23,19 @@ public sealed class InMemoryJobService : IJobService
         AllowSynchronousContinuations = false,
     });
 
-    public InMemoryJobService(IEnumerable<IJobHandler>? handlers = null) =>
+    public InMemoryJobService(IEnumerable<IJobHandler>? handlers = null, Infrastructure.Persistence.HubStore? store = null)
+    {
         _handlers = (handlers ?? []).ToDictionary(h => h.Kind, StringComparer.OrdinalIgnoreCase);
+        _store = store;
+
+        if (store is null)
+            return;
+
+        // 重启恢复：进行中的作业标记失败（处理器不可续跑），再载入历史作业
+        store.MarkRunningJobsFailed("interrupted by hub restart");
+        foreach (var job in store.LoadJobs())
+            _jobs[job.Id] = job;
+    }
 
     public Task<JobInfo> SubmitAsync(string kind, JsonNode? payload, string? sessionId = null, CancellationToken ct = default)
     {
@@ -41,6 +53,7 @@ public sealed class InMemoryJobService : IJobService
             CompletedAt: null);
 
         _jobs[info.Id] = info;
+        _store?.UpsertJob(info);
         _events.Writer.TryWrite(new JobEvent("job.accepted", info));
         _ = RunAsync(handler, info, payload);
         return Task.FromResult(info);
@@ -91,6 +104,7 @@ public sealed class InMemoryJobService : IJobService
     private void Update(string id, JobInfo info, string eventKind, string? error = null)
     {
         _jobs[id] = info;
+        _store?.UpsertJob(info);
         _events.Writer.TryWrite(new JobEvent(eventKind, info, error));
     }
 

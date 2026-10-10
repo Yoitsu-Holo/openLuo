@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using openLuo.Core.Interfaces;
 using openLuo.Protocol;
 
 namespace openLuo.Server;
@@ -46,8 +47,20 @@ public sealed class TokenRegistry
 
     private readonly ConcurrentDictionary<string, Grant> _tokens = new(StringComparer.Ordinal);
     private readonly HubAuthOptions _options;
+    private readonly ITokenStore? _store;
 
-    public TokenRegistry(HubAuthOptions options) => _options = options;
+    public TokenRegistry(HubAuthOptions options, ITokenStore? store = null)
+    {
+        _options = options;
+        _store = store;
+
+        if (store is null)
+            return;
+
+        // 重启恢复：载入未过期令牌
+        foreach (var record in store.LoadAll())
+            _tokens[record.Token] = new Grant(record.ClientId, record.Role, record.ExpiresAt);
+    }
 
     /// <summary>签发 token；凭据不合法返回 false（附错误码与消息）。</summary>
     public bool TryIssue(TokenRequest request, out TokenResponse response, out int errorCode, out string error)
@@ -64,6 +77,7 @@ public sealed class TokenRegistry
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(Math.Max(1, _options.TokenTtlMinutes));
         var token = "olt_" + ProtocolIds.NewUlid();
         _tokens[token] = new Grant(request.ClientId, role, expiresAt);
+        _store?.Save(new TokenRecord(token, request.ClientId, role, expiresAt));
 
         response = new TokenResponse { Token = token, ExpiresAt = expiresAt, Role = role };
         errorCode = ErrorCodes.Success;
@@ -93,6 +107,7 @@ public sealed class TokenRegistry
         if (grant.ExpiresAt <= DateTimeOffset.UtcNow)
         {
             _tokens.TryRemove(token, out _);
+            _store?.Remove(token);
             return null;
         }
         return grant.Role;

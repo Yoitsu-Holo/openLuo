@@ -84,7 +84,8 @@ public static class HubServer
     public static async Task RunAsync(
         IAgentRuntime runtime, HubServerOptions options, IRuntimeDirectory? directory = null,
         IConfigService? config = null, IJobService? jobs = null, ISchedulerService? scheduler = null,
-        ILogStore? logs = null, HubAuthOptions? auth = null, IAssetStore? assets = null, CancellationToken ct = default)
+        ILogStore? logs = null, HubAuthOptions? auth = null, IAssetStore? assets = null,
+        ITokenStore? tokenStore = null, CancellationToken ct = default)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -97,7 +98,7 @@ public static class HubServer
         var metrics = new HubMetrics();
         var broadcaster = new HubBroadcaster();
         var authOptions = auth ?? new HubAuthOptions();
-        var tokens = new TokenRegistry(authOptions);
+        var tokens = new TokenRegistry(authOptions, tokenStore);
         string[] features = [Features.Streaming, Features.MultiSession, Features.Confirm, Features.Config];
 
         // 权限守卫（§4.8）：admin-only 路径未鉴权 → 3001，越权 → 3002。

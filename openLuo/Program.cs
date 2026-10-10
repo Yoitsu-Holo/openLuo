@@ -169,11 +169,12 @@ if (options.Mode is LaunchMode.Serve)
         serviceProvider.GetRequiredService<openLuo.Capabilities.Core.Models.ICapabilityCatalog>());
     var configService = new openLuo.Modules.AppShell.Application.JsonConfigService(
         Path.Combine(Directory.GetCurrentDirectory(), "config"));
-    var jobs = new openLuo.Modules.AppShell.Application.InMemoryJobService();
-    await using var scheduler = new openLuo.Modules.AppShell.Application.InMemorySchedulerService();
+    var hubStore = serviceProvider.GetRequiredService<openLuo.Infrastructure.Persistence.HubStore>();
+    var jobs = new openLuo.Modules.AppShell.Application.InMemoryJobService(store: hubStore);
+    await using var scheduler = new openLuo.Modules.AppShell.Application.InMemorySchedulerService(hubStore);
     var auth = BuildHubAuth();
     var logs = serviceProvider.GetService<openLuo.Core.Interfaces.ILogStore>();
     var assets = serviceProvider.GetService<openLuo.Core.Interfaces.IAssetStore>();
-    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth, assets);
+    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth, assets, hubStore);
     return;
 }

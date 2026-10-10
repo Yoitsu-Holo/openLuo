@@ -107,6 +107,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<openLuo.Core.Interfaces.IAssetStore>(sp =>
             new openLuo.Infrastructure.Assets.FileAssetStore(Path.Combine(baseDir, "assets")));
 
+        // ── Hub 控制面状态持久化（hub.db；决策 #3） ──────────────────────
+        services.AddSingleton(sp => new openLuo.Infrastructure.Persistence.HubStore(Path.Combine(baseDir, "hub.db")));
+
         // ── 内核组合根（新架构） ────────────────────────────────────────
         services.AddSingleton<SessionStore>();
         services.AddSingleton(sp => new ExtensionRegistry(sp));

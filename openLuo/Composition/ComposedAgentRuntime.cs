@@ -73,7 +73,7 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         var conversationId = request.ConversationId ?? request.SessionId;
         _sessions.GetOrAdd(request.SessionId, _ => new DefaultAgentContextSession(request.SessionId, request.SubjectId, _assembler, _conversationStore, _tagPipeline));
         var session = new AgentSession { SessionId = request.SessionId, SubjectId = request.SubjectId, AgentId = request.AgentId, ConversationId = conversationId };
-        _sessions.SetMeta(session);
+        _sessions.SetMeta(session, request.ClientType, request.ClientId);
         return session;
     }
 
