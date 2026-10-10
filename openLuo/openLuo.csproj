@@ -10,29 +10,18 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!-- 只声明**宿主自身代码**真正使用的包（驱动包由各自前端/内核工程声明，见 docs/architecture/hub-protocol.md §3）：
+       Avalonia/Terminal.Gui/CommunityToolkit.Mvvm → openLuo.Gui / openLuo.Tui
+       Milky.Net.Client → 已无使用（OneBot 为手写实现）
+       SkiaSharp → openLuo.playgraound；ReadLine → 无使用
+       Microsoft.Extensions.AI → openLuo.Embedding；SQLitePCLRaw → openLuo.Foundation
+       经验：ProjectReference 会传递依赖，因此"exe 里再 pin 一遍"只会让版本出现两个来源、并掩盖真实归属。 -->
   <ItemGroup>
-    <PackageReference Include="SkiaSharp" Version="4.150.1" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.150.1" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.150.1" />
-    <PackageReference Include="SkiaSharp.NativeAssets.macOS" Version="4.150.1" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
     <PackageReference Include="Dapper" Version="2.1.79" />
-    <PackageReference Include="Microsoft.Extensions.AI" Version="10.8.1" />
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.8.1" />
-    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
-    <PackageReference Include="Milky.Net.Client" Version="1.2.2" />
-    <PackageReference Include="ReadLine" Version="2.0.1" />
-    <PackageReference Include="Terminal.Gui" Version="1.19.0" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.3.18" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.18" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.18" />
-    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.18" />
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
-    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
   </ItemGroup>
 
   <ItemGroup>
