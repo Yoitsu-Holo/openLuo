@@ -21,6 +21,9 @@ public sealed class HubServerOptions
     public string Listen { get; init; } = $"http://127.0.0.1:{ProtocolInfo.DefaultPort}";
     public bool AllowAnonymous { get; init; } = true;
     public string ServerVersion { get; init; } = "0.1.0";
+
+    /// <summary>单资产字节上限（超出回 `7002 asset.too_large`）。</summary>
+    public long AssetMaxBytes { get; init; } = 16L * 1024 * 1024;
 }
 
 /// <summary>Hub 运行指标（进程内计数）。</summary>
@@ -81,7 +84,7 @@ public static class HubServer
     public static async Task RunAsync(
         IAgentRuntime runtime, HubServerOptions options, IRuntimeDirectory? directory = null,
         IConfigService? config = null, IJobService? jobs = null, ISchedulerService? scheduler = null,
-        ILogStore? logs = null, HubAuthOptions? auth = null, CancellationToken ct = default)
+        ILogStore? logs = null, HubAuthOptions? auth = null, IAssetStore? assets = null, CancellationToken ct = default)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -105,7 +108,8 @@ public static class HubServer
             var needsAdmin = adminPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase))
                 || (path.StartsWith("/v1/jobs", StringComparison.OrdinalIgnoreCase) && !HttpMethods.IsGet(ctx.Request.Method));
 
-            if (needsAdmin)
+            var needsUser = path.StartsWith("/v1/assets", StringComparison.OrdinalIgnoreCase);
+            if (needsAdmin || needsUser)
             {
                 var role = tokens.Authorize(TokenRegistry.BearerOf(ctx.Request.Headers.Authorization.ToString()));
                 if (role is null)
@@ -113,9 +117,10 @@ public static class HubServer
                     await WriteErrorAsync(ctx, ErrorCodes.AuthUnauthorized, "missing or invalid token");
                     return;
                 }
-                if (HubRoles.Rank(role) < HubRoles.Rank(HubRoles.Admin))
+                var requiredRank = needsAdmin ? HubRoles.Rank(HubRoles.Admin) : HubRoles.Rank(HubRoles.User);
+                if (HubRoles.Rank(role) < requiredRank)
                 {
-                    await WriteErrorAsync(ctx, ErrorCodes.AuthForbidden, "requires role: admin");
+                    await WriteErrorAsync(ctx, ErrorCodes.AuthForbidden, $"requires role: {(needsAdmin ? HubRoles.Admin : HubRoles.User)}");
                     return;
                 }
             }
@@ -386,7 +391,7 @@ public static class HubServer
                 try
                 {
                     await foreach (var due in scheduler.WatchAsync(ct))
-                        await RunProactiveTurnAsync(runtime, broadcaster, due, metrics, ct);
+                        await RunProactiveTurnAsync(runtime, broadcaster, due, metrics, assets, ct);
                 }
                 catch (OperationCanceledException)
                 {
@@ -436,6 +441,73 @@ public static class HubServer
             });
         }
 
+        // 资产（§5.10/§9）：二进制经引用传递，不再内联 data URL。
+        if (assets is not null)
+        {
+            app.MapPost("/v1/assets", async (HttpContext ctx, string? sessionId, string? fileName, CancellationToken requestCt) =>
+            {
+                var mime = string.IsNullOrWhiteSpace(ctx.Request.ContentType)
+                    ? "application/octet-stream"
+                    : ctx.Request.ContentType;
+
+                using var buffer = new MemoryStream();
+                await ctx.Request.Body.CopyToAsync(buffer, requestCt);
+                var bytes = buffer.ToArray();
+
+                if (bytes.Length == 0)
+                    return Error(ErrorCodes.AssetInvalid, "asset is empty");
+                if (bytes.Length > options.AssetMaxBytes)
+                    return Error(ErrorCodes.AssetTooLarge, $"asset exceeds limit: {bytes.Length} > {options.AssetMaxBytes}");
+
+                var headerName = ctx.Request.Headers["X-File-Name"].ToString();
+                try
+                {
+                    var info = await assets.PutAsync(bytes, mime, sessionId,
+                        fileName ?? (string.IsNullOrWhiteSpace(headerName) ? null : headerName), requestCt);
+
+                    return Json(EnvelopeFactory.Create("asset", new UploadAssetResponse
+                    {
+                        Asset = ToAssetRef(info),
+                        Meta = ToAssetMeta(info),
+                    }));
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Error(ErrorCodes.AssetTooLarge, ex.Message);
+                }
+            });
+
+            app.MapGet("/v1/assets/{id}", async (string id, HttpContext ctx, CancellationToken requestCt) =>
+            {
+                var blob = await assets.GetAsync(id, requestCt);
+                if (blob is null)
+                    return Error(ErrorCodes.AssetNotFound, $"asset not found: {id}");
+
+                if (CheckAssetAccess(ctx, blob.Info) is { } denied)
+                    return denied;
+
+                return Results.File(blob.Bytes, blob.Info.Mime);
+            });
+
+            app.MapMethods("/v1/assets/{id}", ["HEAD"], (string id, HttpContext ctx) =>
+            {
+                var info = assets.Stat(id);
+                if (info is null)
+                    return Error(ErrorCodes.AssetNotFound, $"asset not found: {id}");
+                return CheckAssetAccess(ctx, info) ?? Json(EnvelopeFactory.Create("asset", ToAssetMeta(info)));
+            });
+
+            app.MapDelete("/v1/assets/{id}", (string id, HttpContext ctx) =>
+            {
+                var info = assets.Stat(id);
+                if (info is not null && CheckAssetAccess(ctx, info) is { } denied)
+                    return denied;
+                return assets.Delete(id)
+                    ? Json(EnvelopeFactory.Create("asset", new { deleted = true, id }))
+                    : Error(ErrorCodes.AssetNotFound, $"asset not found: {id}");
+            });
+        }
+
         app.Map("/v1/stream", async (HttpContext ctx) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest)
@@ -451,7 +523,7 @@ public static class HubServer
             broadcaster.Add(clientKey, socket);
             try
             {
-                await HandleConnectionAsync(socket, runtime, options, features, metrics, tokens, ctx.RequestAborted);
+                await HandleConnectionAsync(socket, runtime, options, features, metrics, tokens, assets, ctx.RequestAborted);
             }
             finally
             {
@@ -481,6 +553,35 @@ public static class HubServer
             EnvelopeFactory.CreateError(EventTypes.Error, errorCode, message)));
     }
 
+    /// <summary>资产归属：资产带 sessionId 且请求显式指定了不同的 sessionId → 拒绝（§9；未指定则不校验）。</summary>
+    private static IResult? CheckAssetAccess(HttpContext ctx, openLuo.Core.Interfaces.AssetInfo info)
+    {
+        var requested = ctx.Request.Query["sessionId"].ToString();
+        if (info.SessionId is { Length: > 0 } owner && !string.IsNullOrWhiteSpace(requested)
+            && !string.Equals(requested, owner, StringComparison.Ordinal))
+        {
+            return Error(ErrorCodes.AuthForbidden, "asset belongs to another session");
+        }
+        return null;
+    }
+
+    private static AssetRefDto ToAssetRef(AssetInfo info) => new()
+    {
+        Id = info.Id,
+        Mime = info.Mime,
+        Size = info.Size,
+        Checksum = info.Checksum,
+    };
+
+    private static AssetMetaDto ToAssetMeta(AssetInfo info) => new()
+    {
+        Id = info.Id,
+        Mime = info.Mime,
+        Size = info.Size,
+        Checksum = info.Checksum,
+        CreatedAt = info.CreatedAt,
+    };
+
     /// <summary>时间参数：Unix 毫秒或 ISO8601。</summary>
     private static DateTimeOffset? ParseTime(string? value)
     {
@@ -508,8 +609,9 @@ public static class HubServer
         };
     }
 
-    /// <summary>wire 图像块（kind=image）→ 内核 Block（供视觉模型消费）。</summary>
-    private static IReadOnlyList<object> MapBlocks(IReadOnlyList<JsonNode>? blocks)
+    /// <summary>wire 图像块 → 内核 Block：支持内联 <c>dataUri</c> 或 <c>assetRef</c>（后者按 id 拉取字节）。</summary>
+    private static async Task<IReadOnlyList<object>> MapBlocksAsync(
+        IAssetStore? assets, IReadOnlyList<JsonNode>? blocks, CancellationToken ct)
     {
         if (blocks is null || blocks.Count == 0)
             return [];
@@ -521,17 +623,34 @@ public static class HubServer
                 continue;
 
             var kind = obj["kind"]?.GetValue<string>();
-            if (string.Equals(kind, "image", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(kind, "image", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var mime = obj["mime"]?.GetValue<string>() ?? "image/jpeg";
+            var dataUri = obj["dataUri"]?.GetValue<string>();
+            var assetId = obj["assetRef"]?.GetValue<string>() ?? obj["assetId"]?.GetValue<string>();
+
+            if (string.IsNullOrWhiteSpace(dataUri) && assets is not null && !string.IsNullOrWhiteSpace(assetId))
             {
-                mapped.Add(new openLuo.Core.Models.ImageBlock
+                var blob = await assets.GetAsync(assetId!, ct);
+                if (blob is not null)
                 {
-                    Kind = openLuo.Core.Models.BlockKind.Image,
-                    DataUri = obj["dataUri"]?.GetValue<string>() ?? string.Empty,
-                    MimeType = obj["mime"]?.GetValue<string>() ?? "image/jpeg",
-                    AssetId = obj["assetId"]?.GetValue<string>() ?? obj["name"]?.GetValue<string>() ?? string.Empty,
-                    Name = obj["name"]?.GetValue<string>() ?? string.Empty,
-                });
+                    mime = blob.Info.Mime;
+                    dataUri = $"data:{mime};base64,{Convert.ToBase64String(blob.Bytes)}";
+                }
             }
+
+            if (string.IsNullOrWhiteSpace(dataUri))
+                continue;
+
+            mapped.Add(new openLuo.Core.Models.ImageBlock
+            {
+                Kind = openLuo.Core.Models.BlockKind.Image,
+                DataUri = dataUri,
+                MimeType = mime,
+                AssetId = assetId ?? obj["name"]?.GetValue<string>() ?? string.Empty,
+                Name = obj["name"]?.GetValue<string>() ?? string.Empty,
+            });
         }
         return mapped;
     }
@@ -560,7 +679,7 @@ public static class HubServer
 
     private static async Task HandleConnectionAsync(
         WebSocket socket, IAgentRuntime runtime, HubServerOptions options, string[] features,
-        HubMetrics metrics, TokenRegistry tokens, CancellationToken ct)
+        HubMetrics metrics, TokenRegistry tokens, IAssetStore? assets, CancellationToken ct)
     {
         var buffer = new byte[64 * 1024];
         var sessionId = string.Empty;
@@ -630,7 +749,8 @@ public static class HubServer
                         break;
                     }
 
-                    await runtime.AppendMessageAsync(append.SessionId, append.SenderName, append.Text, MapBlocks(append.Blocks), ct);
+                    await runtime.AppendMessageAsync(append.SessionId, append.SenderName, append.Text,
+                        await MapBlocksAsync(assets, append.Blocks, ct), ct);
                     break;
                 }
 
@@ -667,7 +787,7 @@ public static class HubServer
 
                     var req = envelope.DataAs<TurnRequestDto>() ?? new TurnRequestDto();
                     metrics.TurnStarted();
-                    await RunTurnStreamAsync(socket, runtime, sessionId, req, envelope.Id, metrics, ct);
+                    await RunTurnStreamAsync(socket, runtime, sessionId, req, envelope.Id, metrics, assets, ct);
                     break;
                 }
 
@@ -684,7 +804,8 @@ public static class HubServer
     }
 
     private static async Task RunTurnStreamAsync(
-        WebSocket socket, IAgentRuntime runtime, string sessionId, TurnRequestDto req, string requestId, HubMetrics metrics, CancellationToken ct)
+        WebSocket socket, IAgentRuntime runtime, string sessionId, TurnRequestDto req, string requestId,
+        HubMetrics metrics, IAssetStore? assets, CancellationToken ct)
     {
         var turnId = string.IsNullOrWhiteSpace(req.TurnId) ? $"turn_{ProtocolIds.NewUlid()}" : req.TurnId!;
 
@@ -701,12 +822,12 @@ public static class HubServer
             ActorId = req.ActorId ?? "player",
             SenderName = req.SenderName,
             Text = req.Text,
-            Blocks = MapBlocks(req.Blocks),
+            Blocks = await MapBlocksAsync(assets, req.Blocks, ct),
         };
 
         await foreach (var evt in runtime.StreamTurnAsync(turnRequest, ct))
         {
-            var envelope = MapTurnEvent(evt, turnId, sessionId);
+            var envelope = await MapTurnEventAsync(assets, evt, turnId, sessionId, ct);
 
             if (evt.Kind == "final" && evt.Payload is TurnResult { Success: false })
                 metrics.ErrorReported();   // ErrorsTotal = 失败回合数
@@ -716,25 +837,86 @@ public static class HubServer
         }
     }
 
-    /// <summary>内核回合事件 → wire 事件（回合与主动回合共用）。</summary>
-    private static Envelope? MapTurnEvent(TurnEvent evt, string turnId, string sessionId) => evt.Kind switch
+    /// <summary>内核回合事件 → wire 事件（回合与主动回合共用）；二进制输出改资产引用（§9）。</summary>
+    private static async Task<Envelope?> MapTurnEventAsync(
+        IAssetStore? assets, TurnEvent evt, string turnId, string sessionId, CancellationToken ct)
     {
-        "decision" when evt.Payload is int step =>
-            EnvelopeFactory.Create(EventTypes.Decision, WireMapper.ToDecision(turnId, step), sessionId: sessionId),
-        "tool_call" when evt.Payload is CapabilityCall call =>
-            EnvelopeFactory.Create(EventTypes.ToolCall, WireMapper.ToToolCall(turnId, call), sessionId: sessionId),
-        "tool_result" when evt.Payload is CapabilityResult result =>
-            EnvelopeFactory.Create(EventTypes.ToolResult, WireMapper.ToToolResult(turnId, result), sessionId: sessionId),
-        "output" when evt.Payload is OutputItem item =>
-            EnvelopeFactory.Create(EventTypes.Output, WireMapper.ToDto(item), sessionId: sessionId),
-        "final" when evt.Payload is TurnResult result =>
-            EnvelopeFactory.Create(EventTypes.TurnFinal, WireMapper.ToDto(result, turnId), sessionId: sessionId),
-        _ => null,
-    };
+        switch (evt.Kind)
+        {
+            case "decision" when evt.Payload is int step:
+                return EnvelopeFactory.Create(EventTypes.Decision, WireMapper.ToDecision(turnId, step), sessionId: sessionId);
+            case "tool_call" when evt.Payload is CapabilityCall call:
+                return EnvelopeFactory.Create(EventTypes.ToolCall, WireMapper.ToToolCall(turnId, call), sessionId: sessionId);
+            case "tool_result" when evt.Payload is CapabilityResult result:
+                return EnvelopeFactory.Create(EventTypes.ToolResult, WireMapper.ToToolResult(turnId, result), sessionId: sessionId);
+            case "output" when evt.Payload is OutputItem item:
+                return EnvelopeFactory.Create(EventTypes.Output,
+                    await ToOutputDtoAsync(assets, item, sessionId, ct), sessionId: sessionId);
+            case "final" when evt.Payload is TurnResult result:
+            {
+                var outputs = new List<OutputDto>(result.Outputs.Count);
+                foreach (var output in result.Outputs)
+                    outputs.Add(await ToOutputDtoAsync(assets, output, sessionId, ct));
+
+                return EnvelopeFactory.Create(EventTypes.TurnFinal,
+                    WireMapper.ToDto(result, turnId) with { Outputs = outputs }, sessionId: sessionId);
+            }
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>输出项 → wire DTO：二进制（data URL）转存为资产引用；文本/卡片保持内联。</summary>
+    private static async Task<OutputDto> ToOutputDtoAsync(
+        IAssetStore? assets, OutputItem item, string sessionId, CancellationToken ct)
+    {
+        var dto = WireMapper.ToDto(item);
+        if (assets is null || item.Kind is ReplyItemKind.Text or ReplyItemKind.Card || item.Payload is not string dataUrl)
+            return dto;
+
+        var (mime, bytes) = DecodeDataUrl(dataUrl);
+        if (bytes is null)
+            return dto;
+
+        try
+        {
+            var info = await assets.PutAsync(bytes, mime ?? "application/octet-stream", sessionId, null, ct);
+            return dto with { Payload = null, AssetRef = ToAssetRef(info) };
+        }
+        catch (InvalidOperationException)
+        {
+            return dto;   // 超限等：保留内联（降级），不阻塞回合
+        }
+    }
+
+    /// <summary>解析 <c>data:&lt;mime&gt;;base64,&lt;payload&gt;</c>。</summary>
+    private static (string? Mime, byte[]? Bytes) DecodeDataUrl(string value)
+    {
+        const string marker = "base64,";
+        var index = value.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+            return (null, null);
+
+        var header = value[..index];
+        var mime = header.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+            ? header["data:".Length..].Trim().TrimEnd(';')
+            : null;
+
+        try
+        {
+            return (string.IsNullOrWhiteSpace(mime) ? null : mime,
+                Convert.FromBase64String(value[(index + marker.Length)..]));
+        }
+        catch (FormatException)
+        {
+            return (null, null);
+        }
+    }
 
     /// <summary>服务端发起的回合（调度到期等）：广播 turn.started 并推送回合事件。</summary>
     private static async Task RunProactiveTurnAsync(
-        IAgentRuntime runtime, HubBroadcaster broadcaster, ScheduleDue due, HubMetrics metrics, CancellationToken ct)
+        IAgentRuntime runtime, HubBroadcaster broadcaster, ScheduleDue due, HubMetrics metrics,
+        IAssetStore? assets, CancellationToken ct)
     {
         var turnId = $"turn_{ProtocolIds.NewUlid()}";
 
@@ -762,7 +944,7 @@ public static class HubServer
         {
             await foreach (var evt in runtime.StreamTurnAsync(request, ct))
             {
-                var envelope = MapTurnEvent(evt, turnId, due.SessionId);
+                var envelope = await MapTurnEventAsync(assets, evt, turnId, due.SessionId, ct);
                 if (envelope is not null)
                     await broadcaster.BroadcastAsync(envelope);
             }

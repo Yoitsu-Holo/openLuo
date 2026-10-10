@@ -24,6 +24,9 @@ public sealed class HubClient : IAsyncDisposable
 {
     private readonly ClientWebSocket _socket;
     private readonly byte[] _buffer = new byte[64 * 1024];
+    private readonly HttpClient _http = new();
+    private string _httpBase = string.Empty;
+    private string? _token;
 
     private HubClient(ClientWebSocket socket) => _socket = socket;
 
@@ -62,7 +65,18 @@ public sealed class HubClient : IAsyncDisposable
             throw reply.IsError ? new HubException(reply) : new InvalidOperationException($"expected welcome, got '{reply.Type}'");
 
         client.Welcome = reply.DataAs<WelcomeEvent>();
+        client._httpBase = ToHttpBase(streamUrl);
+        client._token = token;
         return client;
+    }
+
+    /// <summary>由数据面地址推导控制面基址（ws://host:port/v1/stream → http://host:port）。</summary>
+    private static string ToHttpBase(string streamUrl)
+    {
+        var text = streamUrl.Replace("ws://", "http://", StringComparison.Ordinal)
+                            .Replace("wss://", "https://", StringComparison.Ordinal);
+        var marker = text.IndexOf("/v1/", StringComparison.Ordinal);
+        return marker < 0 ? text.TrimEnd('/') : text[..marker];
     }
 
     /// <summary>开启会话（等价 HTTP `POST /v1/sessions`）。</summary>
@@ -137,6 +151,41 @@ public sealed class HubClient : IAsyncDisposable
         }
 
         return ProtocolJson.Deserialize<Envelope>(Encoding.UTF8.GetString(ms.ToArray()));
+    }
+
+    /// <summary>上传资产（HTTP `POST /v1/assets`），返回引用（§9）。</summary>
+    public async Task<AssetRefDto?> UploadAssetAsync(
+        byte[] bytes, string mime, string? fileName = null, string? sessionId = null, CancellationToken ct = default)
+    {
+        var query = sessionId is null ? string.Empty : $"?sessionId={Uri.EscapeDataString(sessionId)}";
+
+        using var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mime);
+        if (!string.IsNullOrWhiteSpace(fileName))
+            content.Headers.Add("X-File-Name", fileName);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_httpBase}/v1/assets{query}") { Content = content };
+        Authorize(request);
+
+        using var response = await _http.SendAsync(request, ct);
+        var envelope = ProtocolJson.Deserialize<Envelope>(await response.Content.ReadAsStringAsync(ct));
+        return envelope?.DataAs<UploadAssetResponse>()?.Asset;
+    }
+
+    /// <summary>下载资产字节（HTTP `GET /v1/assets/{id}`）。</summary>
+    public async Task<byte[]?> DownloadAssetAsync(string assetId, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{_httpBase}/v1/assets/{assetId}");
+        Authorize(request);
+
+        using var response = await _http.SendAsync(request, ct);
+        return response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync(ct) : null;
+    }
+
+    private void Authorize(HttpRequestMessage request)
+    {
+        if (!string.IsNullOrWhiteSpace(_token))
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _token);
     }
 
     public async ValueTask DisposeAsync()

@@ -103,6 +103,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<GameLogger>(sp => new GameLogger(logDir, config: null, sp.GetRequiredService<IGameStreams>(), sp.GetRequiredService<LogStore>()));
         services.AddSingleton<IGameLogger>(sp => sp.GetRequiredService<GameLogger>());
 
+        // ── 资产（二进制经引用传递，见协议 §9） ─────────────────────────
+        services.AddSingleton<openLuo.Core.Interfaces.IAssetStore>(sp =>
+            new openLuo.Infrastructure.Assets.FileAssetStore(Path.Combine(baseDir, "assets")));
+
         // ── 内核组合根（新架构） ────────────────────────────────────────
         services.AddSingleton<SessionStore>();
         services.AddSingleton(sp => new ExtensionRegistry(sp));

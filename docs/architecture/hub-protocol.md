@@ -580,6 +580,21 @@ sequenceDiagram
 - **上传上限**：单资产大小由 `server.jsonc` 的 `assetMaxBytes` 控制，超限回 `7002 asset.too_large`。
 - 好处：WS 帧恒定小、支持断点/重试、多客户端共享同一资产、便于缓存、Hub 重启资产不丢。
 
+**实现状态（已落地）**
+
+- 存储：`IAssetStore`（Foundation 端口）+ `FileAssetStore`（宿主）：元数据入 SQLite（`assets/assets.db`，WAL），
+  字节落 `assets/blobs/{id[0..2]}/{id}`，内容寻址（`ast_<sha256 前 32>`）。
+- 端点：`POST /v1/assets`（原始体 + `Content-Type`；`?sessionId=` / `X-File-Name` 可选）、
+  `GET`（返回字节，`Content-Type` 为资产 MIME）、`HEAD`（元数据）、`DELETE`。
+- 输出切换：内核产出为 data URL 的 `image/audio/file/asset` 项，经 Hub **自动转存为 `assetRef`**
+  （`payload=null`），超限则降级保留内联、不阻塞回合。
+- 输入解析：`TurnRequest.blocks` 支持内联 `dataUri` **或** `assetRef`（后者按 id 拉取字节还原为内核 Block）。
+- 归属：资产记录上传时 `sessionId`；请求显式携带不同 `sessionId` 时回 `3002`（未携带则不校验）。
+- 权限：`/v1/assets` 需**已鉴权**（角色 ≥ `user`，见 §4.8）。
+- 客户端：`HubClient.UploadAssetAsync/DownloadAssetAsync`；QQ 桥对 `assetRef` 输出按 id 拉取字节后再发段。
+
+> 仍未做：资产 TTL 清理（占位字段已在协议 `ttl`）；冷/热分离。
+
 ---
 
 ## 10. Hub ↔ Hub 联邦（复用同一协议）

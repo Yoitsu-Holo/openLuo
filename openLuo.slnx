@@ -39,4 +39,5 @@
   <Project Path="tests/openLuo.E2E.Tests/openLuo.E2E.Tests.csproj" />
   <Project Path="tests/openLuo.Protocol.Tests/openLuo.Protocol.Tests.csproj" />
   <Project Path="tests/openLuo.Logging.Tests/openLuo.Logging.Tests.csproj" />
+  <Project Path="tests/openLuo.Assets.Tests/openLuo.Assets.Tests.csproj" />
 </Solution>

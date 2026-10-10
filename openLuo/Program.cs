@@ -173,6 +173,7 @@ if (options.Mode is LaunchMode.Serve)
     await using var scheduler = new openLuo.Modules.AppShell.Application.InMemorySchedulerService();
     var auth = BuildHubAuth();
     var logs = serviceProvider.GetService<openLuo.Core.Interfaces.ILogStore>();
-    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth);
+    var assets = serviceProvider.GetService<openLuo.Core.Interfaces.IAssetStore>();
+    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth, assets);
     return;
 }
