@@ -61,7 +61,7 @@ if (options.Mode is LaunchMode.QqBot)
 
     using var qqConfig = new QqBotConfigCenter(qqConfigPath);
     await using var qqHub = await HubClient.ConnectAsync(hubStream, "qq-bridge", "qq");
-    using var qqHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+    using var qqHttp = new HttpClient(new SocketsHttpHandler { UseProxy = !new Uri(hubStream).IsLoopback }) { Timeout = TimeSpan.FromSeconds(30) };
     await new QqBotApplication(qqHub, qqHttp, hubHttp, qqConfig).RunAsync();
     return;
 }

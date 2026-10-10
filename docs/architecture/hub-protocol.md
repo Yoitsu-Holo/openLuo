@@ -396,6 +396,10 @@ HTTP body 与 WS 帧**共用同一结构**：
 - 端点：`GET /v1/stream`（`Upgrade: websocket`）。
 - 一条连接可**订阅多个会话**；服务端按 `sessionId` 路由事件。
 - 客户端命令（C→S）需 `id`；服务端事件（S→C）携带 `replyTo`（若由命令触发）或独立。
+- **回环直连**：`openLuo.Client.HubClient` 对 `127.0.0.1`/`localhost`/`::1` 显式禁用 HTTP 代理
+  （`ClientWebSocket.Options.Proxy = null`、Hub HTTP 用 `UseProxy=false`）——系统级 `http_proxy`
+  会把本地连接交给代理，代理到不了该端口时只报 `response ended prematurely`，极易误判为 Hub 崩溃；
+  非回环地址仍按环境变量走代理。连接失败抛 `HubConnectException`（含目标地址与「先起 `--serve`」提示）。
 
 ### 6.1 客户端 → 服务端（命令）
 

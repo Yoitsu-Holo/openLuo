@@ -15,6 +15,17 @@ public sealed class HubException : Exception
         => ErrorCode = envelope.ErrorCode;
 }
 
+/// <summary>连接 Hub 失败：携带目标地址与可操作提示（Hub 是否已启动 / 代理是否可达）。</summary>
+public sealed class HubConnectException : Exception
+{
+    public string StreamUrl { get; }
+
+    public HubConnectException(string streamUrl, Exception inner)
+        : base($"无法连接 Hub：{streamUrl}（{inner.Message.Split('\n')[0]}）。"
+               + "请确认 Hub 已启动（./openLuo --serve），或设置 OPENLUO_HUB_URL 指向已运行的 Hub。", inner)
+        => StreamUrl = streamUrl;
+}
+
 /// <summary>
 /// Hub 客户端（WebSocket 数据面）。**只依赖 `openLuo.Protocol`**，不引用任何内核程序集（§2 边界规则）。
 /// <para>MVP 为顺序请求-响应：同一时刻只应有一个进行中的请求（<see cref="StreamTurnAsync"/> 或
@@ -24,11 +35,15 @@ public sealed class HubClient : IAsyncDisposable
 {
     private readonly ClientWebSocket _socket;
     private readonly byte[] _buffer = new byte[64 * 1024];
-    private readonly HttpClient _http = new();
+    private readonly HttpClient _http;
     private string _httpBase = string.Empty;
     private string? _token;
 
-    private HubClient(ClientWebSocket socket) => _socket = socket;
+    private HubClient(ClientWebSocket socket, HttpClient http)
+    {
+        _socket = socket;
+        _http = http;
+    }
 
     /// <summary>协商结果（连接后可用）。</summary>
     public WelcomeEvent? Welcome { get; private set; }
@@ -42,9 +57,25 @@ public sealed class HubClient : IAsyncDisposable
         IReadOnlyList<string>? features = null,
         CancellationToken ct = default)
     {
+        var uri = new Uri(streamUrl);
+
+        // 回环地址一律直连：系统级 http_proxy/https_proxy 会让本地 ws:// 与 Hub HTTP 请求绕行代理
+        // （代理不可达该端口时表现为 "response ended prematurely" / "Unable to connect"，极难定位）。
         var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri(streamUrl), ct);
-        var client = new HubClient(socket);
+        if (uri.IsLoopback)
+            socket.Options.Proxy = null;
+
+        try
+        {
+            await socket.ConnectAsync(uri, ct);
+        }
+        catch (Exception ex) when (ex is WebSocketException or HttpRequestException or IOException)
+        {
+            socket.Dispose();
+            throw new HubConnectException(streamUrl, ex);
+        }
+
+        var client = new HubClient(socket, new HttpClient(new SocketsHttpHandler { UseProxy = !uri.IsLoopback }));
 
         // token 未显式给出时，回退环境变量（OPENLUO_HUB_TOKEN），便于各客户端统一鉴权
         token ??= Environment.GetEnvironmentVariable("OPENLUO_HUB_TOKEN");
