@@ -37,6 +37,14 @@ public sealed record LogRecord(
     string? SessionId = null,
     string? TurnId = null);
 
+/// <summary>归档（冷文件）检索条件。<paramref name="Date"/> 为 <c>yyyyMMdd</c>，<c>*</c> 表示全部日期。</summary>
+public sealed record ArchiveLogQuery(
+    string Date = "*",
+    string? Category = null,
+    string? Keyword = null,
+    string? MinLevel = null,
+    int Limit = 200);
+
 /// <summary>时间桶计数（按级别）。</summary>
 public sealed record LogBucket(DateTimeOffset Start, IReadOnlyDictionary<string, int> Counts);
 
@@ -52,4 +60,7 @@ public interface ILogStore
     /// <summary>按时间桶统计各级别条数（供面板/趋势）。</summary>
     Task<IReadOnlyList<LogBucket>> StatsAsync(
         DateTimeOffset from, DateTimeOffset to, TimeSpan bucket, CancellationToken ct = default);
+
+    /// <summary>检索冷文件（归档）日志：热库超窗后的历史记录（按日期目录扫描 JSONL）。</summary>
+    Task<IReadOnlyList<LogRecord>> SearchArchiveAsync(ArchiveLogQuery query, CancellationToken ct = default);
 }

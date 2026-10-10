@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Channels;
 using Microsoft.Data.Sqlite;
 using openLuo.Core.Interfaces;
@@ -260,6 +261,18 @@ public sealed class LogStore : ILogStore, IAsyncDisposable
         using var vacuum = conn.CreateCommand();
         vacuum.CommandText = "PRAGMA incremental_vacuum;";
         vacuum.ExecuteNonQuery();
+
+        // FTS5 索引优化：合并段、回收未引用空间（在裁剪后执行）
+        try
+        {
+            using var optimize = conn.CreateCommand();
+            optimize.CommandText = "INSERT INTO logs_fts(logs_fts) VALUES('optimize');";
+            optimize.ExecuteNonQuery();
+        }
+        catch (SqliteException)
+        {
+            // 旧库缺少 FTS 表时忽略
+        }
     }
 
     // ── 查询 ────────────────────────────────────────────────────
@@ -363,6 +376,91 @@ public sealed class LogStore : ILogStore, IAsyncDisposable
             .Select(kv => new LogBucket(start.AddMilliseconds(kv.Key * bucketMs), kv.Value))
             .ToList();
         return Task.FromResult<IReadOnlyList<LogBucket>>(buckets);
+    }
+
+    /// <summary>检索冷文件：扫描 <c>{logDir}/{archive.Dir}/{date}/{category}.jsonl</c>（date 为 <c>*</c> 时全部日期）。</summary>
+    public Task<IReadOnlyList<LogRecord>> SearchArchiveAsync(ArchiveLogQuery query, CancellationToken ct = default)
+    {
+        var results = new List<LogRecord>();
+        if (!_archive.Enabled)
+            return Task.FromResult<IReadOnlyList<LogRecord>>(results);
+
+        var root = Path.Combine(_logDir, _archive.Dir);
+        if (!Directory.Exists(root))
+            return Task.FromResult<IReadOnlyList<LogRecord>>(results);
+
+        var dateDirs = query.Date is "*"
+            ? Directory.GetDirectories(root)
+            : [Path.Combine(root, query.Date)];
+
+        var limit = Math.Clamp(query.Limit, 1, 2000);
+        var minRank = string.IsNullOrWhiteSpace(query.MinLevel) ? 0 : LevelRank(query.MinLevel);
+
+        foreach (var directory in dateDirs.OrderByDescending(d => d))
+        {
+            if (!Directory.Exists(directory))
+                continue;
+
+            var files = query.Category is { Length: > 0 }
+                ? [Path.Combine(directory, Sanitize(query.Category) + ".jsonl")]
+                : Directory.GetFiles(directory, "*.jsonl");
+
+            foreach (var file in files)
+            {
+                if (!File.Exists(file))
+                    continue;
+
+                foreach (var line in File.ReadLines(file))
+                {
+                    if (string.IsNullOrWhiteSpace(line))
+                        continue;
+
+                    LogRecord? record;
+                    try
+                    {
+                        var node = JsonNode.Parse(line);
+                        if (node is null)
+                            continue;
+
+                        var level = node["level"]?.GetValue<string>() ?? "info";
+                        if (minRank > 0 && LevelRank(level) < minRank)
+                            continue;
+
+                        var msg = node["msg"]?.GetValue<string>() ?? string.Empty;
+                        if (!string.IsNullOrWhiteSpace(query.Keyword)
+                            && !msg.Contains(query.Keyword, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        var ts = DateTimeOffset.TryParse(node["ts"]?.GetValue<string>(), out var parsed)
+                            ? parsed
+                            : DateTimeOffset.MinValue;
+
+                        record = new LogRecord(
+                            Id: 0, Ts: ts, Level: level,
+                            Module: node["module"]?.GetValue<string>() ?? string.Empty,
+                            Category: Path.GetFileNameWithoutExtension(file),
+                            Source: node["source"]?.GetValue<string>(),
+                            Msg: msg,
+                            Data: node["data"]?.ToJsonString());
+                    }
+                    catch (JsonException)
+                    {
+                        continue;
+                    }
+
+                    results.Add(record);
+
+                    if (results.Count >= limit)
+                    {
+                        results.Sort((a, b) => b.Ts.CompareTo(a.Ts));
+                        return Task.FromResult<IReadOnlyList<LogRecord>>(results);
+                    }
+                }
+            }
+        }
+
+        results.Sort((a, b) => b.Ts.CompareTo(a.Ts));
+        return Task.FromResult<IReadOnlyList<LogRecord>>(results);
     }
 
     /// <summary>FTS5 查询词 → 短语（转义引号，避免语法注入）。</summary>

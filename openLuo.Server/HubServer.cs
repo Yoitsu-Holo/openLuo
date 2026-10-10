@@ -25,6 +25,9 @@ public sealed class HubServerOptions
 
     /// <summary>单资产字节上限（超出回 `7002 asset.too_large`）。</summary>
     public long AssetMaxBytes { get; init; } = 16L * 1024 * 1024;
+
+    /// <summary>高危能力确认等待上限（秒）；超时视为拒绝。</summary>
+    public int ConfirmTimeoutSeconds { get; init; } = 60;
 }
 
 /// <summary>Hub 运行指标（进程内计数）。</summary>
@@ -153,7 +156,7 @@ public static class HubServer
         IConfigService? config = null, IJobService? jobs = null, ISchedulerService? scheduler = null,
         ILogStore? logs = null, HubAuthOptions? auth = null, IAssetStore? assets = null,
         ITokenStore? tokenStore = null, IOutputQueue? outputQueue = null, ITraceStore? traces = null,
-        CancellationToken ct = default)
+        HubConfirmationGate? confirmationGate = null, CancellationToken ct = default)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -173,6 +176,37 @@ public static class HubServer
         // 审计：HTTP 请求方身份（由 Bearer token 解析）
         string? Actor(HttpContext ctx) =>
             tokens.ResolveInfo(TokenRegistry.BearerOf(ctx.Request.Headers.Authorization.ToString())).ClientId;
+
+        // 高危能力确认（§8）：向会话订阅者推 confirm.request，等待 confirm.response；超时/无人 → 拒绝
+        var pendingConfirmations = new ConcurrentDictionary<string, TaskCompletionSource<bool>>(StringComparer.Ordinal);
+        confirmationGate?.Attach(async (request, requestCt) =>
+        {
+            var requestId = ProtocolIds.NewUlid();
+            var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            pendingConfirmations[requestId] = completion;
+
+            await broadcaster.DeliverAsync(EnvelopeFactory.Create(EventTypes.ConfirmRequest, new ConfirmRequestEvent
+            {
+                RequestId = requestId,
+                TurnId = request.TurnId,
+                CanonicalId = request.CanonicalId,
+                Risk = request.Risk,
+                Summary = request.Summary,
+                ArgsPreview = TryParseNode(request.ArgsPreview),
+            }, sessionId: request.SessionId), sessionId: request.SessionId, ct: requestCt);
+
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(requestCt);
+                timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, options.ConfirmTimeoutSeconds)));
+                using var registration = timeout.Token.Register(() => completion.TrySetResult(false));
+                return await completion.Task;
+            }
+            finally
+            {
+                pendingConfirmations.TryRemove(requestId, out _);
+            }
+        });
         string[] features = [Features.Streaming, Features.MultiSession, Features.Confirm, Features.Config];
 
         // 权限守卫（§4.8）：admin-only 路径未鉴权 → 3001，越权 → 3002。
@@ -522,6 +556,22 @@ public static class HubServer
                 }));
             });
 
+            app.MapGet("/v1/logs/archive", async (string? date, string? category, string? keyword, string? level,
+                int? limit, CancellationToken requestCt) =>
+            {
+                var items = await logs.SearchArchiveAsync(new ArchiveLogQuery(
+                    Date: string.IsNullOrWhiteSpace(date) ? "*" : date,
+                    Category: category,
+                    Keyword: keyword,
+                    MinLevel: level,
+                    Limit: limit ?? 200), requestCt);
+
+                return Json(EnvelopeFactory.Create("logs", new LogsResponse
+                {
+                    Items = items.Select(WireMapper.ToDto).ToList(),
+                }));
+            });
+
             app.MapGet("/v1/logs/stats", async (string? from, string? to, string? bucket, CancellationToken requestCt) =>
             {
                 var toTs = ParseTime(to) ?? DateTimeOffset.UtcNow;
@@ -642,7 +692,7 @@ public static class HubServer
             try
             {
                 await HandleConnectionAsync(connection, runtime, options, features, metrics, tokens, assets, broadcaster,
-                    presenceSubscribers, outputQueue, traces, auditSubscribers, ctx.RequestAborted);
+                    presenceSubscribers, outputQueue, traces, auditSubscribers, pendingConfirmations, ctx.RequestAborted);
             }
             finally
             {
@@ -876,7 +926,8 @@ public static class HubServer
         HubConnection connection, IAgentRuntime runtime, HubServerOptions options, string[] features,
         HubMetrics metrics, TokenRegistry tokens, IAssetStore? assets, HubBroadcaster broadcaster,
         ConcurrentDictionary<string, HubConnection> presenceSubscribers, IOutputQueue? outputQueue,
-        ITraceStore? traces, ConcurrentDictionary<string, HubConnection> auditSubscribers, CancellationToken ct)
+        ITraceStore? traces, ConcurrentDictionary<string, HubConnection> auditSubscribers,
+        ConcurrentDictionary<string, TaskCompletionSource<bool>> pendingConfirmations, CancellationToken ct)
     {
         var socket = connection.Socket;
         var buffer = new byte[64 * 1024];
@@ -1020,6 +1071,21 @@ public static class HubServer
                         break;
                     }
                     auditSubscribers[connection.Id] = connection;
+                    break;
+                }
+
+                case MessageTypes.ConfirmResponse:
+                {
+                    var response = envelope.DataAs<ConfirmResponseCommand>();
+                    if (response is null || string.IsNullOrWhiteSpace(response.RequestId))
+                    {
+                        await SendAsync(socket, EnvelopeFactory.CreateError("error",
+                            ErrorCodes.ProtocolBadEnvelope, "confirm.response requires requestId", replyTo: envelope.Id), ct);
+                        break;
+                    }
+
+                    if (pendingConfirmations.TryRemove(response.RequestId, out var pending))
+                        pending.TrySetResult(response.Approved);
                     break;
                 }
 

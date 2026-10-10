@@ -19,6 +19,7 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
     private readonly IReadOnlyDictionary<string, ICapabilityInvoker> _canonicalInvokers;
     private readonly IReadOnlyDictionary<string, ICapabilityInvoker> _kindInvokers;
     private readonly openLuo.Core.Interfaces.IGameLogger? _logger;
+    private readonly IConfirmationGate? _confirmationGate;
 
     public DefaultCapabilityDispatcher(
         ICapabilityInvoker defaultInvoker,
@@ -26,7 +27,8 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
         IStateTransaction stateTransaction,
         IEnumerable<KeyValuePair<string, ICapabilityInvoker>>? kindInvokers = null,
         IEnumerable<KeyValuePair<string, ICapabilityInvoker>>? canonicalInvokers = null,
-        openLuo.Core.Interfaces.IGameLogger? logger = null)
+        openLuo.Core.Interfaces.IGameLogger? logger = null,
+        IConfirmationGate? confirmationGate = null)
     {
         _invoker = defaultInvoker;
         _policy = policy;
@@ -36,6 +38,7 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
         _canonicalInvokers = canonicalInvokers?.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase)
             ?? new Dictionary<string, ICapabilityInvoker>(StringComparer.OrdinalIgnoreCase);
         _logger = logger;
+        _confirmationGate = confirmationGate;
     }
 
     public async Task<BatchExecutionResult> ExecuteBatchAsync(
@@ -151,6 +154,30 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
         int maxRetries)
     {
         var descriptor = snapshot.ByCanonicalId.TryGetValue(call.CanonicalId, out var d) ? d : null;
+
+        // 高危能力：派发前请求确认（未接入/超时/拒绝 → 默认拒绝，安全优先）
+        if (_confirmationGate is not null && descriptor is { RequiresConfirmation: true })
+        {
+            var approved = await _confirmationGate.RequestAsync(new ConfirmationRequest(
+                SessionId: baseContext.SessionId,
+                TurnId: baseContext.TurnId,
+                CanonicalId: call.CanonicalId,
+                Risk: descriptor.Risk.ToString().ToLowerInvariant(),
+                Summary: descriptor.Summary,
+                ArgsPreview: call.RawArgumentsJson), ct).ConfigureAwait(false);
+
+            if (!approved)
+            {
+                return new CapabilityResult
+                {
+                    InvocationId = call.InvocationId,
+                    Success = false,
+                    Status = CapabilityStatus.Rejected,
+                    Error = "confirmation denied",
+                };
+            }
+        }
+
         var invoker = _canonicalInvokers.TryGetValue(call.CanonicalId, out var canonicalInvoker)
             ? canonicalInvoker
             : descriptor is not null && _kindInvokers.TryGetValue(descriptor.Kind.ToString(), out var kindInvoker)

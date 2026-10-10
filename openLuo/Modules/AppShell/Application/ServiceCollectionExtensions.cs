@@ -135,6 +135,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ICapabilityPolicy, DefaultCapabilityPolicy>();
         services.AddSingleton<IStateTransaction, InMemoryStateTransaction>();
         services.AddSingleton<ICapabilityInvoker, UnboundCapabilityInvoker>();
+        services.AddSingleton<openLuo.Server.HubConfirmationGate>();
         services.AddSingleton<ICapabilityDispatcher>(sp =>
         {
             var registry = sp.GetRequiredService<ExtensionRegistry>();
@@ -159,7 +160,8 @@ public static class ServiceCollectionExtensions
             return new DefaultCapabilityDispatcher(
                 sp.GetRequiredService<ICapabilityInvoker>(), sp.GetRequiredService<ICapabilityPolicy>(),
                 sp.GetRequiredService<IStateTransaction>(), canonicalInvokers: invokers,
-                logger: sp.GetService<Core.Interfaces.IGameLogger>());
+                logger: sp.GetService<Core.Interfaces.IGameLogger>(),
+                confirmationGate: sp.GetRequiredService<openLuo.Server.HubConfirmationGate>());
         });
         services.AddSingleton<ICapabilityDecisionLoop, DefaultCapabilityDecisionLoop>();
         services.AddSingleton<ICapabilityCatalog>(sp =>

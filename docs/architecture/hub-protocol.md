@@ -335,6 +335,13 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 触发时 Hub 以 `turn.started{origin:"scheduled"}` 发起主动回合（§6.4）。
 
+`POST /v1/schedules` 的 `at`（一次性，ISO-8601）与 `cron`（周期）二选一：
+
+- `cron` 为**标准 5 段**（分 时 日 月 周），支持 `*`、`N`、`a-b`、`*/n`、`a-b/n` 与逗号列表；周字段 `0`/`7` 均为周日。
+- 无效表达式回 **`1202 schedule.invalid`**；缺 `at` 与 `cron` 同样回 `1202`。
+- 周期项触发后按 `Next(now)`（分钟精度）重排下次触发；一次性项触发后置 `enabled:false`。
+- 重启恢复：周期项重算下次触发，一次性项维持宽限期语义（§13 #3）。
+
 ### 5.9 作业（长任务）
 
 | 方法   | 路径            | 请求 `data`        | 响应 `data`         |
@@ -360,6 +367,9 @@ HTTP body 与 WS 帧**共用同一结构**：
 | ---- | --------------------- | -------------------------------------- |
 | GET  | `/v1/traces/{turnId}` | 回合决策轨迹（`TurnTraceDto`，回放用） |
 | GET  | `/v1/metrics`         | 运行指标（`MetricsDto`）               |
+| GET  | `/v1/logs`            | 热库日志检索（`from`/`to`/`level`/`module`/`category`） |
+| GET  | `/v1/logs/archive`    | 冷文件（归档 JSONL）检索：`date`（`yyyyMMdd` 或 `*`）、`category`、`keyword`、`level`、`limit` |
+| GET  | `/v1/logs/stats`      | 按时间桶统计各级别条数（`from`/`to`/`bucket`） |
 
 审计事件经 WS `audit.event` 推送（`audit.subscribe`）。
 
@@ -371,6 +381,9 @@ HTTP body 与 WS 帧**共用同一结构**：
   与结果摘要（success / terminationReason / finalText）；保留 **14 天 / 20 万事件**（超窗裁剪）。
 - 两个端点均为 **admin-only**（接入 §4.8 守卫）。
 - 未知回合回 **`1701 trace.not_found`**。
+- **冷文件检索已落地**：`/v1/logs/archive` 按 `{logDir}/{archive.Dir}/{date}/*.jsonl` 目录扫描（无索引），
+  命中达 `limit` 提前返回，结果按 `ts` 倒序（单测 + 冒烟：`date`/`category`/`keyword`/`level` 过滤生效）。
+  日志裁剪（`Trim`）后执行 FTS5 `optimize` 合并段、回收索引空间。
 - **`audit.event` 审计流已落地**：`audit.subscribe`（需 admin）后收关键管理动作事件（`auth.token` /
   `session.open|close` / `config.set|delete` / `job.submit` / `schedule.add` / `asset.upload|delete`），
   含发起方 `clientId`、目标与结果。
@@ -586,9 +599,14 @@ sequenceDiagram
 3. 未在超时内响应 → 该能力视为拒绝（`capability.failed`，`retryable:false`）。
 4. 客户端需声明 `features:["confirm"]`；不支持确认的客户端所连会话，Hub 对高危能力**直接拒绝**（安全默认）。
 
-> **依赖内核（当前为空转）**：内核现有能力（6 扩展）全部 `RiskLevel.Low` / `requiresConfirmation=false`
-> → 本节流程**尚无触发者**。需能力侧（插件 / MCP / 内建）在 `CapabilityDescriptor` 声明
-> `RequiresConfirmation=true` 后才生效；否则确认握手只是协议预留。
+> **实现状态**：内核端口 `IConfirmationGate`（`openLuo.Capabilities.Core`）+ `DefaultCapabilityDispatcher`
+> 派发前拦截（未批准 → `CapabilityStatus.Rejected` / `"confirmation denied"`，且**不执行**能力）；
+> Hub 侧 `HubConfirmationGate`（`openLuo.Server`）由 `HubServer.RunAsync` 接入：向会话订阅者推
+> `confirm.request` 并等待 `confirm.response`，**超时（默认 60s，`HubServerOptions.ConfirmTimeoutSeconds`）
+> 或未接入一律拒绝**（安全默认）。冒烟实测：批准 → `true`、拒绝 → `false`、超时 → `false`。
+>
+> **仍无触发者**：现有 6 个扩展的能力全部 `RiskLevel.Low` / `requiresConfirmation=false`，需能力侧
+> （插件 / MCP / 内建）声明 `RequiresConfirmation=true` 后走此流程。
 
 ---
 
@@ -685,5 +703,7 @@ sequenceDiagram
 | 9   | 协议域补全     | **补全 7 域**：群聊（`userId`/`mentions`/`threadId`/`recipient`/`member.*`）、多客户端（`targetClientId`/`presence.*`/`session.resume`）、主动调度（`/v1/schedules`/`turn.started`/`notification`）、设备（`device.report`/`device.state`）、作业（`/v1/jobs`/`job.*`）、表现（`avatar.*`）、观测（`/v1/traces`/`/v1/metrics`/`audit.event`）；新增码段 12xx–16xx、7002/7003 |
 | 10  | 内核流式与队列 | ✅ **已实现**：`InMemoryOutputQueue` 解耦（每会话日志、`Enqueue` 永不阻塞、`ReadSince` 续传）；`ICapabilityDecisionLoop.RunStreamAsync` 真流式（单写者 channel）；`ComposedAgentRuntime` per-session 回合闸串行化。上下文「全局 + 局部」改造风险另见 `docs/architecture/context-scope-risk.md`                                                                                |
 | 11 | 传输职责 | **HTTP + WS 互补双轨（非全 WS）**：WS = 数据面（高频 / 实时 / 单向推送、双向流式回合）；HTTP = 控制面 + 二进制面（请求-响应管理、资产上传下载、探针）；重叠处（回合提交）以 WS 为主、HTTP 为 fallback。理由：二进制大对象、探针 / 无状态运维、无实时需求的客户端（QQ 桥 / 脚本）都更适合 HTTP；全 WS 需把大对象与探针塞进 WS，得不偿失 |
+
+| 12  | 本轮加固（2026-10-10） | ✅ **已实现**：**FTS 优化**（裁剪后 `optimize`）、**周期调度**（`cron` 标准 5 段，无效 → `1202`，触发后重排 `Next(now)`）、**冷文件检索**（`/v1/logs/archive` 目录扫描 + `keyword`/`level`/`category`/`date` 过滤）、**确认握手接线**（内核 `IConfirmationGate` → 派发前拦截；Hub `HubConfirmationGate` 推 `confirm.request` / 等 `confirm.response`，超时 60s 或未接入一律拒绝）。QQ 桥真机测试待用户接入 LLBot |
 
 仍开放：TLS 终结方式（Hub 直出 vs 反向代理）——实施 Server 时再定。

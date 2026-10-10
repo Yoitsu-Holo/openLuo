@@ -17,6 +17,9 @@ public sealed class InMemorySchedulerService : ISchedulerService, IAsyncDisposab
     {
         public required ScheduleInfo Info { get; set; }
         public DateTimeOffset? Due { get; set; }
+
+        /// <summary>周期调度（null = 一次性）。</summary>
+        public CronSchedule? Cron { get; set; }
     }
 
     private static readonly TimeSpan CatchUpGrace = TimeSpan.FromMinutes(5);
@@ -56,8 +59,23 @@ public sealed class InMemorySchedulerService : ISchedulerService, IAsyncDisposab
         {
             var effective = info;
             DateTimeOffset? due = null;
+            CronSchedule? cron = null;
 
-            if (info.Enabled && info.At is { } at)
+            if (!string.IsNullOrWhiteSpace(info.Cron))
+            {
+                if (CronSchedule.TryParse(info.Cron, out cron) && info.Enabled)
+                {
+                    due = cron!.Next(now);
+                    effective = info with { NextRunAt = due };
+                    store.UpsertSchedule(effective);
+                }
+                else
+                {
+                    effective = info with { Enabled = false, NextRunAt = null };
+                    store.UpsertSchedule(effective);
+                }
+            }
+            else if (info.Enabled && info.At is { } at)
             {
                 if (at > now)
                 {
@@ -74,7 +92,7 @@ public sealed class InMemorySchedulerService : ISchedulerService, IAsyncDisposab
                 }
             }
 
-            _entries[info.Id] = new Entry { Info = effective, Due = due };
+            _entries[info.Id] = new Entry { Info = effective, Due = due, Cron = cron };
         }
     }
 
@@ -86,33 +104,48 @@ public sealed class InMemorySchedulerService : ISchedulerService, IAsyncDisposab
             if (!entry.Info.Enabled || entry.Due is null || entry.Due > now)
                 continue;
 
-            // 一次性：触发后置为已禁用（周期调度后续再支持 Cron）
-            entry.Due = null;
-            entry.Info = entry.Info with { Enabled = false, NextRunAt = null };
-            _store?.UpsertSchedule(entry.Info);
+            if (entry.Cron is { } cron)
+            {
+                // 周期：触发后重排下一次
+                var next = cron.Next(now);
+                entry.Due = next;
+                entry.Info = entry.Info with { NextRunAt = next };
+                _store?.UpsertSchedule(entry.Info);
+            }
+            else
+            {
+                // 一次性：触发后置为已禁用
+                entry.Due = null;
+                entry.Info = entry.Info with { Enabled = false, NextRunAt = null };
+                _store?.UpsertSchedule(entry.Info);
+            }
+
             _events.Writer.TryWrite(new ScheduleDue(entry.Info.Id, entry.Info.SessionId, entry.Info.Kind, entry.Info.Payload));
         }
     }
 
     public ScheduleInfo Add(string sessionId, string kind, DateTimeOffset? at, string? cron, JsonNode? payload)
     {
-        if (!string.IsNullOrWhiteSpace(cron))
-            throw new InvalidOperationException("cron schedules are not supported yet (use 'at')");
+        CronSchedule? schedule = null;
+        if (!string.IsNullOrWhiteSpace(cron) && !CronSchedule.TryParse(cron, out schedule))
+            throw new InvalidOperationException($"invalid cron expression: {cron}");
 
-        if (at is null)
-            throw new InvalidOperationException("schedule requires 'at' (one-shot)");
+        if (schedule is null && at is null)
+            throw new InvalidOperationException("schedule requires 'at' (one-shot) or 'cron' (recurring)");
+
+        var next = schedule is not null ? schedule.Next(DateTimeOffset.UtcNow) : at;
 
         var info = new ScheduleInfo(
             Id: "sch_" + Guid.NewGuid().ToString("N"),
             SessionId: sessionId,
             Kind: kind,
             At: at,
-            Cron: null,
+            Cron: schedule?.Expression,
             Enabled: true,
-            NextRunAt: at,
+            NextRunAt: next,
             Payload: payload);
 
-        _entries[info.Id] = new Entry { Info = info, Due = at };
+        _entries[info.Id] = new Entry { Info = info, Due = next, Cron = schedule };
         _store?.UpsertSchedule(info);
         return info;
     }

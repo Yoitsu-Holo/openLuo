@@ -191,6 +191,7 @@ if (options.Mode is LaunchMode.Serve)
         });
     }
 
-    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth, assets, hubStore, outputQueue, hubStore);
+    var confirmationGate = serviceProvider.GetRequiredService<openLuo.Server.HubConfirmationGate>();
+    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth, assets, hubStore, outputQueue, hubStore, confirmationGate);
     return;
 }
