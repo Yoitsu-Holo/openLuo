@@ -166,12 +166,8 @@ public sealed record ConfigSetResponse
     public JsonNode? Values { get; init; }
 }
 
-/// <summary>`DELETE /v1/config/{ns}` 请求：删除覆盖，回退到下一层（最终为默认值）。</summary>
-public sealed record ConfigDeleteRequest
-{
-    /// <summary>true = 同时删除 <c>config/{ns}.jsonc</c>；false = 仅清运行时覆盖。</summary>
-    public bool Persist { get; init; }
-}
+// `DELETE /v1/config/{ns}` 无请求体：`persist` 走查询参数（`?persist=true`）。
+// 规范早期定义的 `ConfigDeleteRequest` 体从未启用，已删除。
 
 /// <summary>`DELETE /v1/config/{ns}` 响应。</summary>
 public sealed record ConfigDeleteResponse

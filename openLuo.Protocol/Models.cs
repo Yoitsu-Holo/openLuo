@@ -42,6 +42,12 @@ public sealed record DecisionBudgetsDto
 }
 
 /// <summary>回合请求（wire 镜像内核 <c>TurnRequest</c>）。</summary>
+/// <remarks>
+/// **v1 只消费**：<c>TurnId/ActorId/SourceId/ChannelId/SenderName/Text/Blocks</c>
+/// （映射见 <c>HubServer.RunTurnStreamAsync</c>）。其余字段
+/// （<c>Meta/Budgets/UserId/Mentions/ThreadId/IdempotencyKey</c>）目前**只被反序列化、不被使用**：
+/// 客户端传入不报错但没有任何效果，也不得依赖其语义（详见 docs/architecture/hub-protocol.md §7.2）。
+/// </remarks>
 public sealed record TurnRequestDto
 {
     /// <summary>可缺省，由服务端生成。</summary>
@@ -63,21 +69,22 @@ public sealed record TurnRequestDto
     /// <summary>多模态块（image/audio/file 等原始结构）。</summary>
     public IReadOnlyList<JsonNode>? Blocks { get; init; }
 
-    /// <summary>平台元数据（scene/sender/channel 等），透传到上下文 Extras。</summary>
+    /// <summary>平台元数据（scene/sender/channel 等）。**v1 未实现**：不透传到内核上下文。</summary>
     public IReadOnlyDictionary<string, JsonNode?>? Meta { get; init; }
 
+    /// <summary>决策预算覆盖。**v1 未实现**：不映射到内核 <c>DecisionBudgets</c>。</summary>
     public DecisionBudgetsDto? Budgets { get; init; }
 
-    /// <summary>发送者稳定身份（平台用户 id；群聊必需，用于身份与记忆隔离）。</summary>
+    /// <summary>发送者稳定身份（平台用户 id）。**v1 未实现**：不参与身份/记忆隔离（隔离键是会话 <c>subjectId</c>）。</summary>
     public string? UserId { get; init; }
 
-    /// <summary>被 @ 的目标（userId 或角色 id）；用于定向回复与提醒识别。</summary>
+    /// <summary>被 @ 的目标（userId 或角色 id）。**v1 未实现**：Hub 丢弃（@ 识别在 QQ 桥侧完成）。</summary>
     public IReadOnlyList<string>? Mentions { get; init; }
 
-    /// <summary>会话内线程 id（同一会话内并行话题 / 多用户线程隔离）。</summary>
+    /// <summary>会话内线程 id。**v1 未实现**：不参与线程隔离。</summary>
     public string? ThreadId { get; init; }
 
-    /// <summary>幂等键：重复提交返回既有回合，不重复执行。</summary>
+    /// <summary>幂等键。**v1 未实现**：无幂等表，重复提交会重复执行（见协议文档 §4.6）。</summary>
     public string? IdempotencyKey { get; init; }
 }
 

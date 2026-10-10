@@ -1136,13 +1136,16 @@ public static class HubServer
                 }
 
                 default:
+                {
+                    var known = ProtocolRegistry.IsKnown(envelope.Type);
                     await SendAsync(socket, EnvelopeFactory.CreateError("error",
-                        ErrorCodes.ProtocolUnknownType,
-                        ProtocolRegistry.IsKnown(envelope.Type)
+                        known ? ErrorCodes.ProtocolNotImplemented : ErrorCodes.ProtocolUnknownType,
+                        known
                             ? $"type not handled: {envelope.Type}"
                             : $"unknown type: {envelope.Type}",
                         replyTo: envelope.Id), ct);
                     break;
+                }
             }
         }
     }

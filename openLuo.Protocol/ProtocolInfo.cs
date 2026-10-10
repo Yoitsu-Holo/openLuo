@@ -146,6 +146,9 @@ public static class ErrorCodes
     public const int ProtocolBadEnvelope = 2002;
     public const int ProtocolUnknownType = 2003;
 
+    /// <summary>类型在规范内（<see cref="ProtocolRegistry.IsKnown"/>）但本版本尚未实现。</summary>
+    public const int ProtocolNotImplemented = 2004;
+
     public const int AuthUnauthorized = 3001;
     public const int AuthForbidden = 3002;
 
@@ -191,6 +194,7 @@ public static class ErrorCodes
         ProtocolVersionMismatch => "protocol.version_mismatch",
         ProtocolBadEnvelope => "protocol.bad_envelope",
         ProtocolUnknownType => "protocol.unknown_type",
+        ProtocolNotImplemented => "protocol.not_implemented",
         AuthUnauthorized => "auth.unauthorized",
         AuthForbidden => "auth.forbidden",
         SessionNotFound => "session.not_found",

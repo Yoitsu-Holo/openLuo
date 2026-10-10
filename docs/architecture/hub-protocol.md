@@ -186,6 +186,7 @@ HTTP body 与 WS 帧**共用同一结构**：
 | 2001 | protocol.version_mismatch        | 协议 major 不符                     | false     |
 | 2002 | protocol.bad_envelope            | Envelope 结构非法                   | false     |
 | 2003 | protocol.unknown_type            | 未知消息类型（可忽略）              | —         |
+| 2004 | protocol.not_implemented         | 类型已定义但本版本未实现（勿重试）  | false     |
 | 3001 | auth.unauthorized                | token 缺失/无效                     | false     |
 | 3002 | auth.forbidden                   | 无该会话/角色权限                   | false     |
 | 4001 | session.not_found                | 会话不存在或已关闭                  | false     |
@@ -203,10 +204,13 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 ### 4.6 幂等与顺序
 
-- `turn.submit` / `message.append` 携带 `data.idempotencyKey`；重复 key 返回既有 `turnId`，不重复执行。
-  **注**：内核 `TurnRequest` 暂无此字段，幂等由 Hub 层幂等表实现（TTL 内去重）。
+- `turn.submit` / `message.append` **可**携带 `data.idempotencyKey`。
+  **v1 未实现**：Hub 当前**不做**去重——既无幂等表，也未把该字段传给内核（`TurnRequestDto.IdempotencyKey`
+  全仓无消费者）；重复提交会**重复执行**，客户端须自行保证不重发。
 - 输出类事件带 `data.sequence`（**全局单调**，会话内亦单调；**不保证连续**——客户端应以 `>` 比较，
-  不得用 `seq+1` 推断丢失）；`output` 类需 `output.ack`（见 §6）。
+  不得用 `seq+1` 推断丢失）。
+- **v1 未实现**：`output` 类**不需要** `output.ack` / `output.fail`——§6.1 中这两条命令未实现，
+  发送会得到 `2004 protocol.not_implemented`。
 - 同一会话的回合由内核 **per-session 闸串行**执行（`turn.submit` 默认排队；`turn.busy` 仅用于超队列上限）。
 
 ### 4.7 身份模型
@@ -255,6 +259,18 @@ HTTP body 与 WS 帧**共用同一结构**：
 `403` 越权或只读、`413` 过大、`429` 限流/超会话上限、`409` 冲突（回合忙/取消/需确认）、
 `503` 在场不可用、`500` 失败（作业/落盘/服务端），其余 `400`。
 
+**实现状态约定**
+
+本文档同时是**协议规范**与**实现现状**的单一来源。凡**已写入规范但 v1 尚未实现**的条目，一律就地标注
+**`v1 未实现`**（可 `grep -n "v1 未实现" docs/architecture/hub-protocol.md` 列出全部）：
+
+- 此类条目对客户端**不是可用契约**，不要据此实现；服务端行为：
+  **已声明但未处理**的命令 → `2004 protocol.not_implemented`（`data`/`errorMsg` 说明 `type not handled: <type>`）；
+  **规范里也没有**的 type → `2003 protocol.unknown_type`（`unknown type: <type>`）。
+- 客户端**不得**依赖标注为 `v1 未实现` 的字段（例如 `TurnRequest.budgets`、`presence.subscribe.sessionIds`），
+  服务端当前会静默忽略。
+- 反向要求：实现若先于规范落地，必须同步补本文档（禁止"只有代码知道"的行为）。
+
 ### 5.1 系统
 
 | 方法 | 路径          | 说明                                                                 |
@@ -272,9 +288,9 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 | 方法 | 路径                 | 说明                                         | 响应 `data`                                                  |
 | ---- | -------------------- | -------------------------------------------- | ------------------------------------------------------------ |
-| GET  | `/v1/agents`         | 可用角色/Agent 目录                          | `{agents: [{agentId, displayName, avatar?, tags[]}]}`        |
+| GET  | `/v1/agents`         | 可用角色/Agent 目录（**v1 未实现**：暂无枚举接口，客户端须由配置得知 `agentId`） | `{agents: [{agentId, displayName, avatar?, tags[]}]}`        |
 | GET  | `/v1/capabilities`   | 能力目录（可带 `?sessionId=` 过滤权限/场景） | `{version, capabilities: [CapabilityDescriptor]}`（见 §7.4） |
-| GET  | `/v1/config/summary` | 非敏感配置摘要（admin；**v1 暂不实现**，配置读取见 §5.7）                      | `{llm: {...}, server: {...}}`                                |
+| GET  | `/v1/config/summary` | 非敏感配置摘要（admin；**v1 未实现**，配置读取见 §5.7）                      | `{llm: {...}, server: {...}}`                                |
 
 ### 5.4 会话
 
@@ -284,12 +300,15 @@ HTTP body 与 WS 帧**共用同一结构**：
 | GET    | `/v1/sessions/{id}`         | —                                                                    | `AgentSession`                                                      |
 | DELETE | `/v1/sessions/{id}`         | —                                                                    | `{closed: true}`                                                    |
 | GET    | `/v1/sessions/{id}/context` | `?region=&format=`                                                   | `{summary, regions: [{region, content, priority, source, status}]}` |
-| GET    | `/v1/sessions/{id}/state`   | —                                                                    | 世界状态只读投影 `{version, values: {...}}`（若扩展提供）           |
+| GET    | `/v1/sessions/{id}/state`   | —                                                                    | 世界状态只读投影 `{version, values: {...}}`（**v1 未实现**）           |
 
-### 5.5 回合（**仅无 WS 客户端的 fallback**）
+### 5.5 回合（**仅无 WS 客户端的 fallback**；**v1 未实现**）
 
 > 有 WS 的客户端应一律走 `turn.submit`（§6.1）。此节供 QQ 桥 / 脚本等**无 WS** 客户端使用：
 > 提交后 `202 + turnId`，结果经 `GET /v1/turns/{turnId}` 轮询（因无 WS 无法接收流）。
+>
+> **实现现状（v1）**：本节的 4 个端点**全部未实现**（无 WS 客户端目前无法提交回合；QQ 桥走的是 WS，
+> 见 §6.5）。轮询语义还依赖回合状态持久化，属独立排期项。
 
 | 方法 | 路径                         | 请求 `data`                           | 响应                                                          |
 | ---- | ---------------------------- | ------------------------------------- | ------------------------------------------------------------- |
@@ -315,7 +334,7 @@ HTTP body 与 WS 帧**共用同一结构**：
 | GET    | `/v1/config`      | —                     | `ConfigListResponse`   | 列出命名空间（来源 / 是否覆盖）      |
 | GET    | `/v1/config/{ns}` | —                     | `ConfigGetResponse`    | 获取有效值（**敏感字段掩码 `***`**） |
 | POST   | `/v1/config/{ns}` | `ConfigSetRequest`    | `ConfigSetResponse`    | JSON 合并写入覆盖层                  |
-| DELETE | `/v1/config/{ns}` | `ConfigDeleteRequest` | `ConfigDeleteResponse` | 删除覆盖 → 回退默认                  |
+| DELETE | `/v1/config/{ns}?persist=` | —（无请求体）         | `ConfigDeleteResponse` | 删除覆盖 → 回退默认；`persist=true` 同时删盘 |
 
 **语义**
 
@@ -323,7 +342,8 @@ HTTP body 与 WS 帧**共用同一结构**：
 - `persist=true`：写回磁盘 `config/{ns}.jsonc`（失败回 `1104 config.persist_failed`）。
 - POST 为**递归合并**（对象按键递归；数组整体替换）；值为 `null` 表示删除该键（回退下层）。
 - DELETE 后 `source` 回退到 `file` 或 `default`；关键命名空间（如 `server`）标记只读，写操作回 `1103 config.read_only`。
-- 变更经 `RuntimeConfigCenter` 热加载生效，并向所有 WS 连接广播 `config.updated`。
+- 变更经 `RuntimeConfigCenter` 热加载生效。
+  **v1 未实现**：当前**不广播** `config.updated`（§6.2 中该事件无生产者），客户端不得依赖配置变更推送。
 
 ### 5.8 调度（管理，需 `admin`）
 
@@ -347,8 +367,8 @@ HTTP body 与 WS 帧**共用同一结构**：
 | 方法   | 路径            | 请求 `data`        | 响应 `data`         |
 | ------ | --------------- | ------------------ | ------------------- |
 | POST   | `/v1/jobs`      | `CreateJobRequest` | `202` + `JobDto`    |
-| GET    | `/v1/jobs/{id}` | —                  | `JobStatusResponse` |
-| DELETE | `/v1/jobs/{id}` | —                  | `{cancelled:true}`  |
+| GET    | `/v1/jobs/{id}` | —                  | `JobDto`（**已实现**；早期规范写的 `JobStatusResponse` 形状从未上线） |
+| DELETE | `/v1/jobs/{id}` | —                  | `JobDto`（`status: cancelled`；不存在/不可取消回 `1301`）      |
 
 进度 / 完成经 WS `job.progress` / `job.completed` 推送。用于 CG 生成、批量 TTS、Live2D 构建等长任务。
 
@@ -356,8 +376,11 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 | 方法   | 路径              | 说明                                                                             |
 | ------ | ----------------- | -------------------------------------------------------------------------------- |
-| POST   | `/v1/assets`      | 上传二进制（`Content-Type` = MIME），返回 `UploadAssetResponse`（含 `assetRef`） |
-| DELETE | `/v1/assets/{id}` | 删除资产                                                                         |
+| POST   | `/v1/assets?sessionId=` | 上传二进制（请求体即原始字节，`Content-Type` = MIME），返回 `UploadAssetResponse`（含 `assetRef`） |
+| DELETE | `/v1/assets/{id}` | 删除资产（`ttl` 到期由清理任务回收，见 §5.11）                                   |
+
+**实现现状（v1）**：`sessionId` 走**查询参数**，文件名走 **`X-File-Name` 请求头**（`HubClient.UploadAssetAsync`
+即如此），服务端同时兼容 `?fileName=`。规范早期设想的 JSON 元数据体（`UploadAssetRequest`）从未启用，已从协议类型中移除。
 
 补齐 §9 的反向链路：客户端上传的图片 / 语音 / 文件经 `assetRef` 出现在 `TurnRequest.blocks`。
 
@@ -411,18 +434,18 @@ HTTP body 与 WS 帧**共用同一结构**：
 | `session.open`                                | `{subjectId, agentId, conversationId?, meta?}`               | 开会话（等价 HTTP POST /sessions）               |
 | `session.subscribe`                           | `{sessionId}`                                                | 订阅某会话的 output/state 事件（多客户端可共订；由 **Hub 分发**——内核队列为单消费者，见 §11） |
 | `session.unsubscribe`                         | `{sessionId}`                                                | 退订                                             |
-| `session.close`                               | `{sessionId}`                                                | 关闭会话                                         |
+| `session.close`                               | `{sessionId}`                                                | 关闭会话（**v1 未实现**；HTTP `DELETE /v1/sessions/{id}` 已实现） |
 | `turn.submit`                                 | `TurnRequest` + `{idempotencyKey}`                           | 提交回合（流式结果经事件返回）                   |
-| `turn.cancel`                                 | `{turnId}`                                                   | 取消进行中回合                                   |
+| `turn.cancel`                                 | `{turnId}`                                                   | 取消进行中回合（**v1 未实现**；内核 `TurnCancelled` 码已预留） |
 | `message.append`                              | `{sessionId, senderName?, text, blocks?, meta?}`             | 写入历史不触发回合                               |
-| `output.ack`                                  | `{sequence}`                                                 | 已成功投递（对应 `IOutputQueue.AckAsync`）       |
-| `output.fail`                                 | `{sequence, permanent}`                                      | 投递失败（对应 `FailAsync`）                     |
+| `output.ack`                                  | `{sequence}`                                                 | 已成功投递（对应 `IOutputQueue.AckAsync`；**v1 未实现**） |
+| `output.fail`                                 | `{sequence, permanent}`                                      | 投递失败（对应 `FailAsync`；**v1 未实现**）      |
 | `confirm.response`                            | `{requestId, approved, reason?}`                             | 高危能力确认结果（§8）                           |
-| `config.get` / `config.set` / `config.del`    | `ConfigGetCommand` / `ConfigSetCommand` / `ConfigDelCommand` | 配置读取 / 修改 / 删除（§5.7，需 `admin`）       |
+| `config.get` / `config.set` / `config.del`    | `ConfigGetCommand` / `ConfigSetCommand` / `ConfigDelCommand` | 配置读取 / 修改 / 删除（§5.7，需 `admin`；**v1 未实现**——配置只走 HTTP） |
 | `session.resume`                              | `{sessionId, sinceSequence}`                                 | 重连续传（补发未收输出，§6.4）                   |
-| `presence.subscribe` / `presence.unsubscribe` | `{sessionIds?}`                                              | 订阅在线状态（多客户端）                         |
-| `device.report`                               | `{deviceId, kind?, state}`                                   | 边缘 / 网关上报设备状态（智能家居）              |
-| `avatar.command`                              | `{agentId, motion?, state?}`                                 | 客户端请求角色表现（点击 / 触碰互动）            |
+| `presence.subscribe` / `presence.unsubscribe` | `{sessionIds?}`                                              | 订阅在线状态（多客户端）。**v1 未实现** `sessionIds` 过滤：当前订阅后收到**全部**在场变更 |
+| `device.report`                               | `{deviceId, kind?, state}`                                   | 边缘 / 网关上报设备状态（智能家居；**v1 未实现**） |
+| `avatar.command`                              | `{agentId, motion?, state?}`                                 | 客户端请求角色表现（点击 / 触碰互动；**v1 未实现**） |
 | `audit.subscribe`                             | `{}`                                                         | 订阅审计事件（需 `admin`）                       |
 | `ping`                                        | `{}`                                                         | 心跳                                             |
 
@@ -439,17 +462,17 @@ HTTP body 与 WS 帧**共用同一结构**：
 | `tool.result`                                                    | `{turnId, callId, status, preview?}`                                | `TurnEvent.kind=tool_result`                                  |
 | `output`                                                         | `OutputItem`（§7.3）                                                             | `IOutputQueue` 推送（**即发**，D50）                          |
 | `turn.final`                                                     | `TurnResult`（§7.5）                                                             | `TurnEvent.kind=final`                                        |
-| `context.updated`                                                | `{sessionId, regions[]}`                                                         | 上下文快照变更（可选/调试）                                   |
-| `state.updated`                                                  | `{sessionId, version, patch[]}`                                                  | 世界状态变更                                                  |
+| `context.updated`                                                | `{sessionId, regions[]}`                                                         | 上下文快照变更（可选/调试；**v1 未实现**）                    |
+| `state.updated`                                                  | `{sessionId, version, patch[]}`                                                  | 世界状态变更（**v1 未实现**：Hub 当前不发布状态变更）         |
 | `confirm.request`                                                | `{requestId, turnId, canonicalId, risk, summary, argsPreview}`                   | 高危能力需确认                                                |
-| `config.updated`                                                 | `ConfigUpdatedEvent`                                                             | 配置已变更（热加载广播）                                      |
-| `notification`                                                   | `NotificationEvent`                                                              | 非回合绑定的服务端通知（提醒 / 告警）                         |
+| `config.updated`                                                 | `ConfigUpdatedEvent`                                                             | 配置已变更（**v1 未实现**：见 §5.7）                          |
+| `notification`                                                   | `NotificationEvent`                                                              | 非回合绑定的服务端通知（提醒 / 告警；**v1 未实现**）          |
 | `turn.started`                                                   | `TurnStartedEvent`                                                               | 服务端发起的回合（`origin: scheduled\|event\|presence\|hub`） |
 | `presence.updated`                                               | `PresenceUpdatedEvent`                                                           | 在线状态变化（多客户端）                                      |
-| `member.joined` / `member.left`                                  | `MemberJoinedEvent` / `MemberLeftEvent`                                          | 群成员变更                                                    |
-| `device.state`                                                   | `DeviceStateEvent`                                                               | 设备状态变化                                                  |
+| `member.joined` / `member.left`                                  | `MemberJoinedEvent` / `MemberLeftEvent`                                          | 群成员变更（**v1 未实现**）                                   |
+| `device.state`                                                   | `DeviceStateEvent`                                                               | 设备状态变化（**v1 未实现**）                                 |
 | `job.accepted` / `job.progress` / `job.completed` / `job.failed` | `JobAcceptedEvent` / `JobProgressEvent` / `JobCompletedEvent` / `JobFailedEvent` | 长任务生命周期                                                |
-| `avatar.state` / `avatar.motion` / `avatar.lipsync`              | `AvatarStateEvent` / `AvatarMotionEvent` / `AvatarLipsyncEvent`                  | 角色表现（Live2D / 3D）                                       |
+| `avatar.state` / `avatar.motion` / `avatar.lipsync`              | `AvatarStateEvent` / `AvatarMotionEvent` / `AvatarLipsyncEvent`                  | 角色表现（Live2D / 3D；**v1 未实现**）                        |
 | `audit.event`                                                    | `AuditEventDto`                                                                  | 审计事件（admin 订阅）                                        |
 | `error`                                                          | 顶层 `errorCode` / `errorMsg`（§4.2 / §4.5）                                     | 关联 `replyTo`                                                |
 | `pong`                                                           | `{ts}`                                                                           | 心跳应答                                                      |
@@ -470,21 +493,23 @@ sequenceDiagram
   H->>C: tool.call{canonicalId:"music:share_song"}
   H->>C: tool.result{status:ok}
   H->>C: output{kind:"card",...}
-  C->>H: output.ack{sequence:1}
   H->>C: output{kind:"audio",...}
-  C->>H: output.ack{sequence:2}
   H->>C: turn.final{finalText,outputs,stateVersion}
 ```
 
 > 注意：`output` 事件在回合进行中**即发**（对应现有"音频生成即入队"），不等 `turn.final`。
+> **v1 未实现**：`output.ack` 回执（§6.1）——故上图不画回执；客户端收到 `output` 即视为已投递。
 
 ### 6.4 扩展域语义
 
-**群聊 / 多用户**：`TurnRequestDto.userId` 是稳定身份（区别于平台显示名 `senderName`）；`mentions[]` 表被 @；`threadId` 在会话内切分线程（群内每用户 / 每话题独立上下文与记忆）。`OutputDto.recipient` 定向投递（`@某人`、私聊），`mentions[]` 随输出 @，`threadId` 回填所属线程。成员变更走 `member.joined` / `member.left`。
+**群聊 / 多用户**（**v1 未实现**：`userId`/`mentions`/`threadId` 均未接入内核，见 §7.2；`OutputDto.recipient` 与成员事件也无生产者）：`TurnRequestDto.userId` 是稳定身份（区别于平台显示名 `senderName`）；`mentions[]` 表被 @；`threadId` 在会话内切分线程（群内每用户 / 每话题独立上下文与记忆）。`OutputDto.recipient` 定向投递（`@某人`、私聊），`mentions[]` 随输出 @，`threadId` 回填所属线程。成员变更走 `member.joined` / `member.left`。
 
 **多客户端 / 在场**：一条连接可订阅多会话；Envelope `targetClientId` 把事件定向到某个客户端（null = 广播给订阅者）；`presence.subscribe` 后收 `presence.updated`。断线重连用 `session.resume{sinceSequence}` 补发未收输出（依赖 `output` 的 `sequence`，全局单调、不保证连续）。
 
 > **投递与 ack（多客户端关键语义）**：`output` 事件由 Hub **广播给该会话的所有订阅客户端**；`output.ack` 记录「**某一端**已成功投递」，**不因个别端未 ack 而阻塞**（内核队列已解耦，`Enqueue` 永不等待 ack，见 §11）。需「确保某端收到」用 `session.resume{sinceSequence}` 补读。
+>
+> **v1 未实现**：`output.ack` / `output.fail` 命令（§6.1）——当前**没有任何客户端会上报 ack**，
+> 客户端把收到 `output` 视为已投递即可。
 
 **实现状态（已落地）**
 
@@ -495,7 +520,7 @@ sequenceDiagram
 - Envelope `targetClientId` **定向优先**（只投给匹配 `clientId` 的连接）。
 - 未订阅时的跨会话泄漏已消除（冒烟实测：B 未订阅 A 时收不到 A 的回合事件）。
 
-**主动 / 调度**：`/v1/schedules` 注册定时 / 条件触发；到期 Hub 自主发起回合并发 `turn.started{origin}`（`client|scheduled|event|presence|hub`），后续事件与普通回合一致；非回合的轻量提示走 `notification`。
+**主动 / 调度**：`/v1/schedules` 注册定时 / 条件触发；到期 Hub 自主发起回合并发 `turn.started{origin}`（`client|scheduled|event|presence|hub`），后续事件与普通回合一致；非回合的轻量提示走 `notification`（**v1 未实现**：该事件当前无生产者）。
 
 > **投递目标**：`notification` / `device.state` / `job.*` / `avatar.*` / `member.*` 等**非回合事件**默认
 > **广播给已订阅相关会话的客户端**；无 `sessionId` 的全局通知广播给所有已鉴权连接；需点对点时用 Envelope `targetClientId`。
@@ -503,11 +528,11 @@ sequenceDiagram
 > **离线策略**：`turn.started`（主动回合）**不等客户端在线**照常执行；其 `output` 留存于会话日志，
 > 客户端上线后用 `session.resume{sinceSequence}` 补读（超出会话日志保留窗口的内容不可补，见 §9/§11）。
 
-**设备（智能家居）**：边缘 / 网关用 `device.report` 上报状态，Hub 广播 `device.state`；模型经能力（MCP / 内建）控制设备，高危操作（开锁 / 燃气）应声明 `requiresConfirmation`（§8）。
+**设备（智能家居）**（**v1 未实现**）：边缘 / 网关用 `device.report` 上报状态，Hub 广播 `device.state`；模型经能力（MCP / 内建）控制设备，高危操作（开锁 / 燃气）应声明 `requiresConfirmation`（§8）。
 
 **长任务 / 作业**：`POST /v1/jobs` 提交（CG 生成 / 批量 TTS / Live2D 构建），`job.accepted`→`job.progress`→`job.completed|failed`；产出复用 `OutputDto`（大内容走 assetRef）。作业与回合并行，不阻塞对话。
 
-**角色表现（Live2D / 3D）**：`avatar.state`（表情 / 参数）、`avatar.motion`（动作）、`avatar.lipsync`（音频 assetRef + viseme 时间轴）；客户端渲染，`avatar.command` 支持点击 / 触碰互动回传。
+**角色表现（Live2D / 3D）**（**v1 未实现**）：`avatar.state`（表情 / 参数）、`avatar.motion`（动作）、`avatar.lipsync`（音频 assetRef + viseme 时间轴）；客户端渲染，`avatar.command` 支持点击 / 触碰互动回传。
 
 **观测 / 审计**：`/v1/traces/{turnId}` 回放决策轨迹，`/v1/metrics` 取指标；`audit.subscribe` 后收 `audit.event`（配置变更、会话操作、能力调用等）。
 
@@ -554,14 +579,17 @@ Hub 侧：连接循环内的异常不再**静默**终止连接，而是打印 `[
   "senderName":"…",
   "text":"…",
   "blocks":[],                 // 多模态块（image/audio/file/card）
-  "meta":{ },                  // 平台元数据（scene/sender/channel）
-  "budgets":{ },               // 可选：决策预算覆盖
-  "userId":"u_10001",          // 群聊：说话人稳定身份（§6.4）
-  "mentions":["rin"],          // 被 @ 的目标（userId 或角色 id）
-  "threadId":"t_…",            // 会话内线程
-  "idempotencyKey":"…"
+  "meta":{ },                  // **v1 未实现**：不透传内核上下文（当前被丢弃）
+  "budgets":{ },               // **v1 未实现**：不映射到内核 DecisionBudgets（当前被丢弃）
+  "userId":"u_10001",          // **v1 未实现**：不参与身份/记忆隔离（隔离键是会话 `subjectId`）
+  "mentions":["rin"],          // **v1 未实现**：@ 识别目前在 QQ 桥侧完成，Hub 丢弃
+  "threadId":"t_…",            // **v1 未实现**：不参与线程隔离（当前被丢弃）
+  "idempotencyKey":"…"         // **v1 未实现**：无幂等表，见 §4.6
 }
 ```
+
+> **实现现状**：Hub 只把 `turnId / actorId / sourceId / channelId / senderName / text / blocks` 映射进内核
+> `TurnRequest`（`HubServer.RunTurnStreamAsync`）；上面六个字段**只被反序列化、不被使用**，传入不报错也无效果。
 
 ### 7.3 OutputItem（`output` 事件 / `turn.final.outputs[]`）
 
@@ -665,11 +693,11 @@ Hub 侧：连接循环内的异常不再**静默**终止连接，而是打印 `[
 - 权限：`/v1/assets` 需**已鉴权**（角色 ≥ `user`，见 §4.8）。
 - 客户端：`HubClient.UploadAssetAsync/DownloadAssetAsync`；QQ 桥对 `assetRef` 输出按 id 拉取字节后再发段。
 
-> 仍未做：资产 TTL 清理（占位字段已在协议 `ttl`）；冷/热分离。
+> 仍未做：冷 / 热分离（**资产 TTL 清理已落地**，见 §5.11）。
 
 ---
 
-## 10. Hub ↔ Hub 联邦（复用同一协议）
+## 10. Hub ↔ Hub 联邦（**v1 未实现**：本节为规划，复用同一协议）
 
 中心服务式不等于单点。多个 Hub 之间以**客户端角色**互连，复用同一 Wire 协议：
 
