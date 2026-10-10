@@ -103,9 +103,10 @@ internal sealed class MiniWsServer : IAsyncDisposable
                 await _handler(connection, text);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // 连接断开/取消：测试自行断言
+            // 别静默：桩里吞掉异常会让测试表现为"对端一直不回"，极难定位
+            Console.Error.WriteLine($"[mini-ws] handler failed: {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {

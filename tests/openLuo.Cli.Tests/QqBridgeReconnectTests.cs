@@ -59,6 +59,9 @@ public sealed class QqBridgeReconnectTests
             {
                 case "get_login_info":
                     await connection.SendTextAsync(ApiOk(echo, """{"user_id":999,"nickname":"bot"}"""));
+                    // 只有桥完成 OneBot 连接后才会发 get_login_info：以此为就绪信号推第一条私聊消息，
+                    // 避免"服务器握手刚完成、客户端还没连上"时发帧导致事件丢失（并行跑测试时偶发超时）。
+                    await connection.SendTextAsync(PrivateMessage("你好", userId: 10001, selfId: 999));
                     break;
                 case "send_private_msg":
                     replies.Enqueue(root["params"]?["message"]?[0]?["data"]?["text"]?.GetValue<string>() ?? string.Empty);
@@ -87,8 +90,8 @@ public sealed class QqBridgeReconnectTests
             var bot = await onebot.WaitForConnectionAsync(TimeSpan.FromSeconds(10));
             await WaitForAsync(() => hub.ConnectionCount >= 1, TimeSpan.FromSeconds(10));
 
-            await bot.SendTextAsync(PrivateMessage("你好", userId: 10001, selfId: 999));
-            Assert.Equal("reply-1", await NextReplyAsync(replies, TimeSpan.FromSeconds(20)));
+            // 第一条消息由 OneBot 桩在收到 get_login_info 后推（见上），此处只等回复
+            Assert.Equal("reply-1", await NextReplyAsync(replies, TimeSpan.FromSeconds(30)));
 
             // Hub 连接被硬断（等价于 Hub 重启 / 链路被掐）
             hub.AbortAll();

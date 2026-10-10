@@ -14,4 +14,9 @@
     <ProjectReference Include="..\openLuo.OneBot\openLuo.OneBot.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 宿主级测试工程（openLuo.Tests）覆盖 QqBotApplication 的内部分段/批量逻辑 -->
+    <InternalsVisibleTo Include="openLuo.Tests" />
+  </ItemGroup>
+
 </Project>

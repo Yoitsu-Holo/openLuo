@@ -9,6 +9,9 @@
 
 ## 当前 demo
 
+> ⚠️ 现状：入口 `Program.cs` 目前是**自包含交互模式**（内存 runtime + 脚本化 LLM），**没有** args 调度，
+> 因此下列 `Demos/**` 文件当前**不可达**（可编译，但没有任何调用点）。要么恢复 args 调度，要么精简 Demos/ 目录。
+
 ### LLM 模块
 - `Demos/Llm/LlmClientBaseDemo.cs`（`llm`）
   - 真实 LLM 路由：system + enhance 上下文块 → `ILlmClient.CompleteAsync` → 纯文本回复

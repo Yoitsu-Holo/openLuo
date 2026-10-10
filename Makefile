@@ -78,7 +78,7 @@ publish-fast: $(EXT_DLLS)
 format: format-csharp format-python
 
 format-csharp:
-	dotnet format openLuo.sln
+	dotnet format openLuo.slnx
 
 format-python:
 	@if [ -x ".venv/bin/black" ]; then \

@@ -8,7 +8,6 @@ using openLuo.Composition;
 using openLuo.Infrastructure.Conversation;
 using openLuo.Infrastructure.Database;
 using openLuo.Infrastructure.Logging;
-using openLuo.Infrastructure.Resilience;
 using openLuo.Infrastructure.Security;
 using openLuo.Modules.Memory.Application;
 using openLuo.Modules.Memory.Core.Interfaces;

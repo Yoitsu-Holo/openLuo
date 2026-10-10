@@ -51,7 +51,7 @@ CLI / TUI / GUI / QQ 桥均作为**协议客户端**经 HTTP 控制面 + WebSock
 - 扩展注册的 `canonicalId` 自动命名空间化为 `<extension-id>:<local-id>`；`core:` 保留给内核
 - 领域扩展目录以 `.disable` 结尾时完全跳过
 - **边界规则**：扩展不得引用宿主 exe（依赖 `openLuo.Abstractions` + 模块工程）；客户端不得引用内核（依赖 `openLuo.Protocol` + `openLuo.Client`）
-- `openLuo/Modules/` 仅保留宿主内部件（`AppShell` 配置加载 / `GameBridge`）；`WorldState`、`Agent` 已迁出为独立工程
+- `openLuo/Modules/` 仅保留宿主内部件（`AppShell`：配置加载 / 组合根）；`WorldState`、`Agent` 已迁出为独立工程
 
 ## 4. 能力与协议
 
