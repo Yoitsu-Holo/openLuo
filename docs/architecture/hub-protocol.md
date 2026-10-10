@@ -400,6 +400,8 @@ HTTP body 与 WS 帧**共用同一结构**：
   （`ClientWebSocket.Options.Proxy = null`、Hub HTTP 用 `UseProxy=false`）——系统级 `http_proxy`
   会把本地连接交给代理，代理到不了该端口时只报 `response ended prematurely`，极易误判为 Hub 崩溃；
   非回环地址仍按环境变量走代理。连接失败抛 `HubConnectException`（含目标地址与「先起 `--serve`」提示）。
+  同一约定也适用于 OneBot 腿（`openLuo.OneBot.OneBotWebSocketClient`）：`ws://localhost:3001`
+  若不直连，代理抖动会表现为「消息没发出去」，与 Hub 无关。
 
 ### 6.1 客户端 → 服务端（命令）
 
@@ -508,6 +510,28 @@ sequenceDiagram
 **角色表现（Live2D / 3D）**：`avatar.state`（表情 / 参数）、`avatar.motion`（动作）、`avatar.lipsync`（音频 assetRef + viseme 时间轴）；客户端渲染，`avatar.command` 支持点击 / 触碰互动回传。
 
 **观测 / 审计**：`/v1/traces/{turnId}` 回放决策轨迹，`/v1/metrics` 取指标；`audit.subscribe` 后收 `audit.event`（配置变更、会话操作、能力调用等）。
+
+### 6.5 断连与重连（长期客户端）
+
+连接可能被**硬断**（Hub 重启、链路 RST）而非正常关闭。客户端侧契约：
+
+| 情况 | `openLuo.Client.HubClient` 行为 |
+| --- | --- |
+| 对端发 `Close` 帧（正常关闭） | `ReceiveAsync` 返回 `null`，回合流正常结束 |
+| 传输层被 abort（RST / Aborted 状态） | `ReceiveAsync` / `SendAsync` 抛 `HubDisconnectedException`（含目标地址），**不再**返回 `null` 让上层把断连当成回合结束（会静默丢消息） |
+| 已断连后再发送 | 抛 `HubDisconnectedException`（此前是底层 `InvalidOperationException: The WebSocket is in an invalid state ('Aborted') ...`，措辞误导） |
+| `IsConnected` | `false`（不能只看 `WebSocketState`：abort 后它可能仍读到 `Open`，直到下一次 IO；故客户端一旦发生过断连即标记不可用） |
+
+**长期客户端负责重连**（`HubClient` 本身不自动重连，避免与顺序请求-响应语义冲突）：
+
+- **QQ 桥**（`openLuo.Qqbot.QqBotApplication`）：进程内单例连接，Hub 未起/中途重启都自建连——
+  启动时后台重试（1s→30s 退避，桥不因 Hub 未起而退出）；每条消息前校验 `IsConnected`，必要时重建。
+  回合在**尚未产出任何片段**前断连时重连并重试一次（避免重复回复）；已发出部分则中断并记录，不重放。
+- CLI / TUI / GUI 为交互式短连接，断连直接报错即可（未做自动重连）。
+- 会话连续性：桥以 `conversationId = qq-{scene}-{targetId}` 开会话，重连后 Hub 复用同一会话（§5.4 持久化）。
+
+Hub 侧：连接循环内的异常不再**静默**终止连接，而是打印 `[hub] connection <id> failed: <type>: <message>`
+（此前只表现为客户端 socket 被 abort，服务端无任何痕迹）。
 
 ---
 

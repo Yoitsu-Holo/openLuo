@@ -694,6 +694,15 @@ public static class HubServer
                 await HandleConnectionAsync(connection, runtime, options, features, metrics, tokens, assets, broadcaster,
                     presenceSubscribers, outputQueue, traces, auditSubscribers, pendingConfirmations, ctx.RequestAborted);
             }
+            catch (OperationCanceledException)
+            {
+                // 服务停机/客户端取消：正常退出
+            }
+            catch (Exception ex)
+            {
+                // 连接循环内的异常（此前会静默终止连接，客户端只看到 socket 被 abort，无从排查）
+                Console.Error.WriteLine($"[hub] connection {connection.Id} failed: {ex.GetType().Name}: {ex.Message}");
+            }
             finally
             {
                 await BroadcastPresenceAsync(broadcaster, presenceSubscribers, connection, PresenceStatuses.Offline, CancellationToken.None);

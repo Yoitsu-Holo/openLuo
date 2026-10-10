@@ -10,7 +10,7 @@ namespace openLuo.Interfaces.QQbot;
 /// </summary>
 public sealed class QqBotApplication
 {
-    private readonly HubClient _hub;
+    private readonly Func<CancellationToken, Task<HubClient>> _hubFactory;
     private readonly HttpClient _http;
     private readonly string _httpBase;
     private readonly IQqBotConfigCenter _configCenter;
@@ -19,13 +19,97 @@ public sealed class QqBotApplication
     private const int LogTextMax = 300;
     private long _selfId;
 
-    public QqBotApplication(HubClient hub, HttpClient http, string httpBase, IQqBotConfigCenter configCenter, Action<string>? log = null)
+    /// <summary>当前 Hub 连接（断线由 <see cref="EnsureHubAsync"/> 重建；进程内单例，长期存活）。</summary>
+    private HubClient? _hub;
+    private readonly SemaphoreSlim _hubGate = new(1, 1);
+    private TimeSpan _hubRetryDelay = TimeSpan.FromSeconds(1);
+    private DateTimeOffset _hubRetryAt;
+
+    public QqBotApplication(
+        Func<CancellationToken, Task<HubClient>> hubFactory,
+        HttpClient http, string httpBase, IQqBotConfigCenter configCenter, Action<string>? log = null)
     {
-        _hub = hub;
+        _hubFactory = hubFactory;
         _http = http;
         _httpBase = httpBase.TrimEnd('/');
         _configCenter = configCenter;
         _log = log;
+    }
+
+    /// <summary>
+    /// 取一个可用的 Hub 连接：不可用（未连/已断）时重建，失败按 1s→30s 退避并在重建前等待退避窗口。
+    /// 并发消息在 <see cref="_hubGate"/> 上串行化，避免同时建多条连接。
+    /// </summary>
+    private async Task<HubClient> EnsureHubAsync(CancellationToken ct)
+    {
+        if (_hub is { IsConnected: true } live)
+            return live;
+
+        await _hubGate.WaitAsync(ct);
+        try
+        {
+            if (_hub is { IsConnected: true } current)
+                return current;
+
+            if (_hub is { } stale)
+            {
+                _hub = null;
+                try { await stale.DisposeAsync(); } catch { /* 已断连：忽略 */ }
+            }
+
+            var wait = _hubRetryAt - DateTimeOffset.UtcNow;
+            if (wait > TimeSpan.Zero)
+                await Task.Delay(wait, ct);
+
+            try
+            {
+                var fresh = await _hubFactory(ct);
+                _hub = fresh;
+                _hubRetryDelay = TimeSpan.FromSeconds(1);
+                _hubRetryAt = default;
+                Log($"[hub] connected: protocol=v{fresh.Welcome?.ProtocolVersion}");
+                return fresh;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _hubRetryDelay = TimeSpan.FromSeconds(Math.Min(_hubRetryDelay.TotalSeconds * 2, 30));
+                _hubRetryAt = DateTimeOffset.UtcNow + _hubRetryDelay;
+                Log($"[hub] connect failed: {ex.Message}（{_hubRetryDelay.TotalSeconds:0}s 后重试）");
+                throw;
+            }
+        }
+        finally
+        {
+            _hubGate.Release();
+        }
+    }
+
+    /// <summary>执行一个回合并把片段按序发出；Hub 在**尚未产出任何片段**前断开时重连并重试一次。</summary>
+    private async Task RunTurnAsync(
+        OneBotWebSocketClient client, bool isGroup, long targetId, long actorId,
+        string scene, string text, string? senderName, IReadOnlyList<JsonNode>? blocks,
+        QqBotConfig config, string logLabel, CancellationToken ct)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            var hub = await EnsureHubAsync(ct);
+            var bridge = new QqRuntimeBridge(hub, _http, _httpBase, config);
+            var sent = 0;
+            try
+            {
+                await foreach (var part in bridge.TurnAsync(scene, targetId, actorId, text, senderName, blocks, ct))
+                {
+                    await SendPartsAsync(client, isGroup, targetId, [part], config, logLabel, ct);
+                    sent++;
+                }
+                return;
+            }
+            catch (HubDisconnectedException ex) when (attempt == 0 && sent == 0)
+            {
+                // 尚未发出任何片段 → 重试安全（不会重复回复）；EnsureHubAsync 会重建连接
+                Log($"[warn] hub 断开（{ex.State}），重连后重试本回合 {logLabel}");
+            }
+        }
     }
 
     public async Task RunAsync(CancellationToken ct = default)
@@ -51,13 +135,49 @@ public sealed class QqBotApplication
 
         client.ConnectionStateChanged += state =>
         {
+            Log($"[onebot] {state}");
             if (state == "connected" && Interlocked.Read(ref _selfId) == 0)
                 _ = RefreshSelfIdAsync(client, ct);
         };
         client.MessageReceived += ev => _ = HandleMessageAsync(client, ev, ct);
 
-        Log($"[hub] connected: protocol=v{_hub.Welcome?.ProtocolVersion}; OneBot={config.BaseAddress}");
-        await client.RunAsync(ct);
+        Log($"[hub] OneBot={config.BaseAddress}");
+        var warmup = WarmupHubAsync(ct);
+        try
+        {
+            await client.RunAsync(ct);
+        }
+        finally
+        {
+            await warmup;
+            if (_hub is { } hub)
+            {
+                try { await hub.DisposeAsync(); } catch { /* 已断连：忽略 */ }
+                _hub = null;
+            }
+            await client.DisposeAsync();
+        }
+    }
+
+    /// <summary>启动后后台连 Hub：失败退避重试直到连上（QQ 桥不应因为 Hub 还没起就退出）。</summary>
+    private async Task WarmupHubAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await EnsureHubAsync(ct);
+                return;
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch
+            {
+                // 失败原因与下次重试时间已由 EnsureHubAsync 记录；退避也在其中等待
+            }
+        }
     }
 
     private async Task RefreshSelfIdAsync(OneBotWebSocketClient client, CancellationToken ct)
@@ -95,25 +215,26 @@ public sealed class QqBotApplication
                 var blocks = await DownloadImagesAsync(ev.ImageUrls(), ct);
                 var senderName = ev.SenderDisplayName ?? string.Empty;
                 LogMessage(current, $"[recv] group={ev.GroupId} from={senderName}({ev.UserId}): {Truncate(text)}");
-                var bridge = new QqRuntimeBridge(_hub, _http, _httpBase, current);
+                var logLabel = $"group={ev.GroupId}";
 
                 if (current.ReplyOnlyWhenMentioned && !ev.Mentions(selfId))
                 {
                     // 感知通道：未 @ 的消息写入会话历史（“看但不回”），不触发 LLM 回合
-                    await bridge.ObserveAsync("group", ev.GroupId.Value, text, senderName, blocks, ct);
+                    var observer = new QqRuntimeBridge(await EnsureHubAsync(ct), _http, _httpBase, current);
+                    await observer.ObserveAsync("group", ev.GroupId.Value, text, senderName, blocks, ct);
                     return;
                 }
 
                 if (text.StartsWith('/'))
                 {
+                    var bridge = new QqRuntimeBridge(await EnsureHubAsync(ct), _http, _httpBase, current);
                     var reply = await TryRunCommandAsync(bridge, text, current, ev.UserId, ev.GroupId.Value, isGroup: true, ct);
                     if (reply is not null)
-                        await SendTextAsync(client, isGroup: true, ev.GroupId.Value, reply, current, $"group={ev.GroupId}", ct);
+                        await SendTextAsync(client, isGroup: true, ev.GroupId.Value, reply, current, logLabel, ct);
                     return;
                 }
 
-                await foreach (var part in bridge.TurnAsync("group", ev.GroupId.Value, ev.UserId, text, senderName, blocks, ct))
-                    await SendPartsAsync(client, isGroup: true, ev.GroupId.Value, [part], current, $"group={ev.GroupId}", ct);
+                await RunTurnAsync(client, isGroup: true, ev.GroupId.Value, ev.UserId, "group", text, senderName, blocks, current, logLabel, ct);
             }
             else if (ev.MessageType == "private")
             {
@@ -127,19 +248,24 @@ public sealed class QqBotApplication
                 var blocks = await DownloadImagesAsync(ev.ImageUrls(), ct);
                 var senderName = ev.SenderDisplayName ?? string.Empty;
                 LogMessage(current, $"[recv] friend={ev.UserId} from={senderName}: {Truncate(text)}");
-                var bridge = new QqRuntimeBridge(_hub, _http, _httpBase, current);
+                var logLabel = $"friend={ev.UserId}";
 
                 if (text.StartsWith('/'))
                 {
+                    var bridge = new QqRuntimeBridge(await EnsureHubAsync(ct), _http, _httpBase, current);
                     var reply = await TryRunCommandAsync(bridge, text, current, ev.UserId, ev.UserId, isGroup: false, ct);
                     if (reply is not null)
-                        await SendTextAsync(client, isGroup: false, ev.UserId, reply, current, $"friend={ev.UserId}", ct);
+                        await SendTextAsync(client, isGroup: false, ev.UserId, reply, current, logLabel, ct);
                     return;
                 }
 
-                await foreach (var part in bridge.TurnAsync("friend", ev.UserId, ev.UserId, text, senderName, blocks, ct))
-                    await SendPartsAsync(client, isGroup: false, ev.UserId, [part], current, $"friend={ev.UserId}", ct);
+                await RunTurnAsync(client, isGroup: false, ev.UserId, ev.UserId, "friend", text, senderName, blocks, current, logLabel, ct);
             }
+        }
+        catch (HubDisconnectedException ex)
+        {
+            // 与"处理消息出错"区分：Hub 连接断开（会自动重连），本条消息没能完成
+            Log($"[error] hub 连接断开，本条消息未完成：{ex.Message}");
         }
         catch (Exception ex)
         {

@@ -77,6 +77,10 @@ public sealed class OneBotWebSocketClient : IAsyncDisposable
     {
         using var ws = new ClientWebSocket();
         ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);
+        // 回环地址一律直连：系统级 http_proxy 会让 ws://localhost:3001（LLBot）绕行代理，
+        // 代理抖动/重启即掉线，且故障表现为"消息没发出去"。与 HubClient 同一约定（docs §6）。
+        if (_uri.IsLoopback)
+            ws.Options.Proxy = null;
         if (!string.IsNullOrWhiteSpace(_accessToken))
             ws.Options.SetRequestHeader("Authorization", $"Bearer {_accessToken}");
         await ws.ConnectAsync(_uri, ct);
@@ -86,37 +90,45 @@ public sealed class OneBotWebSocketClient : IAsyncDisposable
 
         var buffer = new byte[16 * 1024];
         var sb = new StringBuilder();
-        while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
+        try
         {
-            WebSocketReceiveResult result;
-            do
+            while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
-                result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
-                if (result.MessageType == WebSocketMessageType.Close)
+                WebSocketReceiveResult result;
+                do
                 {
-                    _logger.LogWarning("OneBot WebSocket closed by peer.");
-                    _ws = null;
-                    ConnectionStateChanged?.Invoke("closed");
-                    return;
+                    result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        _logger.LogWarning("OneBot WebSocket closed by peer.");
+                        ConnectionStateChanged?.Invoke("closed");
+                        return;
+                    }
+                    if (result.MessageType == WebSocketMessageType.Binary)
+                        continue;
+                    sb.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
                 }
-                if (result.MessageType == WebSocketMessageType.Binary)
-                    continue;
-                sb.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
-            }
-            while (!result.EndOfMessage);
+                while (!result.EndOfMessage);
 
-            var json = sb.ToString();
-            sb.Clear();
-            if (string.IsNullOrWhiteSpace(json))
-                continue;
-            try
-            {
-                HandleFrame(JsonNode.Parse(json) as JsonObject);
+                var json = sb.ToString();
+                sb.Clear();
+                if (string.IsNullOrWhiteSpace(json))
+                    continue;
+                try
+                {
+                    HandleFrame(JsonNode.Parse(json) as JsonObject);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError("OneBot frame handling failed: {Message}", ex.Message);
+                }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError("OneBot frame handling failed: {Message}", ex.Message);
-            }
+        }
+        finally
+        {
+            // 连接结束（正常关闭/异常 abort）：清掉引用，避免后续 CallApiAsync 对着死 socket 发送
+            if (ReferenceEquals(_ws, ws))
+                _ws = null;
         }
     }
 

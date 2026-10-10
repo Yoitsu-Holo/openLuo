@@ -60,9 +60,11 @@ if (options.Mode is LaunchMode.QqBot)
     }
 
     using var qqConfig = new QqBotConfigCenter(qqConfigPath);
-    await using var qqHub = await HubClient.ConnectAsync(hubStream, "qq-bridge", "qq");
     using var qqHttp = new HttpClient(new SocketsHttpHandler { UseProxy = !new Uri(hubStream).IsLoopback }) { Timeout = TimeSpan.FromSeconds(30) };
-    await new QqBotApplication(qqHub, qqHttp, hubHttp, qqConfig).RunAsync();
+    // QQ 桥是长期连接：Hub 未起/中途重启都自己重连（见 QqBotApplication.EnsureHubAsync），故这里只传连接工厂
+    await new QqBotApplication(
+        ct => HubClient.ConnectAsync(hubStream, "qq-bridge", "qq", ct: ct),
+        qqHttp, hubHttp, qqConfig).RunAsync();
     return;
 }
 if (options.Mode is LaunchMode.Cli or LaunchMode.Tui or LaunchMode.Gui)
