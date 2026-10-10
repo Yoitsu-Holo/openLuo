@@ -166,8 +166,13 @@ public static class HubServer
         var metrics = new HubMetrics();
         var broadcaster = new HubBroadcaster();
         var presenceSubscribers = new ConcurrentDictionary<string, HubConnection>(StringComparer.Ordinal);
+        var auditSubscribers = new ConcurrentDictionary<string, HubConnection>(StringComparer.Ordinal);
         var authOptions = auth ?? new HubAuthOptions();
         var tokens = new TokenRegistry(authOptions, tokenStore);
+
+        // 审计：HTTP 请求方身份（由 Bearer token 解析）
+        string? Actor(HttpContext ctx) =>
+            tokens.ResolveInfo(TokenRegistry.BearerOf(ctx.Request.Headers.Authorization.ToString())).ClientId;
         string[] features = [Features.Streaming, Features.MultiSession, Features.Confirm, Features.Config];
 
         // 权限守卫（§4.8）：admin-only 路径未鉴权 → 3001，越权 → 3002。
@@ -201,7 +206,11 @@ public static class HubServer
         {
             var request = await JsonSerializer.DeserializeAsync<TokenRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
                           ?? new TokenRequest();
-            return tokens.TryIssue(request, out var response, out var errorCode, out var error)
+            var issued = tokens.TryIssue(request, out var response, out var errorCode, out var error);
+            if (issued)
+                await AuditAsync(auditSubscribers, "auth.token", request.ClientId, response.Role, "ok", null, requestCt);
+
+            return issued
                 ? Json(EnvelopeFactory.Create("auth.token", response))
                 : Results.Json(
                     EnvelopeFactory.CreateError(EventTypes.Error, errorCode, error),
@@ -237,6 +246,7 @@ public static class HubServer
                 ConversationId = req.ConversationId,
             }, requestCt);
 
+            await AuditAsync(auditSubscribers, "session.open", Actor(ctx), session.SessionId, "ok", null, requestCt);
             return Json(EnvelopeFactory.Create("session.opened", WireMapper.ToDto(session, req.ClientType, req.ClientId)));
         });
 
@@ -257,9 +267,10 @@ public static class HubServer
                 : Json(EnvelopeFactory.Create(EventTypes.SessionOpened, WireMapper.ToDto(session)));
         });
 
-        app.MapDelete("/v1/sessions/{id}", async (string id, CancellationToken requestCt) =>
+        app.MapDelete("/v1/sessions/{id}", async (string id, HttpContext ctx, CancellationToken requestCt) =>
         {
             var removed = await runtime.CloseSessionAsync(id, requestCt);
+            await AuditAsync(auditSubscribers, "session.close", Actor(ctx), id, removed ? "ok" : "not_found", null, requestCt);
             return removed
                 ? Json(EnvelopeFactory.Create(EventTypes.SessionClosed, new SessionClosedEvent { SessionId = id }))
                 : Error(ErrorCodes.SessionNotFound, $"session not found: {id}");
@@ -313,6 +324,7 @@ public static class HubServer
                     return Error(ErrorCodes.ConfigInvalidValue, "values is required");
 
                 var view = await config.SetAsync(ns, body.Values, body.Persist, requestCt);
+                await AuditAsync(auditSubscribers, "config.set", Actor(ctx), ns, "ok", null, requestCt);
                 return Json(EnvelopeFactory.Create("config", new ConfigSetResponse
                 {
                     Namespace = view.Namespace,
@@ -325,6 +337,7 @@ public static class HubServer
             {
                 var persist = string.Equals(ctx.Request.Query["persist"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
                 var view = await config.DeleteAsync(ns, persist, requestCt);
+                await AuditAsync(auditSubscribers, "config.delete", Actor(ctx), ns, view is null ? "not_found" : "ok", null, requestCt);
                 return view is null
                     ? Error(ErrorCodes.ConfigNamespaceNotFound, $"config namespace not found: {ns}")
                     : Json(EnvelopeFactory.Create("config", new ConfigDeleteResponse
@@ -369,6 +382,7 @@ public static class HubServer
                 try
                 {
                     var job = await jobs.SubmitAsync(body.Kind, body.Payload, body.SessionId, requestCt);
+                    await AuditAsync(auditSubscribers, "job.submit", Actor(ctx), job.Id, "ok", null, requestCt);
                     return Json(EnvelopeFactory.Create("job", WireMapper.ToDto(job)));
                 }
                 catch (InvalidOperationException ex)
@@ -385,10 +399,14 @@ public static class HubServer
                     : Json(EnvelopeFactory.Create("job", WireMapper.ToDto(job)));
             });
 
-            app.MapDelete("/v1/jobs/{id}", (string id) =>
-                jobs.Cancel(id)
+            app.MapDelete("/v1/jobs/{id}", async (string id, HttpContext ctx) =>
+            {
+                var cancelled = jobs.Cancel(id);
+                await AuditAsync(auditSubscribers, "job.cancel", Actor(ctx), id, cancelled ? "ok" : "not_found", null, default);
+                return cancelled
                     ? Json(EnvelopeFactory.Create("job", new JobDto { Id = id, Status = JobStatuses.Cancelled, CompletedAt = DateTimeOffset.UtcNow }))
-                    : Error(ErrorCodes.JobNotFound, $"job not running: {id}"));
+                    : Error(ErrorCodes.JobNotFound, $"job not running: {id}");
+            });
 
             // 作业事件 → 广播给所有在线客户端（§6.4）
             _ = Task.Run(async () =>
@@ -442,6 +460,7 @@ public static class HubServer
                 try
                 {
                     var info = scheduler.Add(body.SessionId, body.Kind, body.At, body.Cron, body.Payload);
+                    await AuditAsync(auditSubscribers, "schedule.add", Actor(ctx), info.Id, "ok", null, requestCt);
                     return Json(EnvelopeFactory.Create("schedule", WireMapper.ToDto(info)));
                 }
                 catch (InvalidOperationException ex)
@@ -450,10 +469,14 @@ public static class HubServer
                 }
             });
 
-            app.MapDelete("/v1/schedules/{id}", (string id) =>
-                scheduler.Remove(id)
+            app.MapDelete("/v1/schedules/{id}", async (string id, HttpContext ctx) =>
+            {
+                var removed = scheduler.Remove(id);
+                await AuditAsync(auditSubscribers, "schedule.remove", Actor(ctx), id, removed ? "ok" : "not_found", null, default);
+                return removed
                     ? Json(EnvelopeFactory.Create("schedule", new { deleted = true }))
-                    : Error(ErrorCodes.ScheduleNotFound, $"schedule not found: {id}"));
+                    : Error(ErrorCodes.ScheduleNotFound, $"schedule not found: {id}");
+            });
 
             // 到期 → 发起主动回合（§5.8/§6.4）
             _ = Task.Run(async () =>
@@ -535,6 +558,9 @@ public static class HubServer
                     var info = await assets.PutAsync(bytes, mime, sessionId,
                         fileName ?? (string.IsNullOrWhiteSpace(headerName) ? null : headerName), requestCt);
 
+                    await AuditAsync(auditSubscribers, "asset.upload", Actor(ctx), info.Id, "ok",
+                        new JsonObject { ["mime"] = info.Mime, ["size"] = info.Size }, requestCt);
+
                     return Json(EnvelopeFactory.Create("asset", new UploadAssetResponse
                     {
                         Asset = ToAssetRef(info),
@@ -567,12 +593,14 @@ public static class HubServer
                 return CheckAssetAccess(ctx, info) ?? Json(EnvelopeFactory.Create("asset", ToAssetMeta(info)));
             });
 
-            app.MapDelete("/v1/assets/{id}", (string id, HttpContext ctx) =>
+            app.MapDelete("/v1/assets/{id}", async (string id, HttpContext ctx) =>
             {
                 var info = assets.Stat(id);
                 if (info is not null && CheckAssetAccess(ctx, info) is { } denied)
                     return denied;
-                return assets.Delete(id)
+                var deleted = assets.Delete(id);
+                await AuditAsync(auditSubscribers, "asset.delete", Actor(ctx), id, deleted ? "ok" : "not_found", null, default);
+                return deleted
                     ? Json(EnvelopeFactory.Create("asset", new { deleted = true, id }))
                     : Error(ErrorCodes.AssetNotFound, $"asset not found: {id}");
             });
@@ -584,7 +612,7 @@ public static class HubServer
             {
                 var trace = traces.Get(turnId);
                 return trace is null
-                    ? Error(ErrorCodes.Unknown, $"trace not found: {turnId}")
+                    ? Error(ErrorCodes.TraceNotFound, $"trace not found: {turnId}")
                     : Json(EnvelopeFactory.Create("trace", new TurnTraceDto
                     {
                         TurnId = trace.TurnId,
@@ -614,11 +642,12 @@ public static class HubServer
             try
             {
                 await HandleConnectionAsync(connection, runtime, options, features, metrics, tokens, assets, broadcaster,
-                    presenceSubscribers, outputQueue, traces, ctx.RequestAborted);
+                    presenceSubscribers, outputQueue, traces, auditSubscribers, ctx.RequestAborted);
             }
             finally
             {
                 await BroadcastPresenceAsync(broadcaster, presenceSubscribers, connection, PresenceStatuses.Offline, CancellationToken.None);
+                auditSubscribers.TryRemove(connection.Id, out _);
                 broadcaster.Remove(connection.Id);
                 metrics.ClientClosed();
             }
@@ -632,7 +661,26 @@ public static class HubServer
     private static IResult Json(Envelope envelope) => Results.Json(envelope, ProtocolJson.Options);
 
     private static IResult Error(int errorCode, string message) =>
-        Results.Json(EnvelopeFactory.CreateError(EventTypes.Error, errorCode, message), ProtocolJson.Options);
+        Results.Json(EnvelopeFactory.CreateError(EventTypes.Error, errorCode, message),
+            ProtocolJson.Options, statusCode: HttpStatusFor(errorCode));
+
+    /// <summary>错误码 → HTTP 状态码（按 §4.5 分段归一）。</summary>
+    private static int HttpStatusFor(int code) => code switch
+    {
+        ErrorCodes.AuthUnauthorized => StatusCodes.Status401Unauthorized,
+        ErrorCodes.AuthForbidden or ErrorCodes.ConfigReadOnly => StatusCodes.Status403Forbidden,
+
+        ErrorCodes.SessionNotFound or ErrorCodes.AssetNotFound or ErrorCodes.JobNotFound
+            or ErrorCodes.ScheduleNotFound or ErrorCodes.ConfigNamespaceNotFound
+            or ErrorCodes.DeviceNotFound or ErrorCodes.TraceNotFound => StatusCodes.Status404NotFound,
+
+        ErrorCodes.AssetTooLarge => StatusCodes.Status413PayloadTooLarge,
+        ErrorCodes.RateLimited or ErrorCodes.SessionLimitExceeded => StatusCodes.Status429TooManyRequests,
+        ErrorCodes.TurnBusy or ErrorCodes.TurnCancelled or ErrorCodes.CapabilityConfirmationRequired => StatusCodes.Status409Conflict,
+        ErrorCodes.PresenceUnavailable => StatusCodes.Status503ServiceUnavailable,
+        ErrorCodes.JobFailed or ErrorCodes.ConfigPersistFailed or ErrorCodes.ServerInternal => StatusCodes.Status500InternalServerError,
+        _ => StatusCodes.Status400BadRequest,
+    };
 
     /// <summary>中间件使用的错误写回（带 HTTP 状态码）。</summary>
     private static async Task WriteErrorAsync(HttpContext ctx, int errorCode, string message)
@@ -643,6 +691,28 @@ public static class HubServer
         ctx.Response.ContentType = "application/json; charset=utf-8";
         await ctx.Response.WriteAsync(ProtocolJson.Serialize(
             EnvelopeFactory.CreateError(EventTypes.Error, errorCode, message)));
+    }
+
+    /// <summary>审计事件广播（`audit.event`）给已订阅的 admin 连接。</summary>
+    private static async Task AuditAsync(
+        System.Collections.Concurrent.ConcurrentDictionary<string, HubConnection> subscribers,
+        string action, string? actorClientId, string? target, string result, JsonNode? details = null,
+        CancellationToken ct = default)
+    {
+        if (subscribers.IsEmpty)
+            return;
+
+        var envelope = EnvelopeFactory.Create(EventTypes.AuditEvent, new AuditEventDto
+        {
+            ClientId = actorClientId,
+            Action = action,
+            Target = target,
+            Result = result,
+            Details = details,
+        });
+
+        foreach (var connection in subscribers.Values)
+            await connection.SendAsync(envelope, ct);
     }
 
     private static JsonNode? TryParseNode(string? json)
@@ -806,7 +876,7 @@ public static class HubServer
         HubConnection connection, IAgentRuntime runtime, HubServerOptions options, string[] features,
         HubMetrics metrics, TokenRegistry tokens, IAssetStore? assets, HubBroadcaster broadcaster,
         ConcurrentDictionary<string, HubConnection> presenceSubscribers, IOutputQueue? outputQueue,
-        ITraceStore? traces, CancellationToken ct)
+        ITraceStore? traces, ConcurrentDictionary<string, HubConnection> auditSubscribers, CancellationToken ct)
     {
         var socket = connection.Socket;
         var buffer = new byte[64 * 1024];
@@ -940,6 +1010,18 @@ public static class HubServer
                 case MessageTypes.PresenceUnsubscribe:
                     presenceSubscribers.TryRemove(connection.Id, out _);
                     break;
+
+                case MessageTypes.AuditSubscribe:
+                {
+                    if (HubRoles.Rank(connection.Role) < HubRoles.Rank(HubRoles.Admin))
+                    {
+                        await SendAsync(socket, EnvelopeFactory.CreateError(EventTypes.Error,
+                            ErrorCodes.AuthForbidden, "requires role: admin", replyTo: envelope.Id), ct);
+                        break;
+                    }
+                    auditSubscribers[connection.Id] = connection;
+                    break;
+                }
 
                 case MessageTypes.Ping:
                     await SendAsync(socket, EnvelopeFactory.Create(EventTypes.Pong, new PongEvent(), replyTo: envelope.Id), ct);

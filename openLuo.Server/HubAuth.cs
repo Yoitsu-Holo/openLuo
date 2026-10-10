@@ -113,6 +113,21 @@ public sealed class TokenRegistry
         return grant.Role;
     }
 
+    /// <summary>解析 Bearer token → 角色与客户端 id；缺失/过期/未知返回 (null, null)。</summary>
+    public (string? ClientId, string? Role) ResolveInfo(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token) || !_tokens.TryGetValue(token, out var grant))
+            return (null, null);
+
+        if (grant.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            _tokens.TryRemove(token, out _);
+            _store?.Remove(token);
+            return (null, null);
+        }
+        return (grant.ClientId, grant.Role);
+    }
+
     /// <summary>从 Authorization 头解析 token。</summary>
     public static string? BearerOf(string? authorizationHeader) =>
         authorizationHeader is not null && authorizationHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)

@@ -79,6 +79,18 @@ public sealed class FileAssetStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task PurgeExpired_KeepsFreshAssets_AndDisabledAtZero()
+    {
+        var store = Create();
+        var info = await store.PutAsync(Encoding.UTF8.GetBytes("fresh"), "text/plain");
+
+        Assert.Equal(0, store.PurgeExpired(TimeSpan.FromHours(1)));   // 新鲜资产不被清理
+        Assert.NotNull(store.Stat(info.Id));
+        Assert.Equal(0, store.PurgeExpired(TimeSpan.Zero));           // ttl ≤ 0 表示禁用清理
+        Assert.NotNull(store.Stat(info.Id));
+    }
+
+    [Fact]
     public async Task Stat_Unknown_ReturnsNull()
     {
         var store = Create();

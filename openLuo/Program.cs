@@ -176,6 +176,21 @@ if (options.Mode is LaunchMode.Serve)
     var logs = serviceProvider.GetService<openLuo.Core.Interfaces.ILogStore>();
     var assets = serviceProvider.GetService<openLuo.Core.Interfaces.IAssetStore>();
     var outputQueue = serviceProvider.GetService<openLuo.Capabilities.Core.IOutputQueue>();
+    // 资产 TTL 清理（OPENLUO_ASSET_TTL_MINUTES > 0 时启用；仅清创建超期的资产）
+    var assetTtlMinutes = int.TryParse(Environment.GetEnvironmentVariable("OPENLUO_ASSET_TTL_MINUTES"), out var ttlMinutes) ? ttlMinutes : 0;
+    if (assetTtlMinutes > 0 && assets is not null)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(10));
+            while (await timer.WaitForNextTickAsync())
+            {
+                try { assets.PurgeExpired(TimeSpan.FromMinutes(assetTtlMinutes)); }
+                catch { /* 清理失败不影响服务 */ }
+            }
+        });
+    }
+
     await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth, assets, hubStore, outputQueue, hubStore);
     return;
 }

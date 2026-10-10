@@ -153,7 +153,7 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 | 段   | 区间      | 领域                                                                                             |
 | ---- | --------- | ------------------------------------------------------------------------------------------------ |
-| 1xxx | 1000–1999 | 通用 / 成功（`11xx` 配置 / `12xx` 调度 / `13xx` 作业 / `14xx` 设备 / `15xx` 在场 / `16xx` 表现） |
+| 1xxx | 1000–1999 | 通用 / 成功（`11xx` 配置 / `12xx` 调度 / `13xx` 作业 / `14xx` 设备 / `15xx` 在场 / `16xx` 表现 / `17xx` 观测） |
 | 2xxx | 2000–2999 | 协议                                                                                             |
 | 3xxx | 3000–3999 | 鉴权                                                                                             |
 | 4xxx | 4000–4999 | 会话                                                                                             |
@@ -181,7 +181,8 @@ HTTP body 与 WS 帧**共用同一结构**：
 | 1401 | device.not_found                 | 设备不存在                          | false     |
 | 1402 | device.report_rejected           | 设备上报被拒（未知设备 / 校验失败） | false     |
 | 1501 | presence.unavailable             | 在场信息不可用                      | true      |
-| 1601 | avatar.unsupported               | 不支持该表现（客户端 / 服务端）     | false     |
+| 1601 | avatar.unsupported | 不支持该表现（客户端 / 服务端） | false |
+| 1701 | trace.not_found | 回合轨迹不存在 | false |
 | 2001 | protocol.version_mismatch        | 协议 major 不符                     | false     |
 | 2002 | protocol.bad_envelope            | Envelope 结构非法                   | false     |
 | 2003 | protocol.unknown_type            | 未知消息类型（可忽略）              | —         |
@@ -250,6 +251,9 @@ HTTP body 与 WS 帧**共用同一结构**：
 ## 5. HTTP 控制面接口
 
 统一前缀 `/v1`；响应体为 Envelope（`data` 承载结果）。错误用 HTTP 4xx/5xx 状态码 + Envelope 顶层 `errorCode` / `errorMsg`（§4.2 / §4.5）双写。
+业务错误码**按分段映射为 HTTP 状态**：`404` 不存在（会话/资产/作业/调度/配置命名空间/设备/轨迹）、
+`403` 越权或只读、`413` 过大、`429` 限流/超会话上限、`409` 冲突（回合忙/取消/需确认）、
+`503` 在场不可用、`500` 失败（作业/落盘/服务端），其余 `400`。
 
 ### 5.1 系统
 
@@ -366,7 +370,11 @@ HTTP body 与 WS 帧**共用同一结构**：
   `decision`/`tool.call`/`tool.result`/`output`/`turn.final` 事件序列（JSON 载荷，>4KB 截断）
   与结果摘要（success / terminationReason / finalText）；保留 **14 天 / 20 万事件**（超窗裁剪）。
 - 两个端点均为 **admin-only**（接入 §4.8 守卫）。
-- 未做：`audit.event` 审计流；错误码 `/v1/traces` 未知回合目前回 `1001 unknown`（可后续收紧为专用码）。
+- 未知回合回 **`1701 trace.not_found`**。
+- **`audit.event` 审计流已落地**：`audit.subscribe`（需 admin）后收关键管理动作事件（`auth.token` /
+  `session.open|close` / `config.set|delete` / `job.submit` / `schedule.add` / `asset.upload|delete`），
+  含发起方 `clientId`、目标与结果。
+- **资产 TTL**：`OPENLUO_ASSET_TTL_MINUTES > 0` 时每 10 分钟清理超期资产（`IAssetStore.PurgeExpired`）。
 
 ---
 

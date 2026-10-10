@@ -155,6 +155,30 @@ public sealed class FileAssetStore : IAssetStore
         return removed;
     }
 
+    public int PurgeExpired(TimeSpan ttl)
+    {
+        if (ttl <= TimeSpan.Zero)
+            return 0;
+
+        var cutoff = DateTimeOffset.UtcNow - ttl;
+        var stale = new List<string>();
+
+        using (var conn = Open())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT id FROM assets WHERE created_at_ms < $cutoff;";
+            cmd.Parameters.AddWithValue("$cutoff", cutoff.ToUnixTimeMilliseconds());
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                stale.Add(reader.GetString(0));
+        }
+
+        foreach (var id in stale)
+            Delete(id);
+
+        return stale.Count;
+    }
+
     private string PathFor(string id) =>
         Path.Combine(_blobDir, id.Length >= 2 ? id[..2] : "00", id);
 }

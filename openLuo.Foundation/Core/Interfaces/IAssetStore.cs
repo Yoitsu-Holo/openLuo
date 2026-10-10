@@ -32,4 +32,7 @@ public interface IAssetStore
 
     /// <summary>删除资产；返回是否命中。</summary>
     bool Delete(string id);
+
+    /// <summary>清理创建时间早于 <paramref name="ttl"/> 的资产（元数据 + 字节）；返回清理条数。ttl ≤ 0 表示不清理。</summary>
+    int PurgeExpired(TimeSpan ttl);
 }
