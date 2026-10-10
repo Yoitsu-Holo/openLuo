@@ -16,140 +16,12 @@ using openLuo.Protocol;
 
 namespace openLuo.Server;
 
-/// <summary>Hub 运行参数（后续由 <c>server.jsonc</c> 驱动）。</summary>
-public sealed class HubServerOptions
-{
-    public string Listen { get; init; } = $"http://127.0.0.1:{ProtocolInfo.DefaultPort}";
-    public bool AllowAnonymous { get; init; } = true;
-    public string ServerVersion { get; init; } = "0.1.0";
-
-    /// <summary>单资产字节上限（超出回 `7002 asset.too_large`）。</summary>
-    public long AssetMaxBytes { get; init; } = 16L * 1024 * 1024;
-
-    /// <summary>高危能力确认等待上限（秒）；超时视为拒绝。</summary>
-    public int ConfirmTimeoutSeconds { get; init; } = 60;
-}
-
-/// <summary>Hub 运行指标（进程内计数）。</summary>
-internal sealed class HubMetrics
-{
-    private long _turns;
-    private long _errors;
-    private int _clients;
-
-    public long Turns => Interlocked.Read(ref _turns);
-    public long Errors => Interlocked.Read(ref _errors);
-    public int Clients => Volatile.Read(ref _clients);
-
-    public void TurnStarted() => Interlocked.Increment(ref _turns);
-    public void ErrorReported() => Interlocked.Increment(ref _errors);
-    public void ClientOpened() => Interlocked.Increment(ref _clients);
-    public void ClientClosed() => Interlocked.Decrement(ref _clients);
-}
-
-/// <summary>一条在线连接：身份 + 已订阅会话（§6.1/§6.4）。</summary>
-internal sealed class HubConnection
-{
-    private readonly HashSet<string> _sessions = new(StringComparer.Ordinal);
-
-    public required string Id { get; init; }
-    public required WebSocket Socket { get; init; }
-    public string? ClientId { get; set; }
-    public string? ClientType { get; set; }
-    public string? Role { get; set; }
-
-    public bool Subscribed(string sessionId)
-    {
-        lock (_sessions)
-            return _sessions.Contains(sessionId);
-    }
-
-    public bool Subscribe(string sessionId)
-    {
-        lock (_sessions)
-            return _sessions.Add(sessionId);
-    }
-
-    public bool Unsubscribe(string sessionId)
-    {
-        lock (_sessions)
-            return _sessions.Remove(sessionId);
-    }
-
-    public IReadOnlyList<string> Subscriptions
-    {
-        get { lock (_sessions) return _sessions.ToList(); }
-    }
-
-    public async Task SendAsync(Envelope envelope, CancellationToken ct = default)
-    {
-        if (Socket.State != WebSocketState.Open)
-            return;
-
-        var bytes = Encoding.UTF8.GetBytes(ProtocolJson.Serialize(envelope));
-        try
-        {
-            await Socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct);
-        }
-        catch (WebSocketException)
-        {
-            // 断开：忽略（连接循环会清理）
-        }
-    }
-}
-
-/// <summary>
-/// 在线连接注册与投递（§6.4）：非回合事件按**显式订阅**投递；
-/// 回合事件投给「发起连接 + 该会话订阅者」；`targetClientId` 定向优先。
-/// </summary>
-internal sealed class HubBroadcaster
-{
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, HubConnection> _connections = new(StringComparer.Ordinal);
-
-    public HubConnection Add(WebSocket socket)
-    {
-        var connection = new HubConnection { Id = ProtocolIds.NewUlid(), Socket = socket };
-        _connections[connection.Id] = connection;
-        return connection;
-    }
-
-    public void Remove(string id) => _connections.TryRemove(id, out _);
-
-    public IReadOnlyList<HubConnection> Connections => _connections.Values.ToList();
-
-    /// <summary>统一投递：<paramref name="targetClientId"/> 定向；否则按会话订阅 + 显式包含的连接；会话为空则全局。</summary>
-    public async Task DeliverAsync(
-        Envelope envelope, string? sessionId = null, string? includeConnectionId = null,
-        string? targetClientId = null, CancellationToken ct = default)
-    {
-        foreach (var connection in _connections.Values)
-        {
-            if (targetClientId is not null && !string.Equals(connection.ClientId, targetClientId, StringComparison.Ordinal))
-                continue;
-
-            var global = sessionId is null && targetClientId is null;
-            var included = includeConnectionId is not null && connection.Id == includeConnectionId;
-            var subscribed = sessionId is not null && connection.Subscribed(sessionId);
-
-            if (global || included || subscribed)
-                await connection.SendAsync(envelope, ct);
-        }
-    }
-
-    /// <summary>仅发给已订阅在线的连接（presence 等）。</summary>
-    public async Task DeliverToConnectionsAsync(IEnumerable<HubConnection> targets, Envelope envelope, CancellationToken ct = default)
-    {
-        foreach (var connection in targets)
-            await connection.SendAsync(envelope, ct);
-    }
-}
-
 /// <summary>
 /// 最小 Hub：HTTP 控制面（health/version/sessions） + WebSocket 数据面
 /// （hello/welcome、session.open、turn.submit → 真流式事件 → turn.final）。
 /// 内核经 <see cref="IAgentRuntime"/> 注入，Hub 不感知内核实现。
 /// </summary>
-public static class HubServer
+public static partial class HubServer
 {
     public static async Task RunAsync(
         IAgentRuntime runtime, HubServerOptions options, IRuntimeDirectory? directory = null,
@@ -172,10 +44,6 @@ public static class HubServer
         var auditSubscribers = new ConcurrentDictionary<string, HubConnection>(StringComparer.Ordinal);
         var authOptions = auth ?? new HubAuthOptions();
         var tokens = new TokenRegistry(authOptions, tokenStore);
-
-        // 审计：HTTP 请求方身份（由 Bearer token 解析）
-        string? Actor(HttpContext ctx) =>
-            tokens.ResolveInfo(TokenRegistry.BearerOf(ctx.Request.Headers.Authorization.ToString())).ClientId;
 
         // 高危能力确认（§8）：向会话订阅者推 confirm.request，等待 confirm.response；超时/无人 → 拒绝
         var pendingConfirmations = new ConcurrentDictionary<string, TaskCompletionSource<bool>>(StringComparer.Ordinal);
@@ -209,508 +77,51 @@ public static class HubServer
         });
         string[] features = [Features.Streaming, Features.MultiSession, Features.Confirm, Features.Config];
 
-        // 权限守卫（§4.8）：admin-only 路径未鉴权 → 3001，越权 → 3002。
-        string[] adminPrefixes = ["/v1/config", "/v1/logs", "/v1/metrics", "/v1/schedules", "/v1/traces"];
-        app.Use(async (ctx, next) =>
+        // 依赖与共享状态在此装配一次：端点映射与数据面方法此后只接收 hub（见 HubContext）
+        var hub = new HubContext
         {
-            var path = ctx.Request.Path.Value ?? string.Empty;
-            var needsAdmin = adminPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase))
-                || (path.StartsWith("/v1/jobs", StringComparison.OrdinalIgnoreCase) && !HttpMethods.IsGet(ctx.Request.Method));
-
-            var needsUser = path.StartsWith("/v1/assets", StringComparison.OrdinalIgnoreCase);
-            if (needsAdmin || needsUser)
-            {
-                var role = tokens.Authorize(TokenRegistry.BearerOf(ctx.Request.Headers.Authorization.ToString()));
-                if (role is null)
-                {
-                    await WriteErrorAsync(ctx, ErrorCodes.AuthUnauthorized, "missing or invalid token");
-                    return;
-                }
-                var requiredRank = needsAdmin ? HubRoles.Rank(HubRoles.Admin) : HubRoles.Rank(HubRoles.User);
-                if (HubRoles.Rank(role) < requiredRank)
-                {
-                    await WriteErrorAsync(ctx, ErrorCodes.AuthForbidden, $"requires role: {(needsAdmin ? HubRoles.Admin : HubRoles.User)}");
-                    return;
-                }
-            }
-            await next();
-        });
-
-        app.MapPost("/v1/auth/token", async (HttpContext ctx, CancellationToken requestCt) =>
-        {
-            var request = await JsonSerializer.DeserializeAsync<TokenRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
-                          ?? new TokenRequest();
-            var issued = tokens.TryIssue(request, out var response, out var errorCode, out var error);
-            if (issued)
-                await AuditAsync(auditSubscribers, "auth.token", request.ClientId, response.Role, "ok", null, requestCt);
-
-            return issued
-                ? Json(EnvelopeFactory.Create("auth.token", response))
-                : Results.Json(
-                    EnvelopeFactory.CreateError(EventTypes.Error, errorCode, error),
-                    ProtocolJson.Options,
-                    statusCode: StatusCodes.Status401Unauthorized);
-        });
-
-        app.MapGet("/v1/health", () => Json(EnvelopeFactory.Create("health", new HealthDto
-        {
-            Status = "ok",
-            UptimeSec = (DateTimeOffset.UtcNow - startedAt).TotalSeconds,
-        })));
-
-        app.MapGet("/v1/version", () => Json(EnvelopeFactory.Create("version", new VersionDto
-        {
-            ServerVersion = options.ServerVersion,
-            ProtocolVersion = ProtocolInfo.MajorVersion,
+            Runtime = runtime,
+            Options = options,
+            Metrics = metrics,
+            Broadcaster = broadcaster,
+            Tokens = tokens,
+            AuthOptions = authOptions,
+            PresenceSubscribers = presenceSubscribers,
+            AuditSubscribers = auditSubscribers,
+            PendingConfirmations = pendingConfirmations,
             Features = features,
-        })));
+            StartedAt = startedAt,
+            Cancellation = ct,
+            Directory = directory,
+            Config = config,
+            Jobs = jobs,
+            Scheduler = scheduler,
+            Logs = logs,
+            Assets = assets,
+            OutputQueue = outputQueue,
+            Traces = traces,
+            ConfirmationGate = confirmationGate,
+        };
 
-        app.MapPost("/v1/sessions", async (HttpContext ctx, CancellationToken requestCt) =>
-        {
-            var req = await JsonSerializer.DeserializeAsync<CreateSessionRequest>(
-                ctx.Request.Body, ProtocolJson.Options, requestCt) ?? new CreateSessionRequest();
+        MapAuthEndpoints(app, hub);
+        MapSystemEndpoints(app, hub);
 
-            var session = await runtime.OpenSessionAsync(new SessionOpenRequest
-            {
-                SessionId = $"sess_{ProtocolIds.NewUlid()}",
-                SubjectId = req.SubjectId,
-                AgentId = req.AgentId,
-                ClientType = req.ClientType,
-                ClientId = req.ClientId,
-                ConversationId = req.ConversationId,
-            }, requestCt);
+        MapSessionEndpoints(app, hub);
 
-            await AuditAsync(auditSubscribers, "session.open", Actor(ctx), session.SessionId, "ok", null, requestCt);
-            return Json(EnvelopeFactory.Create("session.opened", WireMapper.ToDto(session, req.ClientType, req.ClientId)));
-        });
+        MapCapabilityEndpoints(app, hub);
 
-        app.MapGet("/v1/sessions", async (CancellationToken requestCt) =>
-        {
-            var sessions = await runtime.ListSessionsAsync(requestCt);
-            return Json(EnvelopeFactory.Create("sessions", new SessionsResponse
-            {
-                Sessions = sessions.Select(s => WireMapper.ToDto(s)).ToList(),
-            }));
-        });
+        MapConfigEndpoints(app, hub);
 
-        app.MapGet("/v1/sessions/{id}", async (string id, CancellationToken requestCt) =>
-        {
-            var session = await runtime.GetSessionAsync(id, requestCt);
-            return session is null
-                ? Error(ErrorCodes.SessionNotFound, $"session not found: {id}")
-                : Json(EnvelopeFactory.Create(EventTypes.SessionOpened, WireMapper.ToDto(session)));
-        });
+        MapObservabilityEndpoints(app, hub);
 
-        app.MapDelete("/v1/sessions/{id}", async (string id, HttpContext ctx, CancellationToken requestCt) =>
-        {
-            var removed = await runtime.CloseSessionAsync(id, requestCt);
-            await AuditAsync(auditSubscribers, "session.close", Actor(ctx), id, removed ? "ok" : "not_found", null, requestCt);
-            return removed
-                ? Json(EnvelopeFactory.Create(EventTypes.SessionClosed, new SessionClosedEvent { SessionId = id }))
-                : Error(ErrorCodes.SessionNotFound, $"session not found: {id}");
-        });
+        MapJobEndpoints(app, hub);
+        MapScheduleEndpoints(app, hub);
 
-        if (directory is not null)
-        {
-            app.MapGet("/v1/capabilities", async (string? sessionId, CancellationToken requestCt) =>
-            {
-                var capabilities = await directory.ListCapabilitiesAsync(sessionId, requestCt);
-                return Json(EnvelopeFactory.Create("capabilities", new CapabilitiesResponse
-                {
-                    Version = 1,
-                    Capabilities = capabilities.Select(WireMapper.ToDto).ToList(),
-                }));
-            });
-        }
+        MapLogEndpoints(app, hub);
 
-        if (config is not null)
-        {
-            app.MapGet("/v1/config", () => Json(EnvelopeFactory.Create("config", new ConfigListResponse
-            {
-                Namespaces = config.ListNamespaces().Select(n => new ConfigNamespaceDto
-                {
-                    Namespace = n.Namespace,
-                    Source = n.Source,
-                    Overridden = n.Overridden,
-                    UpdatedAt = n.UpdatedAt,
-                }).ToList(),
-            })));
+        MapAssetEndpoints(app, hub);
 
-            app.MapGet("/v1/config/{ns}", async (string ns, CancellationToken requestCt) =>
-            {
-                var view = await config.GetAsync(ns, requestCt);
-                return view is null
-                    ? Error(ErrorCodes.ConfigNamespaceNotFound, $"config namespace not found: {ns}")
-                    : Json(EnvelopeFactory.Create("config", new ConfigGetResponse
-                    {
-                        Namespace = view.Namespace,
-                        Source = view.Source,
-                        Values = Mask(view.Values),
-                        Overrides = Mask(view.Overrides),
-                    }));
-            });
-
-            app.MapPost("/v1/config/{ns}", async (string ns, HttpContext ctx, CancellationToken requestCt) =>
-            {
-                var body = await JsonSerializer.DeserializeAsync<ConfigSetRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
-                           ?? new ConfigSetRequest();
-                if (body.Values is null)
-                    return Error(ErrorCodes.ConfigInvalidValue, "values is required");
-
-                var view = await config.SetAsync(ns, body.Values, body.Persist, requestCt);
-                await AuditAsync(auditSubscribers, "config.set", Actor(ctx), ns, "ok", null, requestCt);
-                return Json(EnvelopeFactory.Create("config", new ConfigSetResponse
-                {
-                    Namespace = view.Namespace,
-                    Source = view.Source,
-                    Values = Mask(view.Values),
-                }));
-            });
-
-            app.MapDelete("/v1/config/{ns}", async (string ns, HttpContext ctx, CancellationToken requestCt) =>
-            {
-                var persist = string.Equals(ctx.Request.Query["persist"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
-                var view = await config.DeleteAsync(ns, persist, requestCt);
-                await AuditAsync(auditSubscribers, "config.delete", Actor(ctx), ns, view is null ? "not_found" : "ok", null, requestCt);
-                return view is null
-                    ? Error(ErrorCodes.ConfigNamespaceNotFound, $"config namespace not found: {ns}")
-                    : Json(EnvelopeFactory.Create("config", new ConfigDeleteResponse
-                    {
-                        Namespace = view.Namespace,
-                        Source = view.Source,
-                        Values = Mask(view.Values),
-                    }));
-            });
-        }
-
-        app.MapGet("/v1/sessions/{id}/context", async (string id, CancellationToken requestCt) =>
-        {
-            var summary = await runtime.GetContextSummaryAsync(id, requestCt);
-            return summary is null
-                ? Error(ErrorCodes.SessionNotFound, $"session not found: {id}")
-                : Json(EnvelopeFactory.Create("context", new ContextResponse { Summary = summary }));
-        });
-
-        app.MapGet("/v1/metrics", async (CancellationToken requestCt) =>
-        {
-            var sessions = await runtime.ListSessionsAsync(requestCt);
-            return Json(EnvelopeFactory.Create("metrics", new MetricsDto
-            {
-                UptimeSec = (DateTimeOffset.UtcNow - startedAt).TotalSeconds,
-                SessionsActive = sessions.Count,
-                TurnsTotal = metrics.Turns,
-                ErrorsTotal = metrics.Errors,
-                ClientsConnected = metrics.Clients,
-            }));
-        });
-
-        if (jobs is not null)
-        {
-            app.MapPost("/v1/jobs", async (HttpContext ctx, CancellationToken requestCt) =>
-            {
-                var body = await JsonSerializer.DeserializeAsync<CreateJobRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
-                           ?? new CreateJobRequest();
-                if (string.IsNullOrWhiteSpace(body.Kind))
-                    return Error(ErrorCodes.JobInvalid, "kind is required");
-
-                try
-                {
-                    var job = await jobs.SubmitAsync(body.Kind, body.Payload, body.SessionId, requestCt);
-                    await AuditAsync(auditSubscribers, "job.submit", Actor(ctx), job.Id, "ok", null, requestCt);
-                    return Json(EnvelopeFactory.Create("job", WireMapper.ToDto(job)));
-                }
-                catch (InvalidOperationException ex)
-                {
-                    return Error(ErrorCodes.JobInvalid, ex.Message);
-                }
-            });
-
-            app.MapGet("/v1/jobs/{id}", (string id) =>
-            {
-                var job = jobs.Get(id);
-                return job is null
-                    ? Error(ErrorCodes.JobNotFound, $"job not found: {id}")
-                    : Json(EnvelopeFactory.Create("job", WireMapper.ToDto(job)));
-            });
-
-            app.MapDelete("/v1/jobs/{id}", async (string id, HttpContext ctx) =>
-            {
-                var cancelled = jobs.Cancel(id);
-                await AuditAsync(auditSubscribers, "job.cancel", Actor(ctx), id, cancelled ? "ok" : "not_found", null, default);
-                return cancelled
-                    ? Json(EnvelopeFactory.Create("job", new JobDto { Id = id, Status = JobStatuses.Cancelled, CompletedAt = DateTimeOffset.UtcNow }))
-                    : Error(ErrorCodes.JobNotFound, $"job not running: {id}");
-            });
-
-            // 作业事件 → 广播给所有在线客户端（§6.4）
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await foreach (var evt in jobs.WatchAsync(ct))
-                        await broadcaster.DeliverAsync(ToEnvelope(evt), sessionId: evt.Job.SessionId, ct: ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    // 服务关闭
-                }
-            }, CancellationToken.None);
-
-            static Envelope ToEnvelope(JobEvent evt) => evt.Kind switch
-            {
-                "job.accepted" => EnvelopeFactory.Create(EventTypes.JobAccepted, new JobAcceptedEvent
-                {
-                    JobId = evt.Job.Id, Kind = evt.Job.Kind, SessionId = evt.Job.SessionId,
-                }),
-                "job.progress" => EnvelopeFactory.Create(EventTypes.JobProgress, new JobProgressEvent
-                {
-                    JobId = evt.Job.Id, Progress = evt.Job.Progress, Message = evt.Job.Message,
-                }),
-                "job.completed" => EnvelopeFactory.Create(EventTypes.JobCompleted, new JobCompletedEvent
-                {
-                    JobId = evt.Job.Id,
-                }),
-                _ => EnvelopeFactory.Create(EventTypes.JobFailed, new JobFailedEvent
-                {
-                    JobId = evt.Job.Id, ErrorCode = ErrorCodes.JobFailed, ErrorMsg = evt.ErrorMsg ?? "failed",
-                }),
-            };
-        }
-
-        if (scheduler is not null)
-        {
-            app.MapGet("/v1/schedules", () => Json(EnvelopeFactory.Create("schedules", new ScheduleListResponse
-            {
-                Schedules = scheduler.List().Select(WireMapper.ToDto).ToList(),
-            })));
-
-            app.MapPost("/v1/schedules", async (HttpContext ctx, CancellationToken requestCt) =>
-            {
-                var body = await JsonSerializer.DeserializeAsync<CreateScheduleRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
-                           ?? new CreateScheduleRequest();
-                if (string.IsNullOrWhiteSpace(body.SessionId) || string.IsNullOrWhiteSpace(body.Kind))
-                    return Error(ErrorCodes.ScheduleInvalid, "sessionId and kind are required");
-
-                try
-                {
-                    var info = scheduler.Add(body.SessionId, body.Kind, body.At, body.Cron, body.Payload);
-                    await AuditAsync(auditSubscribers, "schedule.add", Actor(ctx), info.Id, "ok", null, requestCt);
-                    return Json(EnvelopeFactory.Create("schedule", WireMapper.ToDto(info)));
-                }
-                catch (InvalidOperationException ex)
-                {
-                    return Error(ErrorCodes.ScheduleInvalid, ex.Message);
-                }
-            });
-
-            app.MapDelete("/v1/schedules/{id}", async (string id, HttpContext ctx) =>
-            {
-                var removed = scheduler.Remove(id);
-                await AuditAsync(auditSubscribers, "schedule.remove", Actor(ctx), id, removed ? "ok" : "not_found", null, default);
-                return removed
-                    ? Json(EnvelopeFactory.Create("schedule", new { deleted = true }))
-                    : Error(ErrorCodes.ScheduleNotFound, $"schedule not found: {id}");
-            });
-
-            // 到期 → 发起主动回合（§5.8/§6.4）
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await foreach (var due in scheduler.WatchAsync(ct))
-                        await RunProactiveTurnAsync(runtime, broadcaster, due, metrics, assets, traces, ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    // 服务关闭
-                }
-            }, CancellationToken.None);
-        }
-
-        // 日志热查询（§5.11）。注：鉴权待 token 落地后收紧为 admin-only。
-        if (logs is not null)
-        {
-            app.MapGet("/v1/logs", async (string? from, string? to, string? level, string? module, string? category,
-                string? keyword, string? sessionId, string? turnId, int? limit, long? beforeId,
-                CancellationToken requestCt) =>
-            {
-                var query = new LogQuery
-                {
-                    From = ParseTime(from),
-                    To = ParseTime(to),
-                    MinLevel = level,
-                    Module = module,
-                    Category = category,
-                    Keyword = keyword,
-                    SessionId = sessionId,
-                    TurnId = turnId,
-                    Limit = limit ?? 200,
-                    BeforeId = beforeId,
-                };
-
-                var items = await logs.QueryAsync(query, requestCt);
-                return Json(EnvelopeFactory.Create("logs", new LogsResponse
-                {
-                    Items = items.Select(WireMapper.ToDto).ToList(),
-                    NextBeforeId = items.Count >= Math.Clamp(query.Limit, 1, 1000) ? items[^1].Id : null,
-                }));
-            });
-
-            app.MapGet("/v1/logs/archive", async (string? date, string? category, string? keyword, string? level,
-                int? limit, CancellationToken requestCt) =>
-            {
-                var items = await logs.SearchArchiveAsync(new ArchiveLogQuery(
-                    Date: string.IsNullOrWhiteSpace(date) ? "*" : date,
-                    Category: category,
-                    Keyword: keyword,
-                    MinLevel: level,
-                    Limit: limit ?? 200), requestCt);
-
-                return Json(EnvelopeFactory.Create("logs", new LogsResponse
-                {
-                    Items = items.Select(WireMapper.ToDto).ToList(),
-                }));
-            });
-
-            app.MapGet("/v1/logs/stats", async (string? from, string? to, string? bucket, CancellationToken requestCt) =>
-            {
-                var toTs = ParseTime(to) ?? DateTimeOffset.UtcNow;
-                var fromTs = ParseTime(from) ?? toTs.AddHours(-1);
-                var buckets = await logs.StatsAsync(fromTs, toTs, ParseBucket(bucket), requestCt);
-                return Json(EnvelopeFactory.Create("logs", new LogStatsResponse
-                {
-                    Buckets = buckets.Select(b => new LogBucketDto { Start = b.Start, Counts = b.Counts }).ToList(),
-                }));
-            });
-        }
-
-        // 资产（§5.10/§9）：二进制经引用传递，不再内联 data URL。
-        if (assets is not null)
-        {
-            app.MapPost("/v1/assets", async (HttpContext ctx, string? sessionId, string? fileName, CancellationToken requestCt) =>
-            {
-                var mime = string.IsNullOrWhiteSpace(ctx.Request.ContentType)
-                    ? "application/octet-stream"
-                    : ctx.Request.ContentType;
-
-                using var buffer = new MemoryStream();
-                await ctx.Request.Body.CopyToAsync(buffer, requestCt);
-                var bytes = buffer.ToArray();
-
-                if (bytes.Length == 0)
-                    return Error(ErrorCodes.AssetInvalid, "asset is empty");
-                if (bytes.Length > options.AssetMaxBytes)
-                    return Error(ErrorCodes.AssetTooLarge, $"asset exceeds limit: {bytes.Length} > {options.AssetMaxBytes}");
-
-                var headerName = ctx.Request.Headers["X-File-Name"].ToString();
-                try
-                {
-                    var info = await assets.PutAsync(bytes, mime, sessionId,
-                        fileName ?? (string.IsNullOrWhiteSpace(headerName) ? null : headerName), requestCt);
-
-                    await AuditAsync(auditSubscribers, "asset.upload", Actor(ctx), info.Id, "ok",
-                        new JsonObject { ["mime"] = info.Mime, ["size"] = info.Size }, requestCt);
-
-                    return Json(EnvelopeFactory.Create("asset", new UploadAssetResponse
-                    {
-                        Asset = ToAssetRef(info),
-                        Meta = ToAssetMeta(info),
-                    }));
-                }
-                catch (InvalidOperationException ex)
-                {
-                    return Error(ErrorCodes.AssetTooLarge, ex.Message);
-                }
-            });
-
-            app.MapGet("/v1/assets/{id}", async (string id, HttpContext ctx, CancellationToken requestCt) =>
-            {
-                var blob = await assets.GetAsync(id, requestCt);
-                if (blob is null)
-                    return Error(ErrorCodes.AssetNotFound, $"asset not found: {id}");
-
-                if (CheckAssetAccess(ctx, blob.Info) is { } denied)
-                    return denied;
-
-                return Results.File(blob.Bytes, blob.Info.Mime);
-            });
-
-            app.MapMethods("/v1/assets/{id}", ["HEAD"], (string id, HttpContext ctx) =>
-            {
-                var info = assets.Stat(id);
-                if (info is null)
-                    return Error(ErrorCodes.AssetNotFound, $"asset not found: {id}");
-                return CheckAssetAccess(ctx, info) ?? Json(EnvelopeFactory.Create("asset", ToAssetMeta(info)));
-            });
-
-            app.MapDelete("/v1/assets/{id}", async (string id, HttpContext ctx) =>
-            {
-                var info = assets.Stat(id);
-                if (info is not null && CheckAssetAccess(ctx, info) is { } denied)
-                    return denied;
-                var deleted = assets.Delete(id);
-                await AuditAsync(auditSubscribers, "asset.delete", Actor(ctx), id, deleted ? "ok" : "not_found", null, default);
-                return deleted
-                    ? Json(EnvelopeFactory.Create("asset", new { deleted = true, id }))
-                    : Error(ErrorCodes.AssetNotFound, $"asset not found: {id}");
-            });
-        }
-
-        if (traces is not null)
-        {
-            app.MapGet("/v1/traces/{turnId}", (string turnId) =>
-            {
-                var trace = traces.Get(turnId);
-                return trace is null
-                    ? Error(ErrorCodes.TraceNotFound, $"trace not found: {turnId}")
-                    : Json(EnvelopeFactory.Create("trace", new TurnTraceDto
-                    {
-                        TurnId = trace.TurnId,
-                        SessionId = trace.SessionId,
-                        Events = trace.Events.Select(e => new TraceEventDto
-                        {
-                            Ts = e.Ts,
-                            Type = e.Type,
-                            Data = TryParseNode(e.Data),
-                        }).ToList(),
-                    }));
-            });
-        }
-
-        app.Map("/v1/stream", async (HttpContext ctx) =>
-        {
-            if (!ctx.WebSockets.IsWebSocketRequest)
-            {
-                ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
-                await ctx.Response.WriteAsync("expected websocket upgrade");
-                return;
-            }
-
-            using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
-            metrics.ClientOpened();
-            var connection = broadcaster.Add(socket);
-            try
-            {
-                await HandleConnectionAsync(connection, runtime, options, features, metrics, tokens, assets, broadcaster,
-                    presenceSubscribers, outputQueue, traces, auditSubscribers, pendingConfirmations, ctx.RequestAborted);
-            }
-            catch (OperationCanceledException)
-            {
-                // 服务停机/客户端取消：正常退出
-            }
-            catch (Exception ex)
-            {
-                // 连接循环内的异常（此前会静默终止连接，客户端只看到 socket 被 abort，无从排查）
-                Console.Error.WriteLine($"[hub] connection {connection.Id} failed: {ex.GetType().Name}: {ex.Message}");
-            }
-            finally
-            {
-                await BroadcastPresenceAsync(broadcaster, presenceSubscribers, connection, PresenceStatuses.Offline, CancellationToken.None);
-                auditSubscribers.TryRemove(connection.Id, out _);
-                broadcaster.Remove(connection.Id);
-                metrics.ClientClosed();
-            }
-        });
+        MapStreamEndpoint(app, hub);
 
         await app.StartAsync(ct);
         Console.WriteLine($"[hub] listening on {options.Listen} (protocol v{ProtocolInfo.MajorVersion})");
@@ -931,13 +342,22 @@ public static class HubServer
         return result;
     }
 
-    private static async Task HandleConnectionAsync(
-        HubConnection connection, IAgentRuntime runtime, HubServerOptions options, string[] features,
-        HubMetrics metrics, TokenRegistry tokens, IAssetStore? assets, HubBroadcaster broadcaster,
-        ConcurrentDictionary<string, HubConnection> presenceSubscribers, IOutputQueue? outputQueue,
-        ITraceStore? traces, ConcurrentDictionary<string, HubConnection> auditSubscribers,
-        ConcurrentDictionary<string, TaskCompletionSource<bool>> pendingConfirmations, CancellationToken ct)
+    private static async Task HandleConnectionAsync(HubConnection connection, HubContext hub, CancellationToken ct)
     {
+        // 局部别名：依赖统一来自 hub，方法体保持逐字不变
+        var runtime = hub.Runtime;
+        var options = hub.Options;
+        var features = hub.Features;
+        var metrics = hub.Metrics;
+        var tokens = hub.Tokens;
+        var assets = hub.Assets;
+        var broadcaster = hub.Broadcaster;
+        var presenceSubscribers = hub.PresenceSubscribers;
+        var outputQueue = hub.OutputQueue;
+        var traces = hub.Traces;
+        var auditSubscribers = hub.AuditSubscribers;
+        var pendingConfirmations = hub.PendingConfirmations;
+
         var socket = connection.Socket;
         var buffer = new byte[64 * 1024];
         var sessionId = string.Empty;
@@ -1131,7 +551,7 @@ public static class HubServer
 
                     var req = envelope.DataAs<TurnRequestDto>() ?? new TurnRequestDto();
                     metrics.TurnStarted();
-                    await RunTurnStreamAsync(connection, broadcaster, runtime, sessionId, req, envelope.Id, metrics, assets, traces, ct);
+                    await RunTurnStreamAsync(connection, hub, sessionId, req, envelope.Id, ct);
                     break;
                 }
 
@@ -1151,9 +571,16 @@ public static class HubServer
     }
 
     private static async Task RunTurnStreamAsync(
-        HubConnection connection, HubBroadcaster broadcaster, IAgentRuntime runtime, string sessionId,
-        TurnRequestDto req, string requestId, HubMetrics metrics, IAssetStore? assets, ITraceStore? traces, CancellationToken ct)
+        HubConnection connection, HubContext hub, string sessionId,
+        TurnRequestDto req, string requestId, CancellationToken ct)
     {
+        // 局部别名：依赖统一来自 hub，方法体保持逐字不变
+        var broadcaster = hub.Broadcaster;
+        var runtime = hub.Runtime;
+        var metrics = hub.Metrics;
+        var assets = hub.Assets;
+        var traces = hub.Traces;
+
         var turnId = string.IsNullOrWhiteSpace(req.TurnId) ? $"turn_{ProtocolIds.NewUlid()}" : req.TurnId!;
 
         traces?.StartTurn(turnId, sessionId, TurnOrigins.Client, DateTimeOffset.UtcNow);
@@ -1278,10 +705,15 @@ public static class HubServer
     }
 
     /// <summary>服务端发起的回合（调度到期等）：广播 turn.started 并推送回合事件。</summary>
-    private static async Task RunProactiveTurnAsync(
-        IAgentRuntime runtime, HubBroadcaster broadcaster, ScheduleDue due, HubMetrics metrics,
-        IAssetStore? assets, ITraceStore? traces, CancellationToken ct)
+    private static async Task RunProactiveTurnAsync(HubContext hub, ScheduleDue due, CancellationToken ct)
     {
+        // 局部别名：依赖统一来自 hub，方法体保持逐字不变
+        var runtime = hub.Runtime;
+        var broadcaster = hub.Broadcaster;
+        var metrics = hub.Metrics;
+        var assets = hub.Assets;
+        var traces = hub.Traces;
+
         var turnId = $"turn_{ProtocolIds.NewUlid()}";
 
         traces?.StartTurn(turnId, due.SessionId, TurnOrigins.Scheduled, DateTimeOffset.UtcNow);

@@ -65,6 +65,16 @@ graph TD
 | 客户端 | **`openLuo.Client.Cli/.Tui/.Gui/.Qq`（新，或改造现有）**                                                     | 各入口 UI                                                                  | Protocol + Client |
 | 内核   | `openLuo.Foundation`（拆） / `Capabilities` / `AgentContext` / `Llm` / `Memory` / `Embedding` / `WorldState` | 见 §11 迁移                                                                | —                 |
 
+**实际依赖边（由 `tests/openLuo.E2E.Tests/ArchitectureBoundaryTests.cs` 守护，越界即测试失败）**
+
+- `openLuo.Protocol` → **零本仓依赖**（仅 BCL）——它是所有层的公共契约，不得反向依赖任何东西。
+- `openLuo.Client` → 仅 `openLuo.Protocol`。
+- `openLuo.Server` → `openLuo.Protocol` + `openLuo.Capabilities`。后者是**第二公理**：为把能力元数据与回合事件
+  映射为 wire DTO，用到 `CapabilityKind` / `SideEffectClass` / `CapabilityResult` / `CapabilityDescriptor` 等类型。
+  Server **不**依赖宿主 `openLuo`，也不依赖 `Domain` / `AgentContext` / `Persistence` 等内核其余部分——
+  内核只经 `IAgentRuntime` 注入（见 §11）。若将来要让 Hub 成为"纯网关"，把这批 wire 映射搬回宿主即可。
+- 扩展（`openLuo.Extension.*`）→ **不得依赖宿主 exe**（`openLuo`），只经契约程序集交互。
+
 ---
 
 ## 4. 协议总则
