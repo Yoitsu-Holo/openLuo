@@ -183,3 +183,42 @@ public sealed record ConfigDeleteResponse
 
     public JsonNode? Values { get; init; }
 }
+
+// ─────────────────────────── 日志（观测，需 admin） ───────────────────────────
+
+/// <summary>`GET /v1/logs` 单条。</summary>
+public sealed record LogDto
+{
+    public long Id { get; init; }
+    public DateTimeOffset Ts { get; init; }
+    public string Level { get; init; } = string.Empty;
+    public string Module { get; init; } = string.Empty;
+    public string Category { get; init; } = string.Empty;
+    public string? Source { get; init; }
+    public string Msg { get; init; } = string.Empty;
+    public JsonNode? Data { get; init; }
+    public string? SessionId { get; init; }
+    public string? TurnId { get; init; }
+}
+
+/// <summary>`GET /v1/logs` 响应（倒序游标分页）。</summary>
+public sealed record LogsResponse
+{
+    public IReadOnlyList<LogDto> Items { get; init; } = [];
+
+    /// <summary>下一页游标（回传为 <c>beforeId</c>）；null 表示已到末尾。</summary>
+    public long? NextBeforeId { get; init; }
+}
+
+/// <summary>`GET /v1/logs/stats` 单个时间桶。</summary>
+public sealed record LogBucketDto
+{
+    public DateTimeOffset Start { get; init; }
+    public IReadOnlyDictionary<string, int> Counts { get; init; } = new Dictionary<string, int>();
+}
+
+/// <summary>`GET /v1/logs/stats` 响应。</summary>
+public sealed record LogStatsResponse
+{
+    public IReadOnlyList<LogBucketDto> Buckets { get; init; } = [];
+}

@@ -88,14 +88,14 @@ public sealed class QqRuntimeBridge
             {
                 case EventTypes.Output:
                     if (evt.DataAs<OutputDto>() is { } interim)
-                        yield return ToPart(interim);
+                        yield return await ToPartAsync(interim, ct);
                     break;
 
                 case EventTypes.TurnFinal:
                     if (evt.DataAs<TurnResultDto>() is { } result)
                     {
                         foreach (var output in result.Outputs)
-                            yield return ToPart(output);
+                            yield return await ToPartAsync(output, ct);
                         if (!string.IsNullOrWhiteSpace(result.FinalText))
                             yield return new QqReplyPart("text", result.FinalText!);
                     }
@@ -130,6 +130,33 @@ public sealed class QqRuntimeBridge
         OutputKind.Card => RenderCard(item) ?? new("text", "[card] " + PayloadString(item)),
         _ => new("text", PayloadString(item)),
     };
+
+    /// <summary>异步渲染：二进制项优先取内联 data URL，否则按 <c>assetRef</c> 经 HTTP 拉取字节（§9）。</summary>
+    private async Task<QqReplyPart> ToPartAsync(OutputDto item, CancellationToken ct)
+    {
+        if (item.Kind is not (OutputKind.Image or OutputKind.Audio))
+            return ToPart(item);
+
+        var kind = item.Kind == OutputKind.Image ? "image" : "record";
+
+        if (item.Payload is JsonValue value && value.GetValueKind() == JsonValueKind.String)
+            return new QqReplyPart(kind, value.GetValue<string>());
+
+        if (item.AssetRef is { } asset)
+        {
+            try
+            {
+                var bytes = await _http.GetByteArrayAsync($"{_httpBase}/v1/assets/{asset.Id}", ct).ConfigureAwait(false);
+                return new QqReplyPart(kind, $"data:{asset.Mime};base64,{Convert.ToBase64String(bytes)}");
+            }
+            catch (Exception)
+            {
+                return new QqReplyPart("text", $"[{kind}] {asset.Id}");
+            }
+        }
+
+        return new QqReplyPart(kind, string.Empty);
+    }
 
     private static string PayloadString(OutputDto item) => item.Payload switch
     {

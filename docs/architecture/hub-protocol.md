@@ -132,6 +132,17 @@ HTTP body 与 WS 帧**共用同一结构**：
 - 角色：`admin`（管理/目录全量）、`user`（自有会话）、`edge`（平台桥，代表多用户）。
 - v1 允许 `auth.anonymous` 开关用于本机开发（配置项 `server.allowAnonymous`）。
 
+**实现状态（已落地）**
+
+- `POST /v1/auth/token`：校验 `apiKey` → 角色映射（`OPENLUO_HUB_API_KEYS`），或 `sharedSecret` → `admin`；失败回 **401 + `3001`**。
+- HTTP **admin-only** 路径：`/v1/config*`、`/v1/logs*`、`/v1/metrics`、`/v1/schedules*`、`POST|DELETE /v1/jobs`。
+  未鉴权 → **401 + `3001`**；角色不足 → **403 + `3002`**。
+- WS：`hello.token` 校验，失败回 `3001` 并以 `PolicyViolation` 关闭。
+- 配置经环境变量（后续迁 `server.jsonc`）：`OPENLUO_HUB_ALLOW_ANONYMOUS`（默认 `true`）、`OPENLUO_HUB_ANONYMOUS_ROLE`、
+  `OPENLUO_HUB_SECRET`、`OPENLUO_HUB_API_KEYS`（`k1:admin,k2:user`）、`OPENLUO_HUB_TOKEN_TTL_MINUTES`；
+  客户端经 **`OPENLUO_HUB_TOKEN`** 携带 token（`HubClient` 自动读取）。
+- token 为进程内不透明令牌（`olt_<ULID>`，到期失效）；持久化/吊销随会话持久化一并演进。
+
 ### 4.5 错误模型
 
 状态由 **`errorCode`（int）+ `errorMsg`（string）** 表达（见 §4.2）。码值**分段**，段内递增；
@@ -142,7 +153,7 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 | 段   | 区间      | 领域                                                                                             |
 | ---- | --------- | ------------------------------------------------------------------------------------------------ |
-| 1xxx | 1000–1999 | 通用 / 成功（`11xx` 配置 / `12xx` 调度 / `13xx` 作业 / `14xx` 设备 / `15xx` 在场 / `16xx` 表现） |
+| 1xxx | 1000–1999 | 通用 / 成功（`11xx` 配置 / `12xx` 调度 / `13xx` 作业 / `14xx` 设备 / `15xx` 在场 / `16xx` 表现 / `17xx` 观测） |
 | 2xxx | 2000–2999 | 协议                                                                                             |
 | 3xxx | 3000–3999 | 鉴权                                                                                             |
 | 4xxx | 4000–4999 | 会话                                                                                             |
@@ -170,7 +181,8 @@ HTTP body 与 WS 帧**共用同一结构**：
 | 1401 | device.not_found                 | 设备不存在                          | false     |
 | 1402 | device.report_rejected           | 设备上报被拒（未知设备 / 校验失败） | false     |
 | 1501 | presence.unavailable             | 在场信息不可用                      | true      |
-| 1601 | avatar.unsupported               | 不支持该表现（客户端 / 服务端）     | false     |
+| 1601 | avatar.unsupported | 不支持该表现（客户端 / 服务端） | false |
+| 1701 | trace.not_found | 回合轨迹不存在 | false |
 | 2001 | protocol.version_mismatch        | 协议 major 不符                     | false     |
 | 2002 | protocol.bad_envelope            | Envelope 结构非法                   | false     |
 | 2003 | protocol.unknown_type            | 未知消息类型（可忽略）              | —         |
@@ -239,6 +251,9 @@ HTTP body 与 WS 帧**共用同一结构**：
 ## 5. HTTP 控制面接口
 
 统一前缀 `/v1`；响应体为 Envelope（`data` 承载结果）。错误用 HTTP 4xx/5xx 状态码 + Envelope 顶层 `errorCode` / `errorMsg`（§4.2 / §4.5）双写。
+业务错误码**按分段映射为 HTTP 状态**：`404` 不存在（会话/资产/作业/调度/配置命名空间/设备/轨迹）、
+`403` 越权或只读、`413` 过大、`429` 限流/超会话上限、`409` 冲突（回合忙/取消/需确认）、
+`503` 在场不可用、`500` 失败（作业/落盘/服务端），其余 `400`。
 
 ### 5.1 系统
 
@@ -320,6 +335,13 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 触发时 Hub 以 `turn.started{origin:"scheduled"}` 发起主动回合（§6.4）。
 
+`POST /v1/schedules` 的 `at`（一次性，ISO-8601）与 `cron`（周期）二选一：
+
+- `cron` 为**标准 5 段**（分 时 日 月 周），支持 `*`、`N`、`a-b`、`*/n`、`a-b/n` 与逗号列表；周字段 `0`/`7` 均为周日。
+- 无效表达式回 **`1202 schedule.invalid`**；缺 `at` 与 `cron` 同样回 `1202`。
+- 周期项触发后按 `Next(now)`（分钟精度）重排下次触发；一次性项触发后置 `enabled:false`。
+- 重启恢复：周期项重算下次触发，一次性项维持宽限期语义（§13 #3）。
+
 ### 5.9 作业（长任务）
 
 | 方法   | 路径            | 请求 `data`        | 响应 `data`         |
@@ -345,8 +367,27 @@ HTTP body 与 WS 帧**共用同一结构**：
 | ---- | --------------------- | -------------------------------------- |
 | GET  | `/v1/traces/{turnId}` | 回合决策轨迹（`TurnTraceDto`，回放用） |
 | GET  | `/v1/metrics`         | 运行指标（`MetricsDto`）               |
+| GET  | `/v1/logs`            | 热库日志检索（`from`/`to`/`level`/`module`/`category`） |
+| GET  | `/v1/logs/archive`    | 冷文件（归档 JSONL）检索：`date`（`yyyyMMdd` 或 `*`）、`category`、`keyword`、`level`、`limit` |
+| GET  | `/v1/logs/stats`      | 按时间桶统计各级别条数（`from`/`to`/`bucket`） |
 
 审计事件经 WS `audit.event` 推送（`audit.subscribe`）。
+
+**实现状态（已落地）**
+
+- `/v1/metrics`：Hub 计数（uptime / 在线连接 / 回合数 / 失败回合数 / 活跃会话）。
+- `/v1/traces/{turnId}`：**回合轨迹**入 `hub.db`（`traces` + `trace_events`），记录
+  `decision`/`tool.call`/`tool.result`/`output`/`turn.final` 事件序列（JSON 载荷，>4KB 截断）
+  与结果摘要（success / terminationReason / finalText）；保留 **14 天 / 20 万事件**（超窗裁剪）。
+- 两个端点均为 **admin-only**（接入 §4.8 守卫）。
+- 未知回合回 **`1701 trace.not_found`**。
+- **冷文件检索已落地**：`/v1/logs/archive` 按 `{logDir}/{archive.Dir}/{date}/*.jsonl` 目录扫描（无索引），
+  命中达 `limit` 提前返回，结果按 `ts` 倒序（单测 + 冒烟：`date`/`category`/`keyword`/`level` 过滤生效）。
+  日志裁剪（`Trim`）后执行 FTS5 `optimize` 合并段、回收索引空间。
+- **`audit.event` 审计流已落地**：`audit.subscribe`（需 admin）后收关键管理动作事件（`auth.token` /
+  `session.open|close` / `config.set|delete` / `job.submit` / `schedule.add` / `asset.upload|delete`），
+  含发起方 `clientId`、目标与结果。
+- **资产 TTL**：`OPENLUO_ASSET_TTL_MINUTES > 0` 时每 10 分钟清理超期资产（`IAssetStore.PurgeExpired`）。
 
 ---
 
@@ -438,6 +479,15 @@ sequenceDiagram
 **多客户端 / 在场**：一条连接可订阅多会话；Envelope `targetClientId` 把事件定向到某个客户端（null = 广播给订阅者）；`presence.subscribe` 后收 `presence.updated`。断线重连用 `session.resume{sinceSequence}` 补发未收输出（依赖 `output` 的 `sequence`，全局单调、不保证连续）。
 
 > **投递与 ack（多客户端关键语义）**：`output` 事件由 Hub **广播给该会话的所有订阅客户端**；`output.ack` 记录「**某一端**已成功投递」，**不因个别端未 ack 而阻塞**（内核队列已解耦，`Enqueue` 永不等待 ack，见 §11）。需「确保某端收到」用 `session.resume{sinceSequence}` 补读。
+
+**实现状态（已落地）**
+
+- `session.subscribe` / `session.unsubscribe` 生效：**非回合事件**（作业 / 调度 / 通知）仅投给**已订阅该会话**的连接；未订阅不收到。
+- **回合事件**投给「**发起连接 + 该会话订阅者**」（多端同看同一会话）。
+- `session.resume{sinceSequence}` → `IOutputQueue.ReadSince` 补发**同会话**未 ack 输出（内存 ring；跨重启不保留，与决策 #3 一致）。
+- `presence.subscribe` / `presence.unsubscribe`：订阅后收在线快照与上下线 `presence.updated`。
+- Envelope `targetClientId` **定向优先**（只投给匹配 `clientId` 的连接）。
+- 未订阅时的跨会话泄漏已消除（冒烟实测：B 未订阅 A 时收不到 A 的回合事件）。
 
 **主动 / 调度**：`/v1/schedules` 注册定时 / 条件触发；到期 Hub 自主发起回合并发 `turn.started{origin}`（`client|scheduled|event|presence|hub`），后续事件与普通回合一致；非回合的轻量提示走 `notification`。
 
@@ -549,9 +599,14 @@ sequenceDiagram
 3. 未在超时内响应 → 该能力视为拒绝（`capability.failed`，`retryable:false`）。
 4. 客户端需声明 `features:["confirm"]`；不支持确认的客户端所连会话，Hub 对高危能力**直接拒绝**（安全默认）。
 
-> **依赖内核（当前为空转）**：内核现有能力（6 扩展）全部 `RiskLevel.Low` / `requiresConfirmation=false`
-> → 本节流程**尚无触发者**。需能力侧（插件 / MCP / 内建）在 `CapabilityDescriptor` 声明
-> `RequiresConfirmation=true` 后才生效；否则确认握手只是协议预留。
+> **实现状态**：内核端口 `IConfirmationGate`（`openLuo.Capabilities.Core`）+ `DefaultCapabilityDispatcher`
+> 派发前拦截（未批准 → `CapabilityStatus.Rejected` / `"confirmation denied"`，且**不执行**能力）；
+> Hub 侧 `HubConfirmationGate`（`openLuo.Server`）由 `HubServer.RunAsync` 接入：向会话订阅者推
+> `confirm.request` 并等待 `confirm.response`，**超时（默认 60s，`HubServerOptions.ConfirmTimeoutSeconds`）
+> 或未接入一律拒绝**（安全默认）。冒烟实测：批准 → `true`、拒绝 → `false`、超时 → `false`。
+>
+> **仍无触发者**：现有 6 个扩展的能力全部 `RiskLevel.Low` / `requiresConfirmation=false`，需能力侧
+> （插件 / MCP / 内建）声明 `RequiresConfirmation=true` 后走此流程。
 
 ---
 
@@ -568,6 +623,21 @@ sequenceDiagram
 - **访问控制**：`GET/DELETE /v1/assets/{id}` 需 Bearer token 并校验资产归属会话（越权 → `3002 auth.forbidden`）；`ttl` 到期清理。
 - **上传上限**：单资产大小由 `server.jsonc` 的 `assetMaxBytes` 控制，超限回 `7002 asset.too_large`。
 - 好处：WS 帧恒定小、支持断点/重试、多客户端共享同一资产、便于缓存、Hub 重启资产不丢。
+
+**实现状态（已落地）**
+
+- 存储：`IAssetStore`（Foundation 端口）+ `FileAssetStore`（宿主）：元数据入 SQLite（`assets/assets.db`，WAL），
+  字节落 `assets/blobs/{id[0..2]}/{id}`，内容寻址（`ast_<sha256 前 32>`）。
+- 端点：`POST /v1/assets`（原始体 + `Content-Type`；`?sessionId=` / `X-File-Name` 可选）、
+  `GET`（返回字节，`Content-Type` 为资产 MIME）、`HEAD`（元数据）、`DELETE`。
+- 输出切换：内核产出为 data URL 的 `image/audio/file/asset` 项，经 Hub **自动转存为 `assetRef`**
+  （`payload=null`），超限则降级保留内联、不阻塞回合。
+- 输入解析：`TurnRequest.blocks` 支持内联 `dataUri` **或** `assetRef`（后者按 id 拉取字节还原为内核 Block）。
+- 归属：资产记录上传时 `sessionId`；请求显式携带不同 `sessionId` 时回 `3002`（未携带则不校验）。
+- 权限：`/v1/assets` 需**已鉴权**（角色 ≥ `user`，见 §4.8）。
+- 客户端：`HubClient.UploadAssetAsync/DownloadAssetAsync`；QQ 桥对 `assetRef` 输出按 id 拉取字节后再发段。
+
+> 仍未做：资产 TTL 清理（占位字段已在协议 `ttl`）；冷/热分离。
 
 ---
 
@@ -624,7 +694,7 @@ sequenceDiagram
 | --- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | QQ 桥定位      | **客户端 edge**：对内走本协议连 Hub，对外仍是 OneBot 服务端（LLBot 接入）                                                                                                                                                                                                                                                                                                    |
 | 2   | 二进制策略     | **v1 直接上 assetRef**：二进制一律走 asset store + `GET /v1/assets/{id}`，不内联 data URL                                                                                                                                                                                                                                                                                    |
-| 3   | 持久化         | **v1 即落盘（SQLite）**：会话与资产复用 `game.db` 基础设施，Hub 重启可恢复                                                                                                                                                                                                                                                                                                   |
+| 3   | 持久化         | ✅ **已实现（hub.db）**：会话元数据 / 作业 / 调度 / 已签发令牌落 SQLite（WAL，独立于业务 `game.db`）；重启**保守恢复**——会话恢复、进行中作业标记 failed、过期一次性调度超 5 分钟跳过（宽限期内补发）、令牌仍有效；输出日志不落盘（跨重启 `session.resume` 不保证） |
 | 4   | 实施顺序       | **先建 `openLuo.Protocol`（纯契约，零依赖）**，再 `openLuo.Server` 最小闭环                                                                                                                                                                                                                                                                                                  |
 | 5   | 端口           | `127.0.0.1:8674`（避让 LLBot 的 3001/3010）                                                                                                                                                                                                                                                                                                                                  |
 | 6   | 流式实现       | **内核真流式**：`ComposedAgentRuntime.StreamTurnAsync` 还原为逐事件产出（改 `DefaultCapabilityDecisionLoop` + `ComposedAgentRuntime`），Server 直接消费；不做 Server 层近似流式                                                                                                                                                                                              |
@@ -633,5 +703,7 @@ sequenceDiagram
 | 9   | 协议域补全     | **补全 7 域**：群聊（`userId`/`mentions`/`threadId`/`recipient`/`member.*`）、多客户端（`targetClientId`/`presence.*`/`session.resume`）、主动调度（`/v1/schedules`/`turn.started`/`notification`）、设备（`device.report`/`device.state`）、作业（`/v1/jobs`/`job.*`）、表现（`avatar.*`）、观测（`/v1/traces`/`/v1/metrics`/`audit.event`）；新增码段 12xx–16xx、7002/7003 |
 | 10  | 内核流式与队列 | ✅ **已实现**：`InMemoryOutputQueue` 解耦（每会话日志、`Enqueue` 永不阻塞、`ReadSince` 续传）；`ICapabilityDecisionLoop.RunStreamAsync` 真流式（单写者 channel）；`ComposedAgentRuntime` per-session 回合闸串行化。上下文「全局 + 局部」改造风险另见 `docs/architecture/context-scope-risk.md`                                                                                |
 | 11 | 传输职责 | **HTTP + WS 互补双轨（非全 WS）**：WS = 数据面（高频 / 实时 / 单向推送、双向流式回合）；HTTP = 控制面 + 二进制面（请求-响应管理、资产上传下载、探针）；重叠处（回合提交）以 WS 为主、HTTP 为 fallback。理由：二进制大对象、探针 / 无状态运维、无实时需求的客户端（QQ 桥 / 脚本）都更适合 HTTP；全 WS 需把大对象与探针塞进 WS，得不偿失 |
+
+| 12  | 本轮加固（2026-10-10） | ✅ **已实现**：**FTS 优化**（裁剪后 `optimize`）、**周期调度**（`cron` 标准 5 段，无效 → `1202`，触发后重排 `Next(now)`）、**冷文件检索**（`/v1/logs/archive` 目录扫描 + `keyword`/`level`/`category`/`date` 过滤）、**确认握手接线**（内核 `IConfirmationGate` → 派发前拦截；Hub `HubConfirmationGate` 推 `confirm.request` / 等 `confirm.response`，超时 60s 或未接入一律拒绝）。QQ 桥真机测试待用户接入 LLBot |
 
 仍开放：TLS 终结方式（Hub 直出 vs 反向代理）——实施 Server 时再定。

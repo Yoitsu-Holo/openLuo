@@ -98,8 +98,17 @@ public static class ServiceCollectionExtensions
         // ── 日志 ────────────────────────────────────────────────────────
         services.AddSingleton<IGameStreams, ConsoleStreams>();
         var logDir = Path.Combine(baseDir, "logs");
-        services.AddSingleton<GameLogger>(sp => new GameLogger(logDir, config: null, sp.GetRequiredService<IGameStreams>()));
+        services.AddSingleton(sp => new LogStore(logDir, config.Log?.Hot, config.Log?.Archive));
+        services.AddSingleton<ILogStore>(sp => sp.GetRequiredService<LogStore>());
+        services.AddSingleton<GameLogger>(sp => new GameLogger(logDir, config: null, sp.GetRequiredService<IGameStreams>(), sp.GetRequiredService<LogStore>()));
         services.AddSingleton<IGameLogger>(sp => sp.GetRequiredService<GameLogger>());
+
+        // ── 资产（二进制经引用传递，见协议 §9） ─────────────────────────
+        services.AddSingleton<openLuo.Core.Interfaces.IAssetStore>(sp =>
+            new openLuo.Infrastructure.Assets.FileAssetStore(Path.Combine(baseDir, "assets")));
+
+        // ── Hub 控制面状态持久化（hub.db；决策 #3） ──────────────────────
+        services.AddSingleton(sp => new openLuo.Infrastructure.Persistence.HubStore(Path.Combine(baseDir, "hub.db")));
 
         // ── 内核组合根（新架构） ────────────────────────────────────────
         services.AddSingleton<SessionStore>();
@@ -126,6 +135,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ICapabilityPolicy, DefaultCapabilityPolicy>();
         services.AddSingleton<IStateTransaction, InMemoryStateTransaction>();
         services.AddSingleton<ICapabilityInvoker, UnboundCapabilityInvoker>();
+        services.AddSingleton<openLuo.Server.HubConfirmationGate>();
         services.AddSingleton<ICapabilityDispatcher>(sp =>
         {
             var registry = sp.GetRequiredService<ExtensionRegistry>();
@@ -150,7 +160,8 @@ public static class ServiceCollectionExtensions
             return new DefaultCapabilityDispatcher(
                 sp.GetRequiredService<ICapabilityInvoker>(), sp.GetRequiredService<ICapabilityPolicy>(),
                 sp.GetRequiredService<IStateTransaction>(), canonicalInvokers: invokers,
-                logger: sp.GetService<Core.Interfaces.IGameLogger>());
+                logger: sp.GetService<Core.Interfaces.IGameLogger>(),
+                confirmationGate: sp.GetRequiredService<openLuo.Server.HubConfirmationGate>());
         });
         services.AddSingleton<ICapabilityDecisionLoop, DefaultCapabilityDecisionLoop>();
         services.AddSingleton<ICapabilityCatalog>(sp =>

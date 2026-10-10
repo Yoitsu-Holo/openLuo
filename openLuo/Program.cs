@@ -17,6 +17,34 @@ using System.Diagnostics;
 var options = LaunchOptions.Parse(args);
 if (options is null) return;
 
+// Hub 鉴权配置来自环境变量（后续可迁至 server.jsonc）。
+static openLuo.Server.HubAuthOptions BuildHubAuth()
+{
+    static bool Bool(string name, bool fallback) =>
+        bool.TryParse(Environment.GetEnvironmentVariable(name), out var v) ? v : fallback;
+
+    var keys = new Dictionary<string, string>(StringComparer.Ordinal);
+    var raw = Environment.GetEnvironmentVariable("OPENLUO_HUB_API_KEYS");
+    if (!string.IsNullOrWhiteSpace(raw))
+    {
+        foreach (var pair in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var idx = pair.IndexOf(':');
+            if (idx > 0)
+                keys[pair[..idx]] = pair[(idx + 1)..];
+        }
+    }
+
+    return new openLuo.Server.HubAuthOptions
+    {
+        AllowAnonymous = Bool("OPENLUO_HUB_ALLOW_ANONYMOUS", true),
+        AnonymousRole = Environment.GetEnvironmentVariable("OPENLUO_HUB_ANONYMOUS_ROLE") ?? openLuo.Server.HubRoles.User,
+        SharedSecret = Environment.GetEnvironmentVariable("OPENLUO_HUB_SECRET"),
+        ApiKeys = keys,
+        TokenTtlMinutes = int.TryParse(Environment.GetEnvironmentVariable("OPENLUO_HUB_TOKEN_TTL_MINUTES"), out var ttl) ? ttl : 720,
+    };
+}
+
 // QQ 桥：经协议连 Hub（不启动内核）
 if (options.Mode is LaunchMode.QqBot)
 {
@@ -141,8 +169,29 @@ if (options.Mode is LaunchMode.Serve)
         serviceProvider.GetRequiredService<openLuo.Capabilities.Core.Models.ICapabilityCatalog>());
     var configService = new openLuo.Modules.AppShell.Application.JsonConfigService(
         Path.Combine(Directory.GetCurrentDirectory(), "config"));
-    var jobs = new openLuo.Modules.AppShell.Application.InMemoryJobService();
-    await using var scheduler = new openLuo.Modules.AppShell.Application.InMemorySchedulerService();
-    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler);
+    var hubStore = serviceProvider.GetRequiredService<openLuo.Infrastructure.Persistence.HubStore>();
+    var jobs = new openLuo.Modules.AppShell.Application.InMemoryJobService(store: hubStore);
+    await using var scheduler = new openLuo.Modules.AppShell.Application.InMemorySchedulerService(hubStore);
+    var auth = BuildHubAuth();
+    var logs = serviceProvider.GetService<openLuo.Core.Interfaces.ILogStore>();
+    var assets = serviceProvider.GetService<openLuo.Core.Interfaces.IAssetStore>();
+    var outputQueue = serviceProvider.GetService<openLuo.Capabilities.Core.IOutputQueue>();
+    // 资产 TTL 清理（OPENLUO_ASSET_TTL_MINUTES > 0 时启用；仅清创建超期的资产）
+    var assetTtlMinutes = int.TryParse(Environment.GetEnvironmentVariable("OPENLUO_ASSET_TTL_MINUTES"), out var ttlMinutes) ? ttlMinutes : 0;
+    if (assetTtlMinutes > 0 && assets is not null)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(10));
+            while (await timer.WaitForNextTickAsync())
+            {
+                try { assets.PurgeExpired(TimeSpan.FromMinutes(assetTtlMinutes)); }
+                catch { /* 清理失败不影响服务 */ }
+            }
+        });
+    }
+
+    var confirmationGate = serviceProvider.GetRequiredService<openLuo.Server.HubConfirmationGate>();
+    await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth, assets, hubStore, outputQueue, hubStore, confirmationGate);
     return;
 }

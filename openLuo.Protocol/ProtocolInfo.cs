@@ -139,6 +139,9 @@ public static class ErrorCodes
 
     public const int AvatarUnsupported = 1601;
 
+    /// <summary>观测：轨迹不存在。</summary>
+    public const int TraceNotFound = 1701;
+
     public const int ProtocolVersionMismatch = 2001;
     public const int ProtocolBadEnvelope = 2002;
     public const int ProtocolUnknownType = 2003;
@@ -184,6 +187,7 @@ public static class ErrorCodes
         DeviceReportRejected => "device.report_rejected",
         PresenceUnavailable => "presence.unavailable",
         AvatarUnsupported => "avatar.unsupported",
+        TraceNotFound => "trace.not_found",
         ProtocolVersionMismatch => "protocol.version_mismatch",
         ProtocolBadEnvelope => "protocol.bad_envelope",
         ProtocolUnknownType => "protocol.unknown_type",
