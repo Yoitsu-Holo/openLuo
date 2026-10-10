@@ -11,14 +11,60 @@ public class LogConfig
     public bool OutputToConsole { get; set; } = false;
     public Dictionary<string, string> Categories { get; set; } = new();
 
+    /// <summary>热库（近期日志 SQL 热查询 + 保留裁剪）。</summary>
+    public LogHotConfig Hot { get; set; } = new();
+
+    /// <summary>冷文件（全量 JSONL 落盘，按天分目录）。</summary>
+    public LogArchiveConfig Archive { get; set; } = new();
+
     public LogConfig Clone() => new()
     {
         Level = Level,
         OutputToConsole = OutputToConsole,
         Categories = Categories is null
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, string>(Categories, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(Categories, StringComparer.OrdinalIgnoreCase),
+        Hot = Hot?.Clone() ?? new LogHotConfig(),
+        Archive = Archive?.Clone() ?? new LogArchiveConfig()
     };
+}
+
+/// <summary>热库配置：近期日志入 SQLite，支持 SQL/全文热查询；超窗裁剪。</summary>
+public class LogHotConfig
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>库文件相对路径（相对日志目录），默认 <c>hot.db</c>。</summary>
+    public string Path { get; set; } = "hot.db";
+
+    /// <summary>保留天数。</summary>
+    public int RetainDays { get; set; } = 14;
+
+    /// <summary>最大保留行数（超出删最旧）。</summary>
+    public int MaxRows { get; set; } = 200_000;
+
+    /// <summary>批量写入条数上限。</summary>
+    public int BatchSize { get; set; } = 200;
+
+    /// <summary>不足一批时的等待毫秒（合并写）。</summary>
+    public int FlushMs { get; set; } = 250;
+
+    public LogHotConfig Clone() => new()
+    {
+        Enabled = Enabled, Path = Path, RetainDays = RetainDays,
+        MaxRows = MaxRows, BatchSize = BatchSize, FlushMs = FlushMs
+    };
+}
+
+/// <summary>冷文件配置：全量日志按天分目录落盘（默认永久保留，不删）。</summary>
+public class LogArchiveConfig
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>根目录相对路径（相对日志目录），默认 <c>core</c>。</summary>
+    public string Dir { get; set; } = "core";
+
+    public LogArchiveConfig Clone() => new() { Enabled = Enabled, Dir = Dir };
 }
 
 public class AgentRuntimeConfig

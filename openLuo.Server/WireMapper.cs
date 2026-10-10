@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using openLuo.Capabilities.Core;
 using openLuo.Capabilities.Core.Models;
+using openLuo.Core.Interfaces;
 using openLuo.Protocol;
 
 namespace openLuo.Server;
@@ -51,6 +52,28 @@ public static class WireMapper
         Step = step,
         Note = note,
     };
+
+    public static LogDto ToDto(LogRecord log) => new()
+    {
+        Id = log.Id,
+        Ts = log.Ts,
+        Level = log.Level,
+        Module = log.Module,
+        Category = log.Category,
+        Source = log.Source,
+        Msg = log.Msg,
+        Data = TryParseJson(log.Data),
+        SessionId = log.SessionId,
+        TurnId = log.TurnId,
+    };
+
+    private static JsonNode? TryParseJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+        try { return JsonNode.Parse(json); }
+        catch { return JsonValue.Create(json); }
+    }
 
     public static ScheduleDto ToDto(ScheduleInfo info) => new()
     {

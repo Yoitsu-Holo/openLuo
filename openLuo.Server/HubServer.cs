@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.WebSockets;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Hosting;
 using openLuo.Capabilities.Core;
+using openLuo.Core.Interfaces;
 using openLuo.Capabilities.Core.Models;
 using openLuo.Protocol;
 
@@ -80,7 +81,7 @@ public static class HubServer
     public static async Task RunAsync(
         IAgentRuntime runtime, HubServerOptions options, IRuntimeDirectory? directory = null,
         IConfigService? config = null, IJobService? jobs = null, ISchedulerService? scheduler = null,
-        CancellationToken ct = default)
+        ILogStore? logs = null, CancellationToken ct = default)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -355,6 +356,47 @@ public static class HubServer
             }, CancellationToken.None);
         }
 
+        // 日志热查询（§5.11）。注：鉴权待 token 落地后收紧为 admin-only。
+        if (logs is not null)
+        {
+            app.MapGet("/v1/logs", async (string? from, string? to, string? level, string? module, string? category,
+                string? keyword, string? sessionId, string? turnId, int? limit, long? beforeId,
+                CancellationToken requestCt) =>
+            {
+                var query = new LogQuery
+                {
+                    From = ParseTime(from),
+                    To = ParseTime(to),
+                    MinLevel = level,
+                    Module = module,
+                    Category = category,
+                    Keyword = keyword,
+                    SessionId = sessionId,
+                    TurnId = turnId,
+                    Limit = limit ?? 200,
+                    BeforeId = beforeId,
+                };
+
+                var items = await logs.QueryAsync(query, requestCt);
+                return Json(EnvelopeFactory.Create("logs", new LogsResponse
+                {
+                    Items = items.Select(WireMapper.ToDto).ToList(),
+                    NextBeforeId = items.Count >= Math.Clamp(query.Limit, 1, 1000) ? items[^1].Id : null,
+                }));
+            });
+
+            app.MapGet("/v1/logs/stats", async (string? from, string? to, string? bucket, CancellationToken requestCt) =>
+            {
+                var toTs = ParseTime(to) ?? DateTimeOffset.UtcNow;
+                var fromTs = ParseTime(from) ?? toTs.AddHours(-1);
+                var buckets = await logs.StatsAsync(fromTs, toTs, ParseBucket(bucket), requestCt);
+                return Json(EnvelopeFactory.Create("logs", new LogStatsResponse
+                {
+                    Buckets = buckets.Select(b => new LogBucketDto { Start = b.Start, Counts = b.Counts }).ToList(),
+                }));
+            });
+        }
+
         app.Map("/v1/stream", async (HttpContext ctx) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest)
@@ -388,6 +430,33 @@ public static class HubServer
 
     private static IResult Error(int errorCode, string message) =>
         Results.Json(EnvelopeFactory.CreateError(EventTypes.Error, errorCode, message), ProtocolJson.Options);
+
+    /// <summary>时间参数：Unix 毫秒或 ISO8601。</summary>
+    private static DateTimeOffset? ParseTime(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        if (long.TryParse(value, out var ms))
+            return DateTimeOffset.FromUnixTimeMilliseconds(ms);
+        return DateTimeOffset.TryParse(value, out var parsed) ? parsed : null;
+    }
+
+    /// <summary>时间桶：<c>1m</c>/<c>5m</c>/<c>1h</c>/<c>1d</c>，默认 1 分钟。</summary>
+    private static TimeSpan ParseBucket(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return TimeSpan.FromMinutes(1);
+        var text = value.Trim().ToLowerInvariant();
+        var number = int.TryParse(text[..^1], out var n) ? Math.Max(1, n) : 1;
+        return text[^1] switch
+        {
+            's' => TimeSpan.FromSeconds(number),
+            'm' => TimeSpan.FromMinutes(number),
+            'h' => TimeSpan.FromHours(number),
+            'd' => TimeSpan.FromDays(number),
+            _ => TimeSpan.FromMinutes(1),
+        };
+    }
 
     /// <summary>wire 图像块（kind=image）→ 内核 Block（供视觉模型消费）。</summary>
     private static IReadOnlyList<object> MapBlocks(IReadOnlyList<JsonNode>? blocks)

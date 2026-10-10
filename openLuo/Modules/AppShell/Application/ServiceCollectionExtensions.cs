@@ -98,7 +98,9 @@ public static class ServiceCollectionExtensions
         // ── 日志 ────────────────────────────────────────────────────────
         services.AddSingleton<IGameStreams, ConsoleStreams>();
         var logDir = Path.Combine(baseDir, "logs");
-        services.AddSingleton<GameLogger>(sp => new GameLogger(logDir, config: null, sp.GetRequiredService<IGameStreams>()));
+        services.AddSingleton(sp => new LogStore(logDir, config.Log?.Hot, config.Log?.Archive));
+        services.AddSingleton<ILogStore>(sp => sp.GetRequiredService<LogStore>());
+        services.AddSingleton<GameLogger>(sp => new GameLogger(logDir, config: null, sp.GetRequiredService<IGameStreams>(), sp.GetRequiredService<LogStore>()));
         services.AddSingleton<IGameLogger>(sp => sp.GetRequiredService<GameLogger>());
 
         // ── 内核组合根（新架构） ────────────────────────────────────────

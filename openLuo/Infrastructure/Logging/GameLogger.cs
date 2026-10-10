@@ -16,26 +16,29 @@ public class GameLogger : IGameLogger
     private readonly string _coreDir;
     private readonly string _pluginDir;
     private readonly IGameStreams? _streams;
+    private readonly LogStore? _store;
     private static readonly object _lock = new();
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
-    public GameLogger(string logBaseDir, string levelStr, IGameStreams? streams = null)
+    public GameLogger(string logBaseDir, string levelStr, IGameStreams? streams = null, LogStore? store = null)
     {
         _staticConfig = new LogConfig { Level = levelStr, OutputToConsole = false };
         _streams = streams;
+        _store = store;
         _coreDir = Path.Combine(logBaseDir, "core");
         _pluginDir = Path.Combine(logBaseDir, "plugin");
         Directory.CreateDirectory(_coreDir);
         Directory.CreateDirectory(_pluginDir);
     }
 
-    public GameLogger(string logBaseDir, Modules.AppShell.Application.LogConfig? config = null, IGameStreams? streams = null)
+    public GameLogger(string logBaseDir, Modules.AppShell.Application.LogConfig? config = null, IGameStreams? streams = null, LogStore? store = null)
     {
         _staticConfig = config?.Clone();
         _streams = streams;
+        _store = store;
         _coreDir = Path.Combine(logBaseDir, "core");
         _pluginDir = Path.Combine(logBaseDir, "plugin");
         Directory.CreateDirectory(_coreDir);
@@ -86,6 +89,19 @@ public class GameLogger : IGameLogger
     {
         var lv = Enum.TryParse<LogLevel>(level, true, out var l) ? l : LogLevel.Info;
         if (lv > GetEffectiveLevel("plugin")) return;
+        if (_store is not null)
+        {
+            _store.Enqueue(new openLuo.Core.Interfaces.LogRecord(
+                Id: 0,
+                Ts: DateTimeOffset.Now,
+                Level: lv.ToString().ToLowerInvariant(),
+                Module: "plugin",
+                Category: $"plugin/{pluginId}",
+                Source: $"{Path.GetFileName(file)}:{line}",
+                Msg: msg,
+                Data: data is null ? null : JsonSerializer.Serialize(data, _jsonOptions)));
+            return;
+        }
         var entry = MakeEntry(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), lv, pluginId, file, line, msg, data);
         var path = Path.Combine(_pluginDir, $"{Sanitize(pluginId)}.jsonl");
         AppendLine(path, entry);
@@ -100,9 +116,25 @@ public class GameLogger : IGameLogger
         // 时间戳只取一次：文件 JSON 的 ts 与终端元信息行共用，保证两侧逐字符一致。
         var ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
         var module = ModuleOf(category);
-        var entry = MakeEntry(ts, lv, module, file, line, msg, data);
-        var path = Path.Combine(_coreDir, $"{Sanitize(category)}.jsonl");
-        AppendLine(path, entry);
+        if (_store is not null)
+        {
+            // 热库 + 冷文件由 LogStore 统一处理（异步、批量）
+            _store.Enqueue(new openLuo.Core.Interfaces.LogRecord(
+                Id: 0,
+                Ts: DateTimeOffset.Now,
+                Level: lv.ToString().ToLowerInvariant(),
+                Module: module,
+                Category: category,
+                Source: $"{Path.GetFileName(file)}:{line}",
+                Msg: msg,
+                Data: data is null ? null : JsonSerializer.Serialize(data, _jsonOptions)));
+        }
+        else
+        {
+            var entry = MakeEntry(ts, lv, module, file, line, msg, data);
+            var path = Path.Combine(_coreDir, $"{Sanitize(category)}.jsonl");
+            AppendLine(path, entry);
+        }
         if (ShouldOutputToConsole() && _streams is not null)
         {
             // 1+N 行：首行元信息 [ts] [level] [source] [module]，后续为内容行。
