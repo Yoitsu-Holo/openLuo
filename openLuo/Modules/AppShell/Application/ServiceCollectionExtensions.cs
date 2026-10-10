@@ -98,6 +98,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IGameStreams, ConsoleStreams>();
         var logDir = Path.Combine(baseDir, "logs");
         services.AddSingleton(sp => new LogStore(logDir, config.Log?.Hot, config.Log?.Archive));
+        // ⚠ 同一实例被两个描述符（LogStore / ILogStore）引用 → 容器释放时会**对它调用两次 DisposeAsync**。
+        // 因此任何这样暴露的可释放类型都必须幂等（LogStore.DisposeAsync 已幂等；详见其注释与 LogStoreLifetimeTests）。
         services.AddSingleton<ILogStore>(sp => sp.GetRequiredService<LogStore>());
         services.AddSingleton<GameLogger>(sp => new GameLogger(logDir, config: null, sp.GetRequiredService<IGameStreams>(), sp.GetRequiredService<LogStore>()));
         services.AddSingleton<IGameLogger>(sp => sp.GetRequiredService<GameLogger>());

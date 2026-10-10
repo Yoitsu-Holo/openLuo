@@ -53,7 +53,7 @@ static openLuo.Server.HubAuthOptions BuildHubAuth()
     };
 }
 
-await using var host = await OpenLuoBootstrapper.BootstrapAsync();
+var host = await OpenLuoBootstrapper.BootstrapAsync();
 if (host is null) return 1;
 var serviceProvider = host.ServiceProvider;
 
@@ -158,6 +158,10 @@ if (assetTtlMinutes > 0 && assets is not null)
 
 var confirmationGate = serviceProvider.GetRequiredService<openLuo.Server.HubConfirmationGate>();
 await openLuo.Server.HubServer.RunAsync(runtime, new openLuo.Server.HubServerOptions { Listen = listen }, directory, configService, jobs, scheduler, logs, auth, assets, hubStore, outputQueue, hubStore, confirmationGate);
+
+Console.Error.WriteLine("[shutdown] hub stopped; disposing kernel");
+await host.DisposeAsync();
+Console.Error.WriteLine("[shutdown] kernel disposed");
 return 0;
 
 static void PrintUsage() => Console.WriteLine("""

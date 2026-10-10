@@ -34,6 +34,9 @@ public sealed class LogStore : ILogStore, IAsyncDisposable
     private long _dropped;
     private long _entriesSinceTrim;
 
+    /// <summary>0=未释放；1=已释放（DisposeAsync 幂等，见其注释）。</summary>
+    private int _disposed;
+
     public LogStore(string logDir, LogHotConfig? hot = null, LogArchiveConfig? archive = null)
     {
         _logDir = logDir;
@@ -477,11 +480,19 @@ public sealed class LogStore : ILogStore, IAsyncDisposable
 
     private static string Sanitize(string value) => value.Replace('/', '-').Replace('\\', '-');
 
+    /// <summary>
+    /// 幂等释放。**必须幂等**：容器中 LogStore 与 ILogStore 两个描述符指向同一实例，释放阶段会对本实例调用两次；
+    /// 第二次若再触碰已释放的 <see cref="_cts"/>，会抛 <see cref="ObjectDisposedException"/>，
+    /// 该异常从 Main 冒泡出去会让进程 abort（Ctrl+C 关闭时表现为 core dumped）。
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) == 1)
+            return;
+
         _queue.Writer.TryComplete();
         try { await _writer.ConfigureAwait(false); } catch { }
-        await _cts.CancelAsync().ConfigureAwait(false);
+        try { await _cts.CancelAsync().ConfigureAwait(false); } catch (ObjectDisposedException) { }
         _cts.Dispose();
     }
 }
