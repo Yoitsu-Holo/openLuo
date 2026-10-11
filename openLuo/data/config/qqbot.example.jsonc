@@ -1,6 +1,6 @@
 {
   // QQbot 独立配置
-  // 仅在 --qq 启动模式下使用
+  // 供 openluo-qq（独立客户端程序；旧的 `openLuo --qq` 已移除）使用，置于 config/qqbot.jsonc
 
   "enabled": false, // [热加载] true=启用 QQ 机器人入口
   "baseAddress": "ws://localhost:3001/", // [热加载] LLBot(幸运莉莉娅) OneBot 11 正向 WebSocket 地址（在 LLBot 设置中开启 WS 正向）
@@ -13,5 +13,9 @@
   "logMessages": true, // [热加载] 记录消息收发日志（[recv] / [send]）
   "sendInterimMessages": true, // [热加载] 中途消息（伴随工具调用的文本）即时推送
   "defaultAgentId": "companion", // [热加载] 会话使用的 Agent；companion=内核自带陪伴 Agent
-  "defaultSubjectId": "builtin-rin" // [热加载] 会话使用的角色原型 id（见 data/archetypes/*.jsonc）
+  "defaultSubjectId": "builtin-rin", // [热加载] 会话使用的角色原型 id（见 data/archetypes/*.jsonc）
+  // [热加载] 私聊固定的 conversationId（可选）：填上后，机器人的私聊与本机 PC 客户端（OPENLUO_CONVERSATION_ID 同一值）
+  // 共享同一段对话上下文（Hub 按 subjectId + agentId + conversationId 复用会话）；群聊不受影响，仍每群一段。
+  // 留空 = 每个频道各自一段对话。
+  "privateConversationId": null
 }

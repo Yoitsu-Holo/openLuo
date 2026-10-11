@@ -5,6 +5,7 @@
     <Platform Name="x86" />
   </Configurations>
   <Project Path="openLuo/openLuo.csproj" />
+  <Project Path="openLuo.Application/openLuo.Application.csproj" />
   <Project Path="openLuo.Foundation/openLuo.Foundation.csproj" />
   <Project Path="openLuo.Llm/openLuo.Llm.csproj" />
   <Project Path="openLuo.Embedding/openLuo.Embedding.csproj" />
@@ -20,6 +21,7 @@
   <Project Path="extensions/world/openLuo.Extension.World.csproj" />
   <Project Path="extensions/party/openLuo.Extension.Party.csproj" />
   <Project Path="extensions/sticker/openLuo.Extension.Sticker.csproj" />
+  <Project Path="extensions/music/openLuo.Extension.Music.csproj" />
   <Project Path="openLuo.playgraound/openLuo.playgraound.csproj" />
   <Project Path="openLuo.Cli/openLuo.Cli.csproj" />
   <Project Path="openLuo.Tui/openLuo.Tui.csproj" />
@@ -41,4 +43,5 @@
   <Project Path="tests/openLuo.Logging.Tests/openLuo.Logging.Tests.csproj" />
   <Project Path="tests/openLuo.Assets.Tests/openLuo.Assets.Tests.csproj" />
   <Project Path="tests/openLuo.Persistence.Tests/openLuo.Persistence.Tests.csproj" />
+  <Project Path="tests/openLuo.Tests/openLuo.Tests.csproj" />
 </Solution>

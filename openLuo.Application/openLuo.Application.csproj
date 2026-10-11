@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>openLuo</RootNamespace>
+    <AssemblyName>openLuo.Application</AssemblyName>
+    <Description>应用层：内核装配（组合根）+ 配置/作业/调度/日志/资产/会话存储 + 宿主启动编排（内核启动与 Hub 启动）。宿主 exe 只保留入口。</Description>
+  </PropertyGroup>
+
+  <!-- 依赖集合从原宿主 exe 原样接管：驱动包仍由各自工程声明（见 docs/architecture/hub-protocol.md §3），
+       此处只保留本层代码真正使用的包。 -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <PackageReference Include="Dapper" Version="2.1.79" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\openLuo.Foundation\openLuo.Foundation.csproj" />
+    <ProjectReference Include="..\openLuo.Llm\openLuo.Llm.csproj" />
+    <ProjectReference Include="..\openLuo.Embedding\openLuo.Embedding.csproj" />
+    <ProjectReference Include="..\openLuo.Memory\openLuo.Memory.csproj" />
+    <ProjectReference Include="..\openLuo.AgentContext\openLuo.AgentContext.csproj" />
+    <ProjectReference Include="..\openLuo.Capabilities\openLuo.Capabilities.csproj" />
+    <ProjectReference Include="..\openLuo.Capabilities.Llm\openLuo.Capabilities.Llm.csproj" />
+    <ProjectReference Include="..\openLuo.Capabilities.Mcp\openLuo.Capabilities.Mcp.csproj" />
+    <ProjectReference Include="..\openLuo.Capabilities.A2A\openLuo.Capabilities.A2A.csproj" />
+    <ProjectReference Include="..\openLuo.Abstractions\openLuo.Abstractions.csproj" />
+    <ProjectReference Include="..\openLuo.Server\openLuo.Server.csproj" />
+    <ProjectReference Include="..\openLuo.Modules.WorldState\openLuo.Modules.WorldState.csproj" />
+    <ProjectReference Include="..\openLuo.Domain\openLuo.Domain.csproj" />
+    <ProjectReference Include="..\openLuo.Modules.Agent\openLuo.Modules.Agent.csproj" />
+  </ItemGroup>
+
+</Project>

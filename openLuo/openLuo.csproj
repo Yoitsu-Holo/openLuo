@@ -7,58 +7,17 @@
     <Nullable>enable</Nullable>
     <RootNamespace>openLuo</RootNamespace>
     <AssemblyName>openLuo</AssemblyName>
-    <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!-- 宿主 exe 只保留入口：内核装配、组合根、宿主编排全部在 openLuo.Application
+       （AssemblyBoundaryTests 断言"服务端 exe 只依赖 Application"，防止内核代码回流，见 docs/architecture/hub-protocol.md §3）。 -->
   <ItemGroup>
-    <PackageReference Include="SkiaSharp" Version="4.150.1" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.150.1" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.150.1" />
-    <PackageReference Include="SkiaSharp.NativeAssets.macOS" Version="4.150.1" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
-    <PackageReference Include="Dapper" Version="2.1.79" />
-    <PackageReference Include="Microsoft.Extensions.AI" Version="10.8.1" />
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.8.1" />
-    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.10" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
-    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.10" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
-    <PackageReference Include="Milky.Net.Client" Version="1.2.2" />
-    <PackageReference Include="Polly" Version="8.7.0" />
-    <PackageReference Include="ReadLine" Version="2.0.1" />
-    <PackageReference Include="Terminal.Gui" Version="1.19.0" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.3.18" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.18" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.18" />
-    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.18" />
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
-    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
+    <ProjectReference Include="..\openLuo.Application\openLuo.Application.csproj" />
+    <ProjectReference Include="..\openLuo.Protocol\openLuo.Protocol.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\openLuo.Foundation\openLuo.Foundation.csproj" />
-    <ProjectReference Include="..\openLuo.Llm\openLuo.Llm.csproj" />
-    <ProjectReference Include="..\openLuo.Embedding\openLuo.Embedding.csproj" />
-    <ProjectReference Include="..\openLuo.Memory\openLuo.Memory.csproj" />
-    <ProjectReference Include="..\openLuo.AgentContext\openLuo.AgentContext.csproj" />
-    <ProjectReference Include="..\openLuo.Capabilities\openLuo.Capabilities.csproj" />
-    <ProjectReference Include="..\openLuo.Capabilities.Llm\openLuo.Capabilities.Llm.csproj" />
-    <ProjectReference Include="..\openLuo.Capabilities.Mcp\openLuo.Capabilities.Mcp.csproj" />
-    <ProjectReference Include="..\openLuo.Capabilities.A2A\openLuo.Capabilities.A2A.csproj" />
-    <ProjectReference Include="..\openLuo.Abstractions\openLuo.Abstractions.csproj" />
-    <ProjectReference Include="..\openLuo.Cli\openLuo.Cli.csproj" />
-    <ProjectReference Include="..\openLuo.Tui\openLuo.Tui.csproj" />
-    <ProjectReference Include="..\openLuo.Gui\openLuo.Gui.csproj" />
-    <ProjectReference Include="..\openLuo.Qqbot\openLuo.Qqbot.csproj" />
-    <ProjectReference Include="..\openLuo.OneBot\openLuo.OneBot.csproj" />
-    <ProjectReference Include="..\openLuo.Server\openLuo.Server.csproj" />
-    <ProjectReference Include="..\openLuo.Client\openLuo.Client.csproj" />
-    <ProjectReference Include="..\openLuo.Modules.WorldState\openLuo.Modules.WorldState.csproj" />
-    <ProjectReference Include="..\openLuo.Domain\openLuo.Domain.csproj" />
-    <ProjectReference Include="..\openLuo.Modules.Agent\openLuo.Modules.Agent.csproj" />
-  </ItemGroup>
-
+  <!-- 运行期资源布局：data/（示例配置、插件、技能、表情）与 native/（sqlite-vec）。
+       放在 exe 上是因为发布产物以 exe 为根；Content 不随 ProjectReference 传递，故不能挪到应用层。 -->
   <ItemGroup>
     <Content Include="data\**\*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="native\sqlite-vec\**\*" CopyToOutputDirectory="PreserveNewest" />

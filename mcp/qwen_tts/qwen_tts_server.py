@@ -82,6 +82,7 @@ import time
 from pathlib import Path
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 _ENV_BASE_URL = "QWEN_TTS_BASE_URL"
 _ENV_TIMEOUT = "QWEN_TTS_TIMEOUT"
@@ -369,8 +370,8 @@ def qwen_tts_speak(charId: str, text: str) -> str:
         head = f"本次合成完成(共{len(raw)}字)：\n{raw}"
         note = "[状态] 本段语音已生成并交付。若这就是本次要发送的完整语音内容，请立即停止调用 qwen_tts_speak，用文本回复用户；若确有后续内容需续下一段，text 必须承接上一段结尾，且不要另起无关内容。"
         return f"{head}\n{note}\n{_wav_to_data_url(wav)}"
-    except Exception as ex:  # noqa: BLE001 - 错误文本直接回填给模型
-        return f"语音合成失败: {ex}"
+    except Exception as ex:  # noqa: BLE001 - 失败必须转成 isError(status=failed)；原文仍随 isError 内容回填给模型
+        raise ToolError(f"语音合成失败: {ex}") from ex
 
 
 @mcp.tool(description="列出预设音色库中的全部音色(角色 id / 名称 / 是否默认)；用于查看可用音色。")
@@ -386,7 +387,7 @@ def qwen_tts_list_voices() -> str:
             lines.append(f"- id={v.get('id')} name={v.get('name', '')}{flag}")
         return "\n".join(lines)
     except Exception as ex:  # noqa: BLE001 - 错误文本直接回填给模型
-        return f"音色库读取失败: {ex}"
+        raise ToolError(f"音色库读取失败: {ex}") from ex
 
 
 @mcp.tool(
@@ -413,7 +414,7 @@ def qwen_tts_design(text: str, instruct: str, language: str | None = None) -> st
         _persist_audio(wav, "design", text)
         return _wav_to_data_url(wav)
     except Exception as ex:  # noqa: BLE001 - 错误文本直接回填给模型
-        return f"声音设计失败: {ex}"
+        raise ToolError(f"声音设计失败: {ex}") from ex
 
 
 @mcp.tool(
@@ -438,7 +439,7 @@ def qwen_tts_clone(text: str, ref_audio: str, ref_text: str | None = None,
         _persist_audio(wav, "clone", text)
         return _wav_to_data_url(wav)
     except Exception as ex:  # noqa: BLE001 - 错误文本直接回填给模型
-        return f"声音克隆失败: {ex}"
+        raise ToolError(f"声音克隆失败: {ex}") from ex
 
 
 @mcp.tool(description="检查 Qwen-TTS 服务连接与配置状态（服务地址可能为空 → 提示未配置）。")
@@ -450,7 +451,7 @@ def qwen_tts_health() -> str:
         resp.raise_for_status()
         return f"Qwen-TTS 服务正常: {resp.json()}"
     except Exception as ex:  # noqa: BLE001 - 错误文本直接回填给模型
-        return f"Qwen-TTS 服务检查失败: {ex}"
+        raise ToolError(f"Qwen-TTS 服务检查失败: {ex}") from ex
 
 
 if __name__ == "__main__":

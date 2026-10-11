@@ -12,20 +12,23 @@ public sealed class CliHubApp
     private readonly string _hubUrl;
     private readonly string _subjectId;
     private readonly string _agentId;
+    private readonly string? _conversationId;
     private readonly Func<string, Task> _writeLine;
 
-    public CliHubApp(string hubUrl, string subjectId = "builtin-rin", string agentId = "companion", Func<string, Task>? writeLine = null)
+    public CliHubApp(string hubUrl, string subjectId = "builtin-rin", string agentId = "companion",
+        Func<string, Task>? writeLine = null, string? conversationId = null)
     {
         _hubUrl = hubUrl;
         _subjectId = subjectId;
         _agentId = agentId;
+        _conversationId = conversationId;
         _writeLine = writeLine ?? (text => { Console.WriteLine(text); return Task.CompletedTask; });
     }
 
     public async Task RunAsync(TextReader input, CancellationToken ct = default)
     {
         await using var client = await HubClient.ConnectAsync(_hubUrl, $"cli_{ProtocolIds.NewUlid()}", "cli", ct: ct);
-        var session = await client.OpenSessionAsync(_subjectId, _agentId, ct: ct);
+        var session = await client.OpenSessionAsync(_subjectId, _agentId, _conversationId, ct);
         await _writeLine($"[connected] protocol=v{client.Welcome?.ProtocolVersion} session={session.SessionId}");
 
         while (!ct.IsCancellationRequested)

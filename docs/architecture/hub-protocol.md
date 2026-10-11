@@ -59,11 +59,36 @@ graph TD
 | 层     | 程序集                                                                                                       | 职责                                                                       | 依赖              |
 | ------ | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- | ----------------- |
 | 协议   | **`openLuo.Protocol`（新）**                                                                                 | Envelope、消息类型表、DTO、错误码、版本常量                                | 无                |
-| 服务端 | **`openLuo.Server`（新）**                                                                                   | Kestrel 宿主、HTTP 端点、WS Hub、`IAgentRuntime`→wire 适配、鉴权、会话路由 | Protocol + 内核   |
-| 服务端 | `openLuo`（改造）                                                                                            | 组合根/入口：`--serve` 拉起 Hub                                            | Server + 内核     |
-| 客户端 | **`openLuo.Client`（新）**                                                                                   | 连接管理、重连、会话句柄、协议编解码、请求-响应关联                        | Protocol          |
-| 客户端 | **`openLuo.Client.Cli/.Tui/.Gui/.Qq`（新，或改造现有）**                                                     | 各入口 UI                                                                  | Protocol + Client |
+| 服务端 | `openLuo.Server`                                                                                             | Kestrel 宿主、HTTP 端点、WS Hub、`IAgentRuntime`→wire 适配、鉴权、会话路由 | Protocol + Capabilities |
+| 应用层 | `openLuo.Application`                                                                                        | 内核装配：组合根、配置/作业/调度/日志/资产/会话存储、启动编排（`KernelStartup` / `HubStartup`） | Server + 内核     |
+| 服务端 | `openLuo`（**可执行**）                                                                                      | **纯入口**（`Program.cs` 50 行）：解析参数 → 启动内核 → 运行 Hub → 关闭（**不含任何 UI 驱动**） | 仅 `openLuo.Application` |
+| 客户端 | `openLuo.Client`                                                                                             | 连接管理、重连、会话句柄、协议编解码、请求-响应关联                        | Protocol          |
+| 客户端 | `openLuo.Cli` / `openLuo.Tui` / `openLuo.Gui` / `openLuo.Qqbot`（**各为可执行**）                            | 入口 UI，产物分别为 `openluo-cli` / `openluo-tui` / `openluo-gui` / `openluo-qq` | Protocol + Client（+ 自己的 UI 驱动） |
 | 内核   | `openLuo.Foundation`（拆） / `Capabilities` / `AgentContext` / `Llm` / `Memory` / `Embedding` / `WorldState` | 见 §11 迁移                                                                | —                 |
+
+**实际依赖边（由 `tests/openLuo.E2E.Tests/ArchitectureBoundaryTests.cs` 守护，越界即测试失败）**
+
+- `openLuo.Protocol` → **零本仓依赖**（仅 BCL）——它是所有层的公共契约，不得反向依赖任何东西。
+- `openLuo.Client` → 仅 `openLuo.Protocol`。
+- `openLuo.Server` → `openLuo.Protocol` + `openLuo.Capabilities`。后者是**第二公理**：为把能力元数据与回合事件
+  映射为 wire DTO，用到 `CapabilityKind` / `SideEffectClass` / `CapabilityResult` / `CapabilityDescriptor` 等类型。
+  Server **不**依赖宿主 `openLuo`，也不依赖 `Domain` / `AgentContext` / `Persistence` 等内核其余部分——
+  内核只经 `IAgentRuntime` 注入（见 §11）。若将来要让 Hub 成为"纯网关"，把这批 wire 映射搬回宿主即可。
+- 扩展（`openLuo.Extension.*`）→ **不得依赖宿主 exe**（`openLuo`），只经契约程序集交互。
+
+**已落实（本轮拆分）**
+
+- 四个客户端已是**独立可执行**：`openluo-cli` / `openluo-tui` / `openluo-gui` / `openluo-qq`（`OutputType=Exe` + 各自 `Program.cs`），
+  服务端 `openLuo` 不再引用它们（连带删掉了宿主里 16 个零使用的驱动包 pin，见其 csproj 注释）。
+- 服务端只认 `--serve`；其余旧入口（`--cli/--tui/--gui/--qq`）会明确报错并提示对应客户端程序。
+- Makefile：**服务端与客户端是两个独立构建目标**（`build-server` / `build-clients`，`publish-server` / `publish-clients`）；
+  `publish` 产出 **n+1 份独立程序**（1 服务端 + N 客户端）平铺在 `publish/linux-x64/`，共享同一份 `config/`；
+  客户端不需要内核、不需要 `extensions/`，用 `OPENLUO_HUB_URL` 即可连远端 Hub（多机部署）。
+- 上述边界由 `tests/openLuo.E2E.Tests/ArchitectureBoundaryTests.cs` 反射断言（8 例）：
+  「服务端 exe 只依赖 Application（内核代码不得回流进 exe）」「Application 是内核装配层：不反向依赖宿主 exe、
+  不引客户端、不拉任何 UI 驱动」「服务端不含客户端与 UI 驱动」「客户端不带内核且不互相暴露」。
+- 启动编排（内核连接 MCP/A2A、加载扩展、装配 Hub）从 exe 移入应用层：`KernelStartup` / `HubStartup`。
+- 10 个测试工程全部位于 `tests/`，命名空间与工程名一致。
 
 ---
 
@@ -186,6 +211,7 @@ HTTP body 与 WS 帧**共用同一结构**：
 | 2001 | protocol.version_mismatch        | 协议 major 不符                     | false     |
 | 2002 | protocol.bad_envelope            | Envelope 结构非法                   | false     |
 | 2003 | protocol.unknown_type            | 未知消息类型（可忽略）              | —         |
+| 2004 | protocol.not_implemented         | 类型已定义但本版本未实现（勿重试）  | false     |
 | 3001 | auth.unauthorized                | token 缺失/无效                     | false     |
 | 3002 | auth.forbidden                   | 无该会话/角色权限                   | false     |
 | 4001 | session.not_found                | 会话不存在或已关闭                  | false     |
@@ -203,10 +229,13 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 ### 4.6 幂等与顺序
 
-- `turn.submit` / `message.append` 携带 `data.idempotencyKey`；重复 key 返回既有 `turnId`，不重复执行。
-  **注**：内核 `TurnRequest` 暂无此字段，幂等由 Hub 层幂等表实现（TTL 内去重）。
+- `turn.submit` / `message.append` **可**携带 `data.idempotencyKey`。
+  **v1 未实现**：Hub 当前**不做**去重——既无幂等表，也未把该字段传给内核（`TurnRequestDto.IdempotencyKey`
+  全仓无消费者）；重复提交会**重复执行**，客户端须自行保证不重发。
 - 输出类事件带 `data.sequence`（**全局单调**，会话内亦单调；**不保证连续**——客户端应以 `>` 比较，
-  不得用 `seq+1` 推断丢失）；`output` 类需 `output.ack`（见 §6）。
+  不得用 `seq+1` 推断丢失）。
+- **v1 未实现**：`output` 类**不需要** `output.ack` / `output.fail`——§6.1 中这两条命令未实现，
+  发送会得到 `2004 protocol.not_implemented`。
 - 同一会话的回合由内核 **per-session 闸串行**执行（`turn.submit` 默认排队；`turn.busy` 仅用于超队列上限）。
 
 ### 4.7 身份模型
@@ -255,6 +284,18 @@ HTTP body 与 WS 帧**共用同一结构**：
 `403` 越权或只读、`413` 过大、`429` 限流/超会话上限、`409` 冲突（回合忙/取消/需确认）、
 `503` 在场不可用、`500` 失败（作业/落盘/服务端），其余 `400`。
 
+**实现状态约定**
+
+本文档同时是**协议规范**与**实现现状**的单一来源。凡**已写入规范但 v1 尚未实现**的条目，一律就地标注
+**`v1 未实现`**（可 `grep -n "v1 未实现" docs/architecture/hub-protocol.md` 列出全部）：
+
+- 此类条目对客户端**不是可用契约**，不要据此实现；服务端行为：
+  **已声明但未处理**的命令 → `2004 protocol.not_implemented`（`data`/`errorMsg` 说明 `type not handled: <type>`）；
+  **规范里也没有**的 type → `2003 protocol.unknown_type`（`unknown type: <type>`）。
+- 客户端**不得**依赖标注为 `v1 未实现` 的字段（例如 `TurnRequest.budgets`、`presence.subscribe.sessionIds`），
+  服务端当前会静默忽略。
+- 反向要求：实现若先于规范落地，必须同步补本文档（禁止"只有代码知道"的行为）。
+
 ### 5.1 系统
 
 | 方法 | 路径          | 说明                                                                 |
@@ -272,24 +313,27 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 | 方法 | 路径                 | 说明                                         | 响应 `data`                                                  |
 | ---- | -------------------- | -------------------------------------------- | ------------------------------------------------------------ |
-| GET  | `/v1/agents`         | 可用角色/Agent 目录                          | `{agents: [{agentId, displayName, avatar?, tags[]}]}`        |
+| GET  | `/v1/agents`         | 可用角色/Agent 目录（**v1 未实现**：暂无枚举接口，客户端须由配置得知 `agentId`） | `{agents: [{agentId, displayName, avatar?, tags[]}]}`        |
 | GET  | `/v1/capabilities`   | 能力目录（可带 `?sessionId=` 过滤权限/场景） | `{version, capabilities: [CapabilityDescriptor]}`（见 §7.4） |
-| GET  | `/v1/config/summary` | 非敏感配置摘要（admin；**v1 暂不实现**，配置读取见 §5.7）                      | `{llm: {...}, server: {...}}`                                |
+| GET  | `/v1/config/summary` | 非敏感配置摘要（admin；**v1 未实现**，配置读取见 §5.7）                      | `{llm: {...}, server: {...}}`                                |
 
 ### 5.4 会话
 
 | 方法   | 路径                        | 请求 `data`                                                          | 响应 `data`                                                         |
 | ------ | --------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| POST   | `/v1/sessions`              | `{subjectId, agentId, clientType, clientId, conversationId?, meta?}` | `AgentSession`（§7.1）                                              |
+| POST   | `/v1/sessions`              | `{subjectId, agentId, clientType, clientId, conversationId?, meta?}` | `AgentSession`（§7.1）。带 `conversationId` 且已存在同 `(subjectId, agentId, conversationId)` 的会话时**复用**该会话 |
 | GET    | `/v1/sessions/{id}`         | —                                                                    | `AgentSession`                                                      |
 | DELETE | `/v1/sessions/{id}`         | —                                                                    | `{closed: true}`                                                    |
 | GET    | `/v1/sessions/{id}/context` | `?region=&format=`                                                   | `{summary, regions: [{region, content, priority, source, status}]}` |
-| GET    | `/v1/sessions/{id}/state`   | —                                                                    | 世界状态只读投影 `{version, values: {...}}`（若扩展提供）           |
+| GET    | `/v1/sessions/{id}/state`   | —                                                                    | 世界状态只读投影 `{version, values: {...}}`（**v1 未实现**）           |
 
-### 5.5 回合（**仅无 WS 客户端的 fallback**）
+### 5.5 回合（**仅无 WS 客户端的 fallback**；**v1 未实现**）
 
 > 有 WS 的客户端应一律走 `turn.submit`（§6.1）。此节供 QQ 桥 / 脚本等**无 WS** 客户端使用：
 > 提交后 `202 + turnId`，结果经 `GET /v1/turns/{turnId}` 轮询（因无 WS 无法接收流）。
+>
+> **实现现状（v1）**：本节的 4 个端点**全部未实现**（无 WS 客户端目前无法提交回合；QQ 桥走的是 WS，
+> 见 §6.5）。轮询语义还依赖回合状态持久化，属独立排期项。
 
 | 方法 | 路径                         | 请求 `data`                           | 响应                                                          |
 | ---- | ---------------------------- | ------------------------------------- | ------------------------------------------------------------- |
@@ -315,7 +359,7 @@ HTTP body 与 WS 帧**共用同一结构**：
 | GET    | `/v1/config`      | —                     | `ConfigListResponse`   | 列出命名空间（来源 / 是否覆盖）      |
 | GET    | `/v1/config/{ns}` | —                     | `ConfigGetResponse`    | 获取有效值（**敏感字段掩码 `***`**） |
 | POST   | `/v1/config/{ns}` | `ConfigSetRequest`    | `ConfigSetResponse`    | JSON 合并写入覆盖层                  |
-| DELETE | `/v1/config/{ns}` | `ConfigDeleteRequest` | `ConfigDeleteResponse` | 删除覆盖 → 回退默认                  |
+| DELETE | `/v1/config/{ns}?persist=` | —（无请求体）         | `ConfigDeleteResponse` | 删除覆盖 → 回退默认；`persist=true` 同时删盘 |
 
 **语义**
 
@@ -323,7 +367,8 @@ HTTP body 与 WS 帧**共用同一结构**：
 - `persist=true`：写回磁盘 `config/{ns}.jsonc`（失败回 `1104 config.persist_failed`）。
 - POST 为**递归合并**（对象按键递归；数组整体替换）；值为 `null` 表示删除该键（回退下层）。
 - DELETE 后 `source` 回退到 `file` 或 `default`；关键命名空间（如 `server`）标记只读，写操作回 `1103 config.read_only`。
-- 变更经 `RuntimeConfigCenter` 热加载生效，并向所有 WS 连接广播 `config.updated`。
+- 变更经 `RuntimeConfigCenter` 热加载生效。
+  **v1 未实现**：当前**不广播** `config.updated`（§6.2 中该事件无生产者），客户端不得依赖配置变更推送。
 
 ### 5.8 调度（管理，需 `admin`）
 
@@ -347,8 +392,8 @@ HTTP body 与 WS 帧**共用同一结构**：
 | 方法   | 路径            | 请求 `data`        | 响应 `data`         |
 | ------ | --------------- | ------------------ | ------------------- |
 | POST   | `/v1/jobs`      | `CreateJobRequest` | `202` + `JobDto`    |
-| GET    | `/v1/jobs/{id}` | —                  | `JobStatusResponse` |
-| DELETE | `/v1/jobs/{id}` | —                  | `{cancelled:true}`  |
+| GET    | `/v1/jobs/{id}` | —                  | `JobDto`（**已实现**；早期规范写的 `JobStatusResponse` 形状从未上线） |
+| DELETE | `/v1/jobs/{id}` | —                  | `JobDto`（`status: cancelled`；不存在/不可取消回 `1301`）      |
 
 进度 / 完成经 WS `job.progress` / `job.completed` 推送。用于 CG 生成、批量 TTS、Live2D 构建等长任务。
 
@@ -356,8 +401,11 @@ HTTP body 与 WS 帧**共用同一结构**：
 
 | 方法   | 路径              | 说明                                                                             |
 | ------ | ----------------- | -------------------------------------------------------------------------------- |
-| POST   | `/v1/assets`      | 上传二进制（`Content-Type` = MIME），返回 `UploadAssetResponse`（含 `assetRef`） |
-| DELETE | `/v1/assets/{id}` | 删除资产                                                                         |
+| POST   | `/v1/assets?sessionId=` | 上传二进制（请求体即原始字节，`Content-Type` = MIME），返回 `UploadAssetResponse`（含 `assetRef`） |
+| DELETE | `/v1/assets/{id}` | 删除资产（`ttl` 到期由清理任务回收，见 §5.11）                                   |
+
+**实现现状（v1）**：`sessionId` 走**查询参数**，文件名走 **`X-File-Name` 请求头**（`HubClient.UploadAssetAsync`
+即如此），服务端同时兼容 `?fileName=`。规范早期设想的 JSON 元数据体（`UploadAssetRequest`）从未启用，已从协议类型中移除。
 
 补齐 §9 的反向链路：客户端上传的图片 / 语音 / 文件经 `assetRef` 出现在 `TurnRequest.blocks`。
 
@@ -396,27 +444,33 @@ HTTP body 与 WS 帧**共用同一结构**：
 - 端点：`GET /v1/stream`（`Upgrade: websocket`）。
 - 一条连接可**订阅多个会话**；服务端按 `sessionId` 路由事件。
 - 客户端命令（C→S）需 `id`；服务端事件（S→C）携带 `replyTo`（若由命令触发）或独立。
+- **回环直连**：`openLuo.Client.HubClient` 对 `127.0.0.1`/`localhost`/`::1` 显式禁用 HTTP 代理
+  （`ClientWebSocket.Options.Proxy = null`、Hub HTTP 用 `UseProxy=false`）——系统级 `http_proxy`
+  会把本地连接交给代理，代理到不了该端口时只报 `response ended prematurely`，极易误判为 Hub 崩溃；
+  非回环地址仍按环境变量走代理。连接失败抛 `HubConnectException`（含目标地址与「先起 `--serve`」提示）。
+  同一约定也适用于 OneBot 腿（`openLuo.OneBot.OneBotWebSocketClient`）：`ws://localhost:3001`
+  若不直连，代理抖动会表现为「消息没发出去」，与 Hub 无关。
 
 ### 6.1 客户端 → 服务端（命令）
 
 | type                                          | `data`                                                       | 说明                                             |
 | --------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
 | `hello`                                       | `{protocolVersion, token, clientId, clientType, features[]}` | 必须首帧                                         |
-| `session.open`                                | `{subjectId, agentId, conversationId?, meta?}`               | 开会话（等价 HTTP POST /sessions）               |
+| `session.open`                                | `{subjectId, agentId, conversationId?, meta?}`               | 开会话（等价 HTTP POST /sessions）。**给了 `conversationId` 且已存在同 `(subjectId, agentId, conversationId)` 的会话时复用该会话**（多端共享同一段对话：PC 客户端与手机 QQ 私聊配同一值即可）；未给则每次新建 |
 | `session.subscribe`                           | `{sessionId}`                                                | 订阅某会话的 output/state 事件（多客户端可共订；由 **Hub 分发**——内核队列为单消费者，见 §11） |
 | `session.unsubscribe`                         | `{sessionId}`                                                | 退订                                             |
-| `session.close`                               | `{sessionId}`                                                | 关闭会话                                         |
+| `session.close`                               | `{sessionId}`                                                | 关闭会话（**v1 未实现**；HTTP `DELETE /v1/sessions/{id}` 已实现） |
 | `turn.submit`                                 | `TurnRequest` + `{idempotencyKey}`                           | 提交回合（流式结果经事件返回）                   |
-| `turn.cancel`                                 | `{turnId}`                                                   | 取消进行中回合                                   |
+| `turn.cancel`                                 | `{turnId}`                                                   | 取消进行中回合（**v1 未实现**；内核 `TurnCancelled` 码已预留） |
 | `message.append`                              | `{sessionId, senderName?, text, blocks?, meta?}`             | 写入历史不触发回合                               |
-| `output.ack`                                  | `{sequence}`                                                 | 已成功投递（对应 `IOutputQueue.AckAsync`）       |
-| `output.fail`                                 | `{sequence, permanent}`                                      | 投递失败（对应 `FailAsync`）                     |
+| `output.ack`                                  | `{sequence}`                                                 | 已成功投递（对应 `IOutputQueue.AckAsync`；**v1 未实现**） |
+| `output.fail`                                 | `{sequence, permanent}`                                      | 投递失败（对应 `FailAsync`；**v1 未实现**）      |
 | `confirm.response`                            | `{requestId, approved, reason?}`                             | 高危能力确认结果（§8）                           |
-| `config.get` / `config.set` / `config.del`    | `ConfigGetCommand` / `ConfigSetCommand` / `ConfigDelCommand` | 配置读取 / 修改 / 删除（§5.7，需 `admin`）       |
+| `config.get` / `config.set` / `config.del`    | `ConfigGetCommand` / `ConfigSetCommand` / `ConfigDelCommand` | 配置读取 / 修改 / 删除（§5.7，需 `admin`；**v1 未实现**——配置只走 HTTP） |
 | `session.resume`                              | `{sessionId, sinceSequence}`                                 | 重连续传（补发未收输出，§6.4）                   |
-| `presence.subscribe` / `presence.unsubscribe` | `{sessionIds?}`                                              | 订阅在线状态（多客户端）                         |
-| `device.report`                               | `{deviceId, kind?, state}`                                   | 边缘 / 网关上报设备状态（智能家居）              |
-| `avatar.command`                              | `{agentId, motion?, state?}`                                 | 客户端请求角色表现（点击 / 触碰互动）            |
+| `presence.subscribe` / `presence.unsubscribe` | `{sessionIds?}`                                              | 订阅在线状态（多客户端）。**v1 未实现** `sessionIds` 过滤：当前订阅后收到**全部**在场变更 |
+| `device.report`                               | `{deviceId, kind?, state}`                                   | 边缘 / 网关上报设备状态（智能家居；**v1 未实现**） |
+| `avatar.command`                              | `{agentId, motion?, state?}`                                 | 客户端请求角色表现（点击 / 触碰互动；**v1 未实现**） |
 | `audit.subscribe`                             | `{}`                                                         | 订阅审计事件（需 `admin`）                       |
 | `ping`                                        | `{}`                                                         | 心跳                                             |
 
@@ -433,17 +487,17 @@ HTTP body 与 WS 帧**共用同一结构**：
 | `tool.result`                                                    | `{turnId, callId, status, preview?}`                                | `TurnEvent.kind=tool_result`                                  |
 | `output`                                                         | `OutputItem`（§7.3）                                                             | `IOutputQueue` 推送（**即发**，D50）                          |
 | `turn.final`                                                     | `TurnResult`（§7.5）                                                             | `TurnEvent.kind=final`                                        |
-| `context.updated`                                                | `{sessionId, regions[]}`                                                         | 上下文快照变更（可选/调试）                                   |
-| `state.updated`                                                  | `{sessionId, version, patch[]}`                                                  | 世界状态变更                                                  |
+| `context.updated`                                                | `{sessionId, regions[]}`                                                         | 上下文快照变更（可选/调试；**v1 未实现**）                    |
+| `state.updated`                                                  | `{sessionId, version, patch[]}`                                                  | 世界状态变更（**v1 未实现**：Hub 当前不发布状态变更）         |
 | `confirm.request`                                                | `{requestId, turnId, canonicalId, risk, summary, argsPreview}`                   | 高危能力需确认                                                |
-| `config.updated`                                                 | `ConfigUpdatedEvent`                                                             | 配置已变更（热加载广播）                                      |
-| `notification`                                                   | `NotificationEvent`                                                              | 非回合绑定的服务端通知（提醒 / 告警）                         |
+| `config.updated`                                                 | `ConfigUpdatedEvent`                                                             | 配置已变更（**v1 未实现**：见 §5.7）                          |
+| `notification`                                                   | `NotificationEvent`                                                              | 非回合绑定的服务端通知（提醒 / 告警；**v1 未实现**）          |
 | `turn.started`                                                   | `TurnStartedEvent`                                                               | 服务端发起的回合（`origin: scheduled\|event\|presence\|hub`） |
 | `presence.updated`                                               | `PresenceUpdatedEvent`                                                           | 在线状态变化（多客户端）                                      |
-| `member.joined` / `member.left`                                  | `MemberJoinedEvent` / `MemberLeftEvent`                                          | 群成员变更                                                    |
-| `device.state`                                                   | `DeviceStateEvent`                                                               | 设备状态变化                                                  |
+| `member.joined` / `member.left`                                  | `MemberJoinedEvent` / `MemberLeftEvent`                                          | 群成员变更（**v1 未实现**）                                   |
+| `device.state`                                                   | `DeviceStateEvent`                                                               | 设备状态变化（**v1 未实现**）                                 |
 | `job.accepted` / `job.progress` / `job.completed` / `job.failed` | `JobAcceptedEvent` / `JobProgressEvent` / `JobCompletedEvent` / `JobFailedEvent` | 长任务生命周期                                                |
-| `avatar.state` / `avatar.motion` / `avatar.lipsync`              | `AvatarStateEvent` / `AvatarMotionEvent` / `AvatarLipsyncEvent`                  | 角色表现（Live2D / 3D）                                       |
+| `avatar.state` / `avatar.motion` / `avatar.lipsync`              | `AvatarStateEvent` / `AvatarMotionEvent` / `AvatarLipsyncEvent`                  | 角色表现（Live2D / 3D；**v1 未实现**）                        |
 | `audit.event`                                                    | `AuditEventDto`                                                                  | 审计事件（admin 订阅）                                        |
 | `error`                                                          | 顶层 `errorCode` / `errorMsg`（§4.2 / §4.5）                                     | 关联 `replyTo`                                                |
 | `pong`                                                           | `{ts}`                                                                           | 心跳应答                                                      |
@@ -464,21 +518,25 @@ sequenceDiagram
   H->>C: tool.call{canonicalId:"music:share_song"}
   H->>C: tool.result{status:ok}
   H->>C: output{kind:"card",...}
-  C->>H: output.ack{sequence:1}
   H->>C: output{kind:"audio",...}
-  C->>H: output.ack{sequence:2}
   H->>C: turn.final{finalText,outputs,stateVersion}
 ```
 
 > 注意：`output` 事件在回合进行中**即发**（对应现有"音频生成即入队"），不等 `turn.final`。
+> **v1 未实现**：`output.ack` 回执（§6.1）——故上图不画回执；客户端收到 `output` 即视为已投递。
 
 ### 6.4 扩展域语义
 
-**群聊 / 多用户**：`TurnRequestDto.userId` 是稳定身份（区别于平台显示名 `senderName`）；`mentions[]` 表被 @；`threadId` 在会话内切分线程（群内每用户 / 每话题独立上下文与记忆）。`OutputDto.recipient` 定向投递（`@某人`、私聊），`mentions[]` 随输出 @，`threadId` 回填所属线程。成员变更走 `member.joined` / `member.left`。
+**群聊 / 多用户**（**v1 未实现**：`userId`/`mentions`/`threadId` 均未接入内核，见 §7.2；`OutputDto.recipient` 与成员事件也无生产者）：`TurnRequestDto.userId` 是稳定身份（区别于平台显示名 `senderName`）；`mentions[]` 表被 @；`threadId` 在会话内切分线程（群内每用户 / 每话题独立上下文与记忆）。`OutputDto.recipient` 定向投递（`@某人`、私聊），`mentions[]` 随输出 @，`threadId` 回填所属线程。成员变更走 `member.joined` / `member.left`。
 
 **多客户端 / 在场**：一条连接可订阅多会话；Envelope `targetClientId` 把事件定向到某个客户端（null = 广播给订阅者）；`presence.subscribe` 后收 `presence.updated`。断线重连用 `session.resume{sinceSequence}` 补发未收输出（依赖 `output` 的 `sequence`，全局单调、不保证连续）。
 
+**多端共享同一段对话（会话寻址）**：以同一 `(subjectId, agentId, conversationId)` 调 `session.open` 即**复用同一会话**（§5.4 / §6.1）——PC 客户端与手机 QQ 私聊配同一 `conversationId` 就落在同一段对话里（两端都能看到彼此的消息，回合按会话串行）；不同 `conversationId` 仍各自独立。会话是**寻址单位**，记忆/世界状态的所有者仍是 `subjectId`（后续的用户认证与公共/私有记忆划分挂在 subjectId/actor 这一层，不需要改 client/hub）。
+
 > **投递与 ack（多客户端关键语义）**：`output` 事件由 Hub **广播给该会话的所有订阅客户端**；`output.ack` 记录「**某一端**已成功投递」，**不因个别端未 ack 而阻塞**（内核队列已解耦，`Enqueue` 永不等待 ack，见 §11）。需「确保某端收到」用 `session.resume{sinceSequence}` 补读。
+>
+> **v1 未实现**：`output.ack` / `output.fail` 命令（§6.1）——当前**没有任何客户端会上报 ack**，
+> 客户端把收到 `output` 视为已投递即可。
 
 **实现状态（已落地）**
 
@@ -489,7 +547,7 @@ sequenceDiagram
 - Envelope `targetClientId` **定向优先**（只投给匹配 `clientId` 的连接）。
 - 未订阅时的跨会话泄漏已消除（冒烟实测：B 未订阅 A 时收不到 A 的回合事件）。
 
-**主动 / 调度**：`/v1/schedules` 注册定时 / 条件触发；到期 Hub 自主发起回合并发 `turn.started{origin}`（`client|scheduled|event|presence|hub`），后续事件与普通回合一致；非回合的轻量提示走 `notification`。
+**主动 / 调度**：`/v1/schedules` 注册定时 / 条件触发；到期 Hub 自主发起回合并发 `turn.started{origin}`（`client|scheduled|event|presence|hub`），后续事件与普通回合一致；非回合的轻量提示走 `notification`（**v1 未实现**：该事件当前无生产者）。
 
 > **投递目标**：`notification` / `device.state` / `job.*` / `avatar.*` / `member.*` 等**非回合事件**默认
 > **广播给已订阅相关会话的客户端**；无 `sessionId` 的全局通知广播给所有已鉴权连接；需点对点时用 Envelope `targetClientId`。
@@ -497,13 +555,35 @@ sequenceDiagram
 > **离线策略**：`turn.started`（主动回合）**不等客户端在线**照常执行；其 `output` 留存于会话日志，
 > 客户端上线后用 `session.resume{sinceSequence}` 补读（超出会话日志保留窗口的内容不可补，见 §9/§11）。
 
-**设备（智能家居）**：边缘 / 网关用 `device.report` 上报状态，Hub 广播 `device.state`；模型经能力（MCP / 内建）控制设备，高危操作（开锁 / 燃气）应声明 `requiresConfirmation`（§8）。
+**设备（智能家居）**（**v1 未实现**）：边缘 / 网关用 `device.report` 上报状态，Hub 广播 `device.state`；模型经能力（MCP / 内建）控制设备，高危操作（开锁 / 燃气）应声明 `requiresConfirmation`（§8）。
 
 **长任务 / 作业**：`POST /v1/jobs` 提交（CG 生成 / 批量 TTS / Live2D 构建），`job.accepted`→`job.progress`→`job.completed|failed`；产出复用 `OutputDto`（大内容走 assetRef）。作业与回合并行，不阻塞对话。
 
-**角色表现（Live2D / 3D）**：`avatar.state`（表情 / 参数）、`avatar.motion`（动作）、`avatar.lipsync`（音频 assetRef + viseme 时间轴）；客户端渲染，`avatar.command` 支持点击 / 触碰互动回传。
+**角色表现（Live2D / 3D）**（**v1 未实现**）：`avatar.state`（表情 / 参数）、`avatar.motion`（动作）、`avatar.lipsync`（音频 assetRef + viseme 时间轴）；客户端渲染，`avatar.command` 支持点击 / 触碰互动回传。
 
 **观测 / 审计**：`/v1/traces/{turnId}` 回放决策轨迹，`/v1/metrics` 取指标；`audit.subscribe` 后收 `audit.event`（配置变更、会话操作、能力调用等）。
+
+### 6.5 断连与重连（长期客户端）
+
+连接可能被**硬断**（Hub 重启、链路 RST）而非正常关闭。客户端侧契约：
+
+| 情况 | `openLuo.Client.HubClient` 行为 |
+| --- | --- |
+| 对端发 `Close` 帧（正常关闭） | `ReceiveAsync` 返回 `null`，回合流正常结束 |
+| 传输层被 abort（RST / Aborted 状态） | `ReceiveAsync` / `SendAsync` 抛 `HubDisconnectedException`（含目标地址），**不再**返回 `null` 让上层把断连当成回合结束（会静默丢消息） |
+| 已断连后再发送 | 抛 `HubDisconnectedException`（此前是底层 `InvalidOperationException: The WebSocket is in an invalid state ('Aborted') ...`，措辞误导） |
+| `IsConnected` | `false`（不能只看 `WebSocketState`：abort 后它可能仍读到 `Open`，直到下一次 IO；故客户端一旦发生过断连即标记不可用） |
+
+**长期客户端负责重连**（`HubClient` 本身不自动重连，避免与顺序请求-响应语义冲突）：
+
+- **QQ 桥**（`openLuo.Qqbot.QqBotApplication`）：进程内单例连接，Hub 未起/中途重启都自建连——
+  启动时后台重试（1s→30s 退避，桥不因 Hub 未起而退出）；每条消息前校验 `IsConnected`，必要时重建。
+  回合在**尚未产出任何片段**前断连时重连并重试一次（避免重复回复）；已发出部分则中断并记录，不重放。
+- CLI / TUI / GUI 为交互式短连接，断连直接报错即可（未做自动重连）。
+- 会话连续性：桥以 `conversationId = qq-{scene}-{targetId}` 开会话，重连后 Hub 复用同一会话（§5.4 持久化）。
+
+Hub 侧：连接循环内的异常不再**静默**终止连接，而是打印 `[hub] connection <id> failed: <type>: <message>`
+（此前只表现为客户端 socket 被 abort，服务端无任何痕迹）。
 
 ---
 
@@ -526,14 +606,17 @@ sequenceDiagram
   "senderName":"…",
   "text":"…",
   "blocks":[],                 // 多模态块（image/audio/file/card）
-  "meta":{ },                  // 平台元数据（scene/sender/channel）
-  "budgets":{ },               // 可选：决策预算覆盖
-  "userId":"u_10001",          // 群聊：说话人稳定身份（§6.4）
-  "mentions":["rin"],          // 被 @ 的目标（userId 或角色 id）
-  "threadId":"t_…",            // 会话内线程
-  "idempotencyKey":"…"
+  "meta":{ },                  // **v1 未实现**：不透传内核上下文（当前被丢弃）
+  "budgets":{ },               // **v1 未实现**：不映射到内核 DecisionBudgets（当前被丢弃）
+  "userId":"u_10001",          // **v1 未实现**：不参与身份/记忆隔离（隔离键是会话 `subjectId`）
+  "mentions":["rin"],          // **v1 未实现**：@ 识别目前在 QQ 桥侧完成，Hub 丢弃
+  "threadId":"t_…",            // **v1 未实现**：不参与线程隔离（当前被丢弃）
+  "idempotencyKey":"…"         // **v1 未实现**：无幂等表，见 §4.6
 }
 ```
+
+> **实现现状**：Hub 只把 `turnId / actorId / sourceId / channelId / senderName / text / blocks` 映射进内核
+> `TurnRequest`（`HubServer.RunTurnStreamAsync`）；上面六个字段**只被反序列化、不被使用**，传入不报错也无效果。
 
 ### 7.3 OutputItem（`output` 事件 / `turn.final.outputs[]`）
 
@@ -637,11 +720,11 @@ sequenceDiagram
 - 权限：`/v1/assets` 需**已鉴权**（角色 ≥ `user`，见 §4.8）。
 - 客户端：`HubClient.UploadAssetAsync/DownloadAssetAsync`；QQ 桥对 `assetRef` 输出按 id 拉取字节后再发段。
 
-> 仍未做：资产 TTL 清理（占位字段已在协议 `ttl`）；冷/热分离。
+> 仍未做：冷 / 热分离（**资产 TTL 清理已落地**，见 §5.11）。
 
 ---
 
-## 10. Hub ↔ Hub 联邦（复用同一协议）
+## 10. Hub ↔ Hub 联邦（**v1 未实现**：本节为规划，复用同一协议）
 
 中心服务式不等于单点。多个 Hub 之间以**客户端角色**互连，复用同一 Wire 协议：
 
@@ -662,7 +745,7 @@ sequenceDiagram
 | `CapabilityCatalogSnapshot`/`CapabilityDescriptor` | `GET /v1/capabilities`                                                                                                                            |
 | `SessionStore`（内存）                             | Hub 侧会话注册表，**改为 SQLite 持久化**（决策 #3）                                                                                               |
 | `openLuo.Cli/Tui/Gui/Qqbot`（进程内直连）          | 改为 `openLuo.Client.*`（经 protocol 连 Hub）                                                                                                     |
-| 宿主 `openLuo`（多入口 exe）                       | 拆为 `--serve`（Hub）与各客户端 exe；不再聚合 UI 框架                                                                                             |
+| 宿主 `openLuo`（多入口 exe）                       | **已完成**：拆为 `--serve`（Hub 服务端）与四个客户端可执行（`openluo-cli/tui/gui/qq`）；宿主不再聚合 UI 框架                                                       |
 
 **建议实施顺序**（与既有架构重构 P1–P5 合流）：
 

@@ -30,23 +30,14 @@ public sealed record CreateJobRequest
     public JsonNode? Payload { get; init; }
 }
 
-/// <summary>`GET /v1/jobs/{id}` 响应。</summary>
-public sealed record JobStatusResponse
-{
-    public JobDto Job { get; init; } = new();
-}
+// `GET /v1/jobs/{id}` / `DELETE /v1/jobs/{id}` 响应：直接返回 `JobDto`。
+// 规范早期曾定义 `JobStatusResponse` 包装形状，但线上从未使用（服务端一直返回裸 `JobDto`），
+// 故该类型已删除，避免同一端点存在两份互相矛盾的契约。
 
 // ─────────────────────────── 资产上传（客户端 → 服务端） ───────────────────────────
 
-/// <summary>`POST /v1/assets` 请求元数据（本体为二进制请求体）。</summary>
-public sealed record UploadAssetRequest
-{
-    /// <summary>期望的 MIME 类型。</summary>
-    public string Mime { get; init; } = string.Empty;
-
-    /// <summary>建议文件名（可选）。</summary>
-    public string? FileName { get; init; }
-}
+// `POST /v1/assets` 的元数据不在 JSON 体里：`sessionId` 走查询参数、文件名走 `X-File-Name` 头
+// （`Content-Type` 即 MIME）。规范早期定义的 `UploadAssetRequest` 体从未启用，已删除。
 
 /// <summary>`POST /v1/assets` 响应。</summary>
 public sealed record UploadAssetResponse

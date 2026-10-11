@@ -2,7 +2,7 @@ using OpenLuo.Extensions.Music;
 using openLuo.Abstractions;
 using openLuo.Capabilities.Core;
 using openLuo.Capabilities.Core.Models;
-using openLuo.Interfaces.QQbot;
+using openLuo.Qqbot;
 using openLuo.Server;
 using Xunit;
 
