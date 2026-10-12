@@ -65,7 +65,12 @@ public sealed class CliHubApp
                 case EventTypes.Output:
                     // 回合进行中的即发输出（interim / 音频）
                     if (evt.DataAs<OutputDto>() is { } interim)
+                    {
                         await _writeLine(CliRenderer.Render(interim));
+                        // 投递回执（多端语义：任一端 ack 即视为已投递，见协议 §4.6）
+                        await client.SendAsync(EnvelopeFactory.Create(
+                            MessageTypes.OutputAck, new OutputAckCommand { Sequence = interim.Sequence }), ct);
+                    }
                     break;
 
                 case EventTypes.TurnFinal:

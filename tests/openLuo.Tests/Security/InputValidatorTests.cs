@@ -1,11 +1,15 @@
-using openLuo.Infrastructure.Security;
+using openLuo.Server.Security;
 using Xunit;
 
 namespace openLuo.Tests.Security;
 
+/// <summary>
+/// 输入校验（现位于 <c>openLuo.Server.Security</c>，是 Hub 入口治理的一部分，见 hub-protocol §4.9）。
+/// 这里用**显式上限**构造，以覆盖长度/关键字/破坏字符三类判定。
+/// </summary>
 public class InputValidatorTests
 {
-    private readonly InputValidator _validator = new();
+    private readonly InputValidator _validator = new(maxInputLength: 1000, promptBreakCharLimit: 10);
 
     [Fact]
     public void ValidateUserInput_RejectsNull()

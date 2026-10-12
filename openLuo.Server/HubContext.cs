@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using openLuo.Capabilities.Core;
 using openLuo.Core.Interfaces;
@@ -39,6 +40,21 @@ internal sealed class HubContext
     public IOutputQueue? OutputQueue { get; init; }
     public ITraceStore? Traces { get; init; }
     public HubConfirmationGate? ConfirmationGate { get; init; }
+
+    /// <summary>
+    /// 会话世界状态读取端口（宿主注入；未注入则不注册 <c>GET /v1/sessions/{id}/state</c>、也不推 <c>state.updated</c>）。
+    /// 端口本身定义在 Capabilities（Server 允许依赖的两层之一），故不引入对 WorldState 模块的依赖。
+    /// </summary>
+    public IStateReader? StateReader { get; init; }
+
+    /// <summary>各会话上次广播出去的状态版本与值，用于生成 <c>state.updated</c> 的增量 patch。</summary>
+    public ConcurrentDictionary<string, (long Version, JsonNode? Values)> StateBroadcast { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>进行中回合：turnId → 联动取消源（供 <c>turn.cancel</c> 取消；回合结束即清理）。</summary>
+    public ConcurrentDictionary<string, CancellationTokenSource> Turns { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>入口治理（限流 + 输入校验，§4.9）；策略来自 <see cref="HubServerOptions.Security"/>。</summary>
+    public required HubRequestGuard Guard { get; init; }
 
     /// <summary>HTTP 请求方身份（由 Bearer token 解析；未鉴权为 null）。</summary>
     public string? Actor(HttpContext ctx) =>

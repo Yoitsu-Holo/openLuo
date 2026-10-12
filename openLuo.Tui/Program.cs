@@ -7,9 +7,14 @@ using openLuo.Protocol;
 var hubUrl = Environment.GetEnvironmentVariable("OPENLUO_HUB_URL")
     ?? $"ws://127.0.0.1:{ProtocolInfo.DefaultPort}{ProtocolInfo.StreamPath}";
 
+var subjectId = Environment.GetEnvironmentVariable("OPENLUO_SUBJECT_ID") ?? "builtin-rin";
+var agentId = Environment.GetEnvironmentVariable("OPENLUO_AGENT_ID") ?? "companion";
+// 会话寻址：与其它端（CLI / QQ 桥的 privateConversationId）填同一个值即共享同一段对话
+var conversationId = Environment.GetEnvironmentVariable("OPENLUO_CONVERSATION_ID");
+
 try
 {
-    await new TuiApplication(hubUrl).RunAsync();
+    await new TuiApplication(hubUrl, subjectId, agentId, conversationId).RunAsync();
     return 0;
 }
 catch (HubConnectException ex)

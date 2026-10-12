@@ -29,7 +29,7 @@ public enum CapabilityStatus
     Conflict,
     Rejected,
     Timeout,
-    Cancelled
+    Cancelled,
 }
 
 /// <summary>

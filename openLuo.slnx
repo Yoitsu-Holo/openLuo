@@ -22,7 +22,7 @@
   <Project Path="extensions/party/openLuo.Extension.Party.csproj" />
   <Project Path="extensions/sticker/openLuo.Extension.Sticker.csproj" />
   <Project Path="extensions/music/openLuo.Extension.Music.csproj" />
-  <Project Path="openLuo.playgraound/openLuo.playgraound.csproj" />
+  <Project Path="openLuo.playground/openLuo.playground.csproj" />
   <Project Path="openLuo.Cli/openLuo.Cli.csproj" />
   <Project Path="openLuo.Tui/openLuo.Tui.csproj" />
   <Project Path="openLuo.Gui/openLuo.Gui.csproj" />

@@ -26,21 +26,21 @@ public sealed class HubProtocolSurfaceTests
         MessageTypes.SessionUnsubscribe,
         MessageTypes.SessionResume,
         MessageTypes.MessageAppend,
+        MessageTypes.OutputAck,
+        MessageTypes.OutputFail,
         MessageTypes.PresenceSubscribe,
         MessageTypes.PresenceUnsubscribe,
         MessageTypes.AuditSubscribe,
         MessageTypes.ConfirmResponse,
         MessageTypes.Ping,
         MessageTypes.TurnSubmit,
+        MessageTypes.TurnCancel,
     };
 
     /// <summary>已声明但 v1 未实现的命令（文档 §6.1 标 `v1 未实现`）：发送必须回 2004。</summary>
     private static readonly HashSet<string> Reserved = new(StringComparer.Ordinal)
     {
         MessageTypes.SessionClose,
-        MessageTypes.TurnCancel,
-        MessageTypes.OutputAck,
-        MessageTypes.OutputFail,
         MessageTypes.ConfigGet,
         MessageTypes.ConfigSet,
         MessageTypes.ConfigDel,
@@ -110,7 +110,7 @@ public sealed class HubProtocolSurfaceTests
         }
     }
 
-    private static async Task<HubClient> ConnectWithRetryAsync(string streamUrl, CancellationToken ct)
+    private static async Task<HubClient> ConnectWithRetryAsync(string streamUrl, CancellationToken ct, string clientId = "surface-test")
     {
         var deadline = DateTime.UtcNow.AddSeconds(30);
         while (true)
@@ -118,13 +118,265 @@ public sealed class HubProtocolSurfaceTests
             try
             {
                 // 显式传空 token：避免测试进程的 OPENLUO_HUB_TOKEN 影响结果（默认允许匿名）
-                return await HubClient.ConnectAsync(streamUrl, "surface-test", "cli", token: string.Empty, ct: ct);
+                return await HubClient.ConnectAsync(streamUrl, clientId, "cli", token: string.Empty, ct: ct);
             }
             catch (HubConnectException) when (DateTime.UtcNow < deadline)
             {
                 await Task.Delay(100, ct);
             }
         }
+    }
+
+    [Fact]
+    public async Task 会话状态_可HTTP读取_且回合后推送增量变更()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var port = FreePort();
+        var runtime = new SessionfulStubRuntime();
+        var state = new StubStateReader();
+        var run = HubServer.RunAsync(
+            runtime,
+            new HubServerOptions { Listen = $"http://127.0.0.1:{port}" },
+            stateReader: state,
+            ct: cts.Token);
+        var url = $"ws://127.0.0.1:{port}/v1/stream";
+
+        var client = await ConnectWithRetryAsync(url, cts.Token);
+        try
+        {
+            var session = await OpenSessionAsync(client, "builtin-rin", "companion", "main", cts.Token);
+
+            // ① HTTP 只读投影（按会话 → subject 取状态）
+            state.Set("builtin-rin", 1, ("mood", "calm"));
+            using var http = new HttpClient();
+            var body = await http.GetStringAsync($"http://127.0.0.1:{port}/v1/sessions/{session.SessionId}/state", cts.Token);
+            Assert.Contains("\"version\":1", body);
+            Assert.Contains("calm", body);
+
+            // ② 状态推进 + 回合结束后推送 state.updated，patch 只含变化的键
+            state.Set("builtin-rin", 2, ("mood", "happy"), ("energy", 80));
+            await client.SendAsync(EnvelopeFactory.Create(MessageTypes.TurnSubmit, new TurnRequestDto { Text = "hi" }), cts.Token);
+
+            var sawState = false;
+            var sawFinal = false;
+            while (!sawState || !sawFinal)
+            {
+                var reply = await client.ReceiveAsync(cts.Token) ?? throw new IOException("hub closed the connection");
+                if (reply.Type == EventTypes.TurnFinal)
+                    sawFinal = true;
+                if (reply.Type == EventTypes.StateUpdated)
+                {
+                    var payload = reply.DataAs<StateUpdatedEvent>() ?? throw new InvalidOperationException("no state.updated payload");
+                    Assert.Equal(2, payload.Version);
+                    Assert.Equal("happy", payload.Patch?["mood"]?.GetValue<string>());
+                    Assert.Equal(80, payload.Patch?["energy"]?.GetValue<int>());
+                    sawState = true;
+                }
+            }
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await cts.CancelAsync();
+            try { await run; } catch (OperationCanceledException) { /* 取消退出 */ }
+        }
+    }
+
+    /// <summary>状态只读端口的桩：按 subject 存一份版本化视图。</summary>
+    private sealed class StubStateReader : IStateReader
+    {
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, StateView> _views = new(StringComparer.OrdinalIgnoreCase);
+
+        public void Set(string subjectId, long version, params (string Key, object? Value)[] values) =>
+            _views[subjectId] = new StateView(
+                version,
+                values.ToDictionary(v => v.Key, v => v.Value, StringComparer.OrdinalIgnoreCase));
+
+        public StateView? TryGet(string subjectId) => _views.TryGetValue(subjectId, out var view) ? view : null;
+    }
+
+    [Fact]
+    public async Task 输出回执_转发到内核输出队列()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var port = FreePort();
+        var queue = new RecordingOutputQueue();
+        var run = HubServer.RunAsync(
+            new SessionfulStubRuntime(),
+            new HubServerOptions { Listen = $"http://127.0.0.1:{port}" },
+            outputQueue: queue,
+            ct: cts.Token);
+
+        var client = await ConnectWithRetryAsync($"ws://127.0.0.1:{port}/v1/stream", cts.Token);
+        try
+        {
+            await client.SendAsync(EnvelopeFactory.Create(MessageTypes.SessionOpen, new SessionOpenCommand
+            {
+                SubjectId = "builtin-rin", AgentId = "companion", ConversationId = "main",
+            }), cts.Token);
+            _ = await client.ReceiveAsync(cts.Token);   // session.opened
+
+            await client.SendAsync(EnvelopeFactory.Create(MessageTypes.OutputAck, new OutputAckCommand { Sequence = 7 }), cts.Token);
+            await client.SendAsync(EnvelopeFactory.Create(MessageTypes.OutputFail,
+                new OutputFailCommand { Sequence = 8, Permanent = true }), cts.Token);
+
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while ((queue.Acked.Count == 0 || queue.Failed.Count == 0) && DateTime.UtcNow < deadline)
+                await Task.Delay(50, cts.Token);
+
+            Assert.Equal([7L], queue.Acked);
+            Assert.Equal([(8L, true)], queue.Failed);
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await cts.CancelAsync();
+            try { await run; } catch (OperationCanceledException) { /* 取消退出 */ }
+        }
+    }
+
+    /// <summary>记录回执的队列桩：协议侧只需证明 ack/fail 被转发到内核输出队列。</summary>
+    private sealed class RecordingOutputQueue : IOutputQueue
+    {
+        public List<long> Acked { get; } = [];
+        public List<(long Sequence, bool Permanent)> Failed { get; } = [];
+
+        public ValueTask<long> EnqueueAsync(OutputItem item, CancellationToken ct = default) => ValueTask.FromResult(1L);
+
+        public async IAsyncEnumerable<OutputItem> ReadAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+
+        public Task AckAsync(long sequence, CancellationToken ct = default)
+        {
+            Acked.Add(sequence);
+            return Task.CompletedTask;
+        }
+
+        public Task FailAsync(long sequence, bool permanent, CancellationToken ct = default)
+        {
+            Failed.Add((sequence, permanent));
+            return Task.CompletedTask;
+        }
+
+        public IReadOnlyList<OutputItem> ReadSince(string? conversationId, long sinceSequence) => [];
+    }
+
+    [Fact]
+    public async Task 回合可被取消_以cancelled收尾()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var port = FreePort();
+        var runtime = new SessionfulStubRuntime { StreamDelay = TimeSpan.FromSeconds(30) };
+        var run = HubServer.RunAsync(runtime, new HubServerOptions { Listen = $"http://127.0.0.1:{port}" }, ct: cts.Token);
+
+        var client = await ConnectWithRetryAsync($"ws://127.0.0.1:{port}/v1/stream", cts.Token);
+        try
+        {
+            _ = await OpenSessionAsync(client, "builtin-rin", "companion", "main", cts.Token);
+            const string turnId = "turn_cancel_target";
+
+            await client.SendAsync(EnvelopeFactory.Create(MessageTypes.TurnSubmit,
+                new TurnRequestDto { TurnId = turnId, Text = "long" }), cts.Token);
+
+            // 登记发生在 turn.accepted 之前，故收到 accepted 后取消必定命中
+            while (true)
+            {
+                var envelope = await client.ReceiveAsync(cts.Token) ?? throw new IOException("hub closed the connection");
+                if (envelope.Type == EventTypes.TurnAccepted)
+                    break;
+            }
+
+            await client.SendAsync(EnvelopeFactory.Create(MessageTypes.TurnCancel,
+                new TurnCancelCommand { TurnId = turnId }), cts.Token);
+
+            while (true)
+            {
+                var envelope = await client.ReceiveAsync(cts.Token) ?? throw new IOException("hub closed the connection");
+                if (envelope.Type == EventTypes.Error)
+                    Assert.Fail($"cancel path returned error: {envelope.ErrorCode} {envelope.ErrorMsg}");
+                if (envelope.Type != EventTypes.TurnFinal)
+                    continue;
+
+                var final = envelope.DataAs<TurnResultDto>() ?? throw new InvalidOperationException("no turn.final payload");
+                Assert.False(final.Success);
+                Assert.Equal(TerminationReasons.Cancelled, final.TerminationReason);
+                break;
+            }
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await cts.CancelAsync();
+            try { await run; } catch (OperationCanceledException) { /* 取消退出 */ }
+        }
+    }
+
+    [Fact]
+    public async Task presence订阅_可按会话过滤()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var port = FreePort();
+        var run = HubServer.RunAsync(new SessionfulStubRuntime(), new HubServerOptions { Listen = $"http://127.0.0.1:{port}" }, ct: cts.Token);
+        var url = $"ws://127.0.0.1:{port}/v1/stream";
+
+        var a = await ConnectWithRetryAsync(url, cts.Token, "client-a");
+        var b = await ConnectWithRetryAsync(url, cts.Token, "client-b");
+        var c = await ConnectWithRetryAsync(url, cts.Token, "client-c");
+        try
+        {
+            var main = await OpenSessionAsync(a, "builtin-rin", "companion", "main", cts.Token);
+            await a.SendAsync(EnvelopeFactory.Create(MessageTypes.PresenceSubscribe,
+                new PresenceSubscription { SessionIds = [main.SessionId] }), cts.Token);
+            // 订阅时刻的在场快照里只会含 A 自己（client-a）；下面的匹配按 clientId 过滤，无需另做丢弃
+
+            // B 进入同一段对话（同 conversation → 复用同一 session）→ A 应看到 B
+            var bSession = await OpenSessionAsync(b, "builtin-rin", "companion", "main", cts.Token);
+            Assert.Equal(main.SessionId, bSession.SessionId);
+            Assert.Equal("client-b", await WaitPresenceFromAsync(a, "client-b", cts.Token));
+
+            // C 进入另一段对话 → A 的过滤不应让它看到 C
+            _ = await OpenSessionAsync(c, "builtin-rin", "companion", "other", cts.Token);
+            Assert.Null(await WaitPresenceFromAsync(a, "client-c", cts.Token, TimeSpan.FromSeconds(2)));
+        }
+        finally
+        {
+            await a.DisposeAsync();
+            await b.DisposeAsync();
+            await c.DisposeAsync();
+            await cts.CancelAsync();
+            try { await run; } catch (OperationCanceledException) { /* 取消退出 */ }
+        }
+    }
+
+    /// <summary>
+    /// 在时限内读取在场事件，返回首个来自 <paramref name="clientId"/> 的（未出现则 null）。
+    /// 注意：**不能**给 <c>ReceiveAsync</c> 传超时 token——取消接收会把 ClientWebSocket 整个 abort
+    /// （.NET 的行为），连接会直接断。这里改为"一次接收 + 按窗口 WhenAny"，未到达就放弃等待。
+    /// </summary>
+    private static async Task<string?> WaitPresenceFromAsync(
+        HubClient client, string clientId, CancellationToken ct, TimeSpan? window = null)
+    {
+        var deadline = DateTime.UtcNow + (window ?? TimeSpan.FromSeconds(5));
+        while (DateTime.UtcNow < deadline)
+        {
+            var remaining = deadline - DateTime.UtcNow;
+            var read = client.ReceiveAsync(ct);
+            var completed = await Task.WhenAny(read, Task.Delay(remaining, ct));
+            if (completed != read)
+                break;   // 窗口用完
+
+            var envelope = await read;
+            if (envelope is null)
+                throw new IOException("hub closed the connection");
+            if (envelope.Type == EventTypes.PresenceUpdated && envelope.DataAs<PresenceUpdatedEvent>()?.ClientId == clientId)
+                return clientId;
+        }
+
+        return null;
     }
 
     private static int FreePort()
@@ -202,6 +454,9 @@ public sealed class HubProtocolSurfaceTests
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, AgentSession> _bySession = new(StringComparer.Ordinal);
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _byConversation = new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>回合流的延迟（&gt;0 时用于验证 turn.cancel：延迟期间取消会抛 OperationCanceledException）。</summary>
+        public TimeSpan StreamDelay { get; set; } = TimeSpan.Zero;
+
         public Task<AgentSession> OpenSessionAsync(SessionOpenRequest request, CancellationToken ct = default)
         {
             if (!string.IsNullOrWhiteSpace(request.ConversationId)
@@ -229,7 +484,27 @@ public sealed class HubProtocolSurfaceTests
             Task.FromResult(_bySession.TryRemove(sessionId, out _));
 
         public Task<TurnResult> RunTurnAsync(TurnRequest request, CancellationToken ct = default) => throw new NotSupportedException();
-        public IAsyncEnumerable<TurnEvent> StreamTurnAsync(TurnRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+
+        /// <summary>只产出一个 final（供"回合后状态推送"测试走完回合流程）。</summary>
+        public async IAsyncEnumerable<TurnEvent> StreamTurnAsync(
+            TurnRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            if (StreamDelay > TimeSpan.Zero)
+                await Task.Delay(StreamDelay, ct);   // 取消时在这里抛出 → 验证 turn.cancel
+            else
+                await Task.Yield();
+            yield return new TurnEvent
+            {
+                TurnId = request.TurnId,
+                Kind = "final",
+                Payload = new TurnResult
+                {
+                    Success = true,
+                    FinalText = "stub",
+                    TerminationReason = TerminationReason.FinalReply,
+                },
+            };
+        }
         public Task AppendMessageAsync(string sessionId, string? senderName, string text, IReadOnlyList<object>? blocks = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<string?> GetContextSummaryAsync(string sessionId, CancellationToken ct = default) => throw new NotSupportedException();
 

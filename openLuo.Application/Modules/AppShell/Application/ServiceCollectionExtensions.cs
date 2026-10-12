@@ -8,7 +8,6 @@ using openLuo.Composition;
 using openLuo.Infrastructure.Conversation;
 using openLuo.Infrastructure.Database;
 using openLuo.Infrastructure.Logging;
-using openLuo.Infrastructure.Security;
 using openLuo.Modules.Memory.Application;
 using openLuo.Modules.Memory.Core.Interfaces;
 using openLuo.Modules.Memory.Infrastructure.Retrieval;
@@ -134,7 +133,15 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<ICapabilityDecisionModel, LlmCapabilityDecisionModel>();
         services.AddSingleton<ICapabilityPolicy, DefaultCapabilityPolicy>();
-        services.AddSingleton<IStateTransaction, InMemoryStateTransaction>();
+        // 状态事务 + 持久化：状态快照落 hub.db（subject_state 表），重启后**版本与值保留**。
+        // ⚠ 同一实例挂两个描述符（IStatePersistence / IStateReader 与 IStateTransaction）时，
+        //    容器释放会对它调用两次 DisposeAsync——该类型不可释放，安全（参见 LogStore 的教训）。
+        services.AddSingleton<IStatePersistence>(sp => sp.GetRequiredService<openLuo.Infrastructure.Persistence.HubStore>());
+        services.AddSingleton<IStateTransaction>(sp => new InMemoryStateTransaction(sp.GetService<IStatePersistence>()));
+        // 状态只读端口（Hub 投影 /v1/sessions/{id}/state 与 state.updated）指向同一实例。
+        // ⚠ 同一实例挂两个描述符 → 容器释放时会对它调用两次 DisposeAsync，故实现必须幂等；
+        //    InMemoryStateTransaction 不可释放，安全（参见 LogStore 的教训）。
+        services.AddSingleton<IStateReader>(sp => (IStateReader)sp.GetRequiredService<IStateTransaction>());
         services.AddSingleton<ICapabilityInvoker, UnboundCapabilityInvoker>();
         services.AddSingleton<openLuo.Server.HubConfirmationGate>();
         services.AddSingleton<ICapabilityDispatcher>(sp =>

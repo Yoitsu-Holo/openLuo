@@ -20,7 +20,15 @@ public static partial class HubServer
         var auditSubscribers = hub.AuditSubscribers;
         string? Actor(HttpContext ctx) => hub.Actor(ctx);
 
-        app.MapPost("/v1/assets", async (HttpContext ctx, string? sessionId, string? fileName, CancellationToken requestCt) =>
+        // REST：`POST /v1/assets`（无会话归属）与 `POST /v1/sessions/{id}/assets`（父资源子集合）共用同一处理器；
+        // 文件名走标准 `Content-Disposition` 头（早期的 `?fileName=` 查询参数与 `X-File-Name` 自定义头已废弃）。
+        app.MapPost(HttpPaths.Assets, (HttpContext ctx, CancellationToken requestCt) =>
+            UploadAsync(ctx, sessionId: null, requestCt));
+
+        app.MapPost(HttpPaths.SessionAssetsTemplate, (string id, HttpContext ctx, CancellationToken requestCt) =>
+            UploadAsync(ctx, sessionId: id, requestCt));
+
+        async Task<IResult> UploadAsync(HttpContext ctx, string? sessionId, CancellationToken requestCt)
         {
             var mime = string.IsNullOrWhiteSpace(ctx.Request.ContentType)
                 ? "application/octet-stream"
@@ -35,16 +43,14 @@ public static partial class HubServer
             if (bytes.Length > options.AssetMaxBytes)
                 return Error(ErrorCodes.AssetTooLarge, $"asset exceeds limit: {bytes.Length} > {options.AssetMaxBytes}");
 
-            var headerName = ctx.Request.Headers["X-File-Name"].ToString();
             try
             {
-                var info = await assets.PutAsync(bytes, mime, sessionId,
-                    fileName ?? (string.IsNullOrWhiteSpace(headerName) ? null : headerName), requestCt);
+                var info = await assets.PutAsync(bytes, mime, sessionId, FileNameOf(ctx.Request), requestCt);
 
                 await AuditAsync(auditSubscribers, "asset.upload", Actor(ctx), info.Id, "ok",
                     new JsonObject { ["mime"] = info.Mime, ["size"] = info.Size }, requestCt);
 
-                return Json(EnvelopeFactory.Create("asset", new UploadAssetResponse
+                return Created(ctx, HttpPaths.Asset(info.Id), EnvelopeFactory.Create(HttpResponseTypes.Asset, new UploadAssetResponse
                 {
                     Asset = ToAssetRef(info),
                     Meta = ToAssetMeta(info),
@@ -54,9 +60,9 @@ public static partial class HubServer
             {
                 return Error(ErrorCodes.AssetTooLarge, ex.Message);
             }
-        });
+        }
 
-        app.MapGet("/v1/assets/{id}", async (string id, HttpContext ctx, CancellationToken requestCt) =>
+        app.MapGet(HttpPaths.AssetTemplate, async (string id, HttpContext ctx, CancellationToken requestCt) =>
         {
             var blob = await assets.GetAsync(id, requestCt);
             if (blob is null)
@@ -68,15 +74,15 @@ public static partial class HubServer
             return Results.File(blob.Bytes, blob.Info.Mime);
         });
 
-        app.MapMethods("/v1/assets/{id}", ["HEAD"], (string id, HttpContext ctx) =>
+        app.MapMethods(HttpPaths.AssetTemplate, ["HEAD"], (string id, HttpContext ctx) =>
         {
             var info = assets.Stat(id);
             if (info is null)
                 return Error(ErrorCodes.AssetNotFound, $"asset not found: {id}");
-            return CheckAssetAccess(ctx, info) ?? Json(EnvelopeFactory.Create("asset", ToAssetMeta(info)));
+            return CheckAssetAccess(ctx, info) ?? Json(EnvelopeFactory.Create(HttpResponseTypes.Asset, ToAssetMeta(info)));
         });
 
-        app.MapDelete("/v1/assets/{id}", async (string id, HttpContext ctx) =>
+        app.MapDelete(HttpPaths.AssetTemplate, async (string id, HttpContext ctx) =>
         {
             var info = assets.Stat(id);
             if (info is not null && CheckAssetAccess(ctx, info) is { } denied)
@@ -84,7 +90,7 @@ public static partial class HubServer
             var deleted = assets.Delete(id);
             await AuditAsync(auditSubscribers, "asset.delete", Actor(ctx), id, deleted ? "ok" : "not_found", null, default);
             return deleted
-                ? Json(EnvelopeFactory.Create("asset", new { deleted = true, id }))
+                ? Json(EnvelopeFactory.Create(HttpResponseTypes.Asset, new DeletedResponse { Id = id }))
                 : Error(ErrorCodes.AssetNotFound, $"asset not found: {id}");
         });
     }

@@ -94,7 +94,8 @@ public sealed class ArchitectureBoundaryTests
         var refs = RepoRefs(Assembly.Load("openLuo"));
         foreach (var client in new[] { "openluo-cli", "openluo-tui", "openluo-gui", "openluo-qq", "openLuo.OneBot", "openLuo.Client" })
             Assert.DoesNotContain(client, refs);
-        Assert.Empty(refs.Where(IsDriver));
+        var drivers = refs.Where(IsDriver).ToArray();
+        Assert.True(drivers.Length == 0, $"服务端不得拉入 UI 驱动，实际: {string.Join(", ", drivers)}");
     }
 
     [Fact]
@@ -146,7 +147,7 @@ public sealed class ArchitectureBoundaryTests
                 .Where(IsDriver)
                 .Where(r => !ownDrivers.Any(prefix => r.StartsWith(prefix, StringComparison.Ordinal)))
                 .ToArray();
-            Assert.Empty(foreignDrivers);
+            Assert.True(foreignDrivers.Length == 0, $"{name} 拉入了别人的 UI 驱动: {string.Join(", ", foreignDrivers)}");
         }
     }
 }

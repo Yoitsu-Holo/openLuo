@@ -70,9 +70,10 @@ Task<IReadOnlyList<LogBucket>> StatsAsync(DateTimeOffset from, DateTimeOffset to
 
 Hub 端点（`openLuo.Server`）：
 - `GET /v1/logs?from=&to=&level=&module=&category=&keyword=&sessionId=&turnId=&limit=&beforeId=` → `LogsResponse{items[], nextBeforeId}`
+- `GET /v1/logs/archive?date=&category=&keyword=&level=` → 冷文件（`logs/core/{yyyyMMdd}/`）目录扫描检索 → `LogsResponse{items[], nextBeforeId}`
 - `GET /v1/logs/stats?from=&to=&bucket=1m` → `LogStatsResponse{buckets[]}`（`bucket` 支持 `s/m/h/d`）
 
-> **权限**：设计要求 **admin-only**（日志可能含敏感内容）。当前 Server 尚未落地 token 鉴权，端点暂为开放并在代码中标注 TODO，待鉴权（§4.4）落地后收紧。
+> **权限**：✅ **admin-only 已落地**（日志可能含敏感内容）：`/v1/logs*` 属 Hub 的 admin 前缀，未鉴权 → `401 + 3001`，角色不足 → `403 + 3002`（详见 hub-protocol §4.4 / §4.8）。
 
 ## 6. 配置（`log.jsonc`）
 
@@ -87,8 +88,10 @@ Hub 端点（`openLuo.Server`）：
 ## 7. 集成点
 
 - `IGameLogger` **不变**；`GameLogger.Write/Plugin` 在有 `LogStore` 时改走 `Enqueue`（热+冷统一），否则回退旧的文件直写（测试/无存储场景）。
-- `LogStore` 由 DI 注册（`openLuo/Modules/AppShell/Application/ServiceCollectionExtensions.cs`）：`LogStore` → `ILogStore`；`GameLogger` 注入 `LogStore`。
-- Hub `--serve` 注入 `ILogStore` → 两个端点。
+- `LogStore` 由 DI 注册（`openLuo.Application/Modules/AppShell/Application/ServiceCollectionExtensions.cs`）：`LogStore` → `ILogStore`；`GameLogger` 注入 `LogStore`。
+  另注：同一实例同时挂在 `LogStore` 与 `ILogStore` 两个描述符下，容器释放时会对它调用**两次** `DisposeAsync`，
+  故 `LogStore.DisposeAsync` 被写成幂等（`Interlocked.Exchange` 守卫 + 容忍已释放 CTS）——裸奔会导致进程退出时 `ObjectDisposedException`。
+- Hub `--serve` 注入 `ILogStore` → 三个端点（热库检索 / 冷文件检索 / 时间桶统计）。
 - 日志根目录：`<baseDir>/logs`。
 
 ## 8. 风险与取舍
@@ -104,6 +107,6 @@ Hub 端点（`openLuo.Server`）：
 
 ## 9. 后续
 
-- `logs_fts` 索引体积可观 → 可选 `optimize`/重建任务。
-- 冷文件检索：需要跨天/历史查询时，提供 `logs` CLI/端点按归档目录扫描（当前仅热库可查）。
+- `logs_fts` 索引体积可观 → ✅ 已做：裁剪后 `optimize`（本轮加固）。
+- 冷文件检索：✅ 已做（`GET /v1/logs/archive`，按归档目录扫描 + `keyword`/`level`/`category`/`date` 过滤）。
 - 指标派生：由 `StatsAsync` 驱动错误率/回合曲线，接入 `/v1/metrics` 或前端面板。

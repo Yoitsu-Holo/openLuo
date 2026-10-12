@@ -218,3 +218,20 @@ public sealed record LogStatsResponse
 {
     public IReadOnlyList<LogBucketDto> Buckets { get; init; } = [];
 }
+
+// ─────────────────────────── 通用删除响应 ───────────────────────────
+
+/// <summary>
+/// `DELETE` 类端点的统一响应：`{deleted:true}`；带资源 id 的域（如 `/v1/assets/{id}`）额外回 `id`。
+/// </summary>
+/// <remarks>
+/// <see cref="ProtocolJson.Options"/> 设了 <c>WhenWritingNull</c>，因此 <see cref="Id"/> 为 null 时线上就是 `{deleted:true}`，
+/// 与不返回 id 的域（如 `/v1/schedules/{id}`）保持既有形状一致——此前这两处各自 new 匿名对象，wire 形状只活在代码里。
+/// </remarks>
+public sealed record DeletedResponse
+{
+    public bool Deleted { get; init; } = true;
+
+    /// <summary>被删除资源的 id（仅回 id 的域设置；null 不序列化）。</summary>
+    public string? Id { get; init; }
+}

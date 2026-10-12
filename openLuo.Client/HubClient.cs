@@ -234,18 +234,26 @@ public sealed class HubClient : IAsyncDisposable
         return ProtocolJson.Deserialize<Envelope>(Encoding.UTF8.GetString(ms.ToArray()));
     }
 
-    /// <summary>上传资产（HTTP `POST /v1/assets`），返回引用（§9）。</summary>
+    /// <summary>
+    /// 上传资产（HTTP `POST /v1/sessions/{id}/assets`；给了 <paramref name="sessionId"/> 时用父资源子集合，
+    /// 否则 `POST /v1/assets`），返回引用（§9）。文件名走标准 `Content-Disposition` 头。
+    /// </summary>
     public async Task<AssetRefDto?> UploadAssetAsync(
         byte[] bytes, string mime, string? fileName = null, string? sessionId = null, CancellationToken ct = default)
     {
-        var query = sessionId is null ? string.Empty : $"?sessionId={Uri.EscapeDataString(sessionId)}";
+        var path = string.IsNullOrWhiteSpace(sessionId)
+            ? $"{_httpBase}{HttpPaths.Assets}"
+            : $"{_httpBase}{HttpPaths.SessionAssets(sessionId)}";
 
         using var content = new ByteArrayContent(bytes);
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mime);
         if (!string.IsNullOrWhiteSpace(fileName))
-            content.Headers.Add("X-File-Name", fileName);
+            content.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue(HttpRules.ContentDispositionAttachment)
+            {
+                FileName = fileName,
+            };
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_httpBase}/v1/assets{query}") { Content = content };
+        using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = content };
         Authorize(request);
 
         using var response = await _http.SendAsync(request, ct);
@@ -256,7 +264,7 @@ public sealed class HubClient : IAsyncDisposable
     /// <summary>下载资产字节（HTTP `GET /v1/assets/{id}`）。</summary>
     public async Task<byte[]?> DownloadAssetAsync(string assetId, CancellationToken ct = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"{_httpBase}/v1/assets/{assetId}");
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{_httpBase}{HttpPaths.Asset(assetId)}");
         Authorize(request);
 
         using var response = await _http.SendAsync(request, ct);
@@ -266,7 +274,7 @@ public sealed class HubClient : IAsyncDisposable
     private void Authorize(HttpRequestMessage request)
     {
         if (!string.IsNullOrWhiteSpace(_token))
-            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _token);
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(HttpRules.AuthorizationScheme, _token);
     }
 
     public async ValueTask DisposeAsync()

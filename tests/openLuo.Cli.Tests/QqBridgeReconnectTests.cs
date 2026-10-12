@@ -107,6 +107,98 @@ public sealed class QqBridgeReconnectTests
         }
     }
 
+    /// <summary>
+    /// 投递回执：Hub 推一条带 sequence 的 <c>output</c> 事件；桥**只有**在 OneBot 成功发出之后才回
+    /// <c>output.ack{sequence}</c>（"已成功投递"才名副其实，见协议 §4.6）。
+    /// </summary>
+    [Fact]
+    public async Task Bridge_acks_output_after_onebot_delivery()
+    {
+        var replies = new ConcurrentQueue<string>();
+        var acks = new ConcurrentQueue<long>();
+
+        await using var hub = new MiniWsServer(async (connection, json) =>
+        {
+            var root = JsonNode.Parse(json)!.AsObject();
+            switch (root["type"]?.GetValue<string>())
+            {
+                case MessageTypes.Hello:
+                    await connection.SendTextAsync(ProtocolJson.Serialize(
+                        EnvelopeFactory.Create(EventTypes.Welcome, new WelcomeEvent { ServerVersion = "test" })));
+                    break;
+                case MessageTypes.SessionOpen:
+                    await connection.SendTextAsync(ProtocolJson.Serialize(
+                        EnvelopeFactory.Create(EventTypes.SessionOpened, new SessionDto { SessionId = "s-qq" })));
+                    break;
+                case MessageTypes.TurnSubmit:
+                    await connection.SendTextAsync(ProtocolJson.Serialize(
+                        EnvelopeFactory.Create(EventTypes.Output, new OutputDto
+                        {
+                            Id = "o1", Kind = OutputKind.Text, Sequence = 7, Payload = "语音发过去了",
+                        }, sessionId: "s-qq")));
+                    await connection.SendTextAsync(ProtocolJson.Serialize(
+                        EnvelopeFactory.Create(EventTypes.TurnFinal, new TurnResultDto { TurnId = "t1", Success = true })));
+                    break;
+                case MessageTypes.OutputAck:
+                    acks.Enqueue(root["data"]?["sequence"]?.GetValue<long>() ?? -1);
+                    break;
+            }
+        });
+
+        await using var onebot = new MiniWsServer(async (connection, json) =>
+        {
+            var root = JsonNode.Parse(json)!.AsObject();
+            var echo = root["echo"]?.GetValue<string>() ?? string.Empty;
+            switch (root["action"]?.GetValue<string>())
+            {
+                case "get_login_info":
+                    await connection.SendTextAsync(ApiOk(echo, """{"user_id":999,"nickname":"bot"}"""));
+                    await connection.SendTextAsync(PrivateMessage("你好", userId: 10001, selfId: 999));
+                    break;
+                case "send_private_msg":
+                    replies.Enqueue(root["params"]?["message"]?[0]?["data"]?["text"]?.GetValue<string>() ?? string.Empty);
+                    await connection.SendTextAsync(ApiOk(echo, """{"message_id":1}"""));
+                    break;
+            }
+        });
+
+        var config = new QqBotConfig
+        {
+            Enabled = true,
+            BaseAddress = onebot.StreamUrl,
+            TargetFriendIds = [10001],
+            LogMessages = false,
+        };
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var app = new QqBotApplication(
+            ct => HubClient.ConnectAsync(hub.StreamUrl, "qq-bridge", "qq", ct: ct),
+            http, $"http://127.0.0.1:{hub.Port}", new FixedConfigCenter(config));
+        var run = app.RunAsync(cts.Token);
+
+        try
+        {
+            await onebot.WaitForConnectionAsync(TimeSpan.FromSeconds(10));
+            await WaitForAsync(() => hub.ConnectionCount >= 1, TimeSpan.FromSeconds(10));
+
+            // 输出确实投递到了 OneBot
+            Assert.Equal("语音发过去了", await NextReplyAsync(replies, TimeSpan.FromSeconds(30)));
+
+            // 回执：等桥把 ack 送回 Hub
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (acks.IsEmpty && DateTime.UtcNow < deadline)
+                await Task.Delay(50, cts.Token);
+
+            Assert.Equal(7, Assert.Single(acks));
+        }
+        finally
+        {
+            await cts.CancelAsync();
+            try { await run; } catch (OperationCanceledException) { /* 取消退出 */ }
+        }
+    }
+
     private static string ApiOk(string echo, string data) =>
         $$"""{"status":"ok","retcode":0,"data":{{data}},"echo":"{{echo}}"}""";
 

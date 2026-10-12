@@ -155,9 +155,15 @@ public static class ErrorCodes
     public const int SessionNotFound = 4001;
     public const int SessionLimitExceeded = 4002;
 
+    /// <summary>会话 id 非法（入口治理：只允许字母 / 数字 / <c>-</c> / <c>_</c>，§4.9）。</summary>
+    public const int SessionInvalid = 4003;
+
     public const int TurnBusy = 5001;
     public const int TurnCancelled = 5002;
     public const int TurnBudgetExceeded = 5003;
+
+    /// <summary>回合请求非法（文本超长 / 含 NUL / 严格模式下命中启发式，§4.9）。</summary>
+    public const int TurnInvalid = 5004;
 
     public const int CapabilityConfirmationRequired = 6001;
     public const int CapabilityFailed = 6002;
@@ -171,6 +177,27 @@ public static class ErrorCodes
     public const int ServerInternal = 9001;
 
     public static bool IsSuccess(int code) => code == Success;
+
+    /// <summary>
+    /// 错误码 → HTTP 状态码（REST：按语义归一，见 docs/architecture/hub-protocol.md §4.5 / §5）。
+    /// 返回原生 <see cref="int"/>，使 Protocol 不依赖 ASP.NET；服务端直接写 <c>HttpResponse.StatusCode</c>。
+    /// </summary>
+    public static int HttpStatusOf(int code) => code switch
+    {
+        AuthUnauthorized => 401,
+        AuthForbidden or ConfigReadOnly => 403,
+
+        SessionNotFound or AssetNotFound or JobNotFound
+            or ScheduleNotFound or ConfigNamespaceNotFound
+            or DeviceNotFound or TraceNotFound => 404,
+
+        AssetTooLarge => 413,
+        RateLimited or SessionLimitExceeded => 429,
+        TurnBusy or TurnCancelled or CapabilityConfirmationRequired => 409,
+        PresenceUnavailable => 503,
+        JobFailed or ConfigPersistFailed or ServerInternal => 500,
+        _ => 400,
+    };
 
     /// <summary>码值 → 稳定标识（如 <c>protocol.version_mismatch</c>）。</summary>
     public static string NameOf(int code) => code switch
@@ -199,9 +226,11 @@ public static class ErrorCodes
         AuthForbidden => "auth.forbidden",
         SessionNotFound => "session.not_found",
         SessionLimitExceeded => "session.limit_exceeded",
+        SessionInvalid => "session.invalid",
         TurnBusy => "turn.busy",
         TurnCancelled => "turn.cancelled",
         TurnBudgetExceeded => "turn.budget_exceeded",
+        TurnInvalid => "turn.invalid",
         CapabilityConfirmationRequired => "capability.confirmation_required",
         CapabilityFailed => "capability.failed",
         AssetNotFound => "asset.not_found",
@@ -321,6 +350,20 @@ public static class RiskLevels
     public const string High = "high";
 }
 
+/// <summary>
+/// 能力调用结果状态取值（对齐内核 <c>CapabilityStatus</c>）——用于 `tool.result.status`。
+/// 由 `WireMapper.ToToolResult` 显式 `switch` 产出；对应关系由 `WireEnumAlignmentTests` 守（改名/新增成员会失败）。
+/// </summary>
+public static class CapabilityStatuses
+{
+    public const string Ok = "ok";
+    public const string Failed = "failed";
+    public const string Conflict = "conflict";
+    public const string Rejected = "rejected";
+    public const string Timeout = "timeout";
+    public const string Cancelled = "cancelled";
+}
+
 /// <summary>回合终止原因取值（对齐内核 <c>TerminationReason</c>）。</summary>
 public static class TerminationReasons
 {
@@ -331,15 +374,4 @@ public static class TerminationReasons
     public const string NoProgress = "noProgress";
     public const string Cancelled = "cancelled";
     public const string EmptyReply = "emptyReply";
-}
-
-/// <summary>投递状态取值（对齐内核 <c>DeliveryState</c>）。</summary>
-public static class DeliveryStates
-{
-    public const string Pending = "pending";
-    public const string Sending = "sending";
-    public const string Delivered = "delivered";
-    public const string RetryableFailure = "retryableFailure";
-    public const string PermanentFailure = "permanentFailure";
-    public const string Cancelled = "cancelled";
 }

@@ -16,46 +16,64 @@ CLI / TUI / GUI / QQ 桥都是**各自独立的程序**（`openluo-cli` / `openl
 客户端程序集**只依赖 `openLuo.Protocol` + `openLuo.Client`，不引用内核**（`OPENLUO_HUB_URL` 可指向远端 Hub），
 服务端也不含任何 UI 驱动——两侧互不暴露，由 `ArchitectureBoundaryTests` 守着。
 
+**文档索引**：
+
+| 文档 | 内容 |
+| --- | --- |
+| [`README.md`](README.md) | 总览：技术栈、分层、配置、日志、构建发布、测试、路线图 |
+| [`docs/architecture/layers.md`](docs/architecture/layers.md) | **架构检视**：分层图、实测依赖边、6 条边界规则、技术债清单 |
+| [`docs/architecture/hub-protocol.md`](docs/architecture/hub-protocol.md) | 中心 Hub 架构 + **Wire 协议 v1**（唯一跨边界契约，含实现状态标注） |
+| [`docs/architecture/log-store.md`](docs/architecture/log-store.md) | 日志存储：热库（SQLite + FTS5）+ 冷文件 + 保留策略 |
+| [`docs/architecture/context-scope-risk.md`](docs/architecture/context-scope-risk.md) | 上下文「全局 + 局部」改造的风险识别与建议 |
+
 ## 2. 技术栈
 
-| 层级          | 技术选型                                                          |
-| ------------- | ----------------------------------------------------------------- |
-| 语言 / 运行时 | C# 13 / .NET 10                                                   |
-| AI / LLM 抽象 | `Microsoft.Extensions.AI`（OpenAI provider，路由多模型）          |
-| 向量检索      | SQLite + Dapper + `sqlite-vec`                                    |
-| 图形渲染      | SkiaSharp                                                         |
-| 终端 UI       | Terminal.Gui（CLI / TUI）                                         |
-| 桌面 GUI      | Avalonia                                                          |
-| 远程能力      | MCP 官方 SDK（ModelContextProtocol 2.1.0）、A2A（1.0.0-preview2） |
-| 测试          | xUnit / NSubstitute；内核、扩展、CLI、E2E 分工程                  |
+| 层级          | 技术选型                                                                        | 归属工程                                        |
+| ------------- | ------------------------------------------------------------------------------- | ----------------------------------------------- |
+| 语言 / 运行时 | C# 13 / .NET 10                                                                 | 全仓                                            |
+| 服务端宿主    | ASP.NET Core Kestrel（Minimal API + WebSocket）                                 | `openLuo.Server`                                |
+| AI / LLM 抽象 | `Microsoft.Extensions.AI` 10.8.1（OpenAI provider，路由多模型）                 | `openLuo.Embedding`                             |
+| 向量检索      | SQLite + Dapper + `sqlite-vec`（`SQLitePCLRaw.lib.e_sqlite3`，编译含 FTS5）     | `openLuo.Foundation` / `.Embedding` / `.Memory` |
+| 持久化        | `Microsoft.Data.Sqlite` 10.0.10 + Dapper（`hub.db` / `game.db` / `logs/hot.db`）| `openLuo.Application` / `openLuo.Memory`        |
+| 终端 UI       | Terminal.Gui 1.19.0                                                             | `openLuo.Tui`（`openLuo.Cli` 自绘 ANSI，无 UI 包） |
+| 桌面 GUI      | Avalonia 11.3.18（Desktop / Fluent / Inter / Diagnostics）+ CommunityToolkit.Mvvm | `openLuo.Gui`                             |
+| 远程能力      | MCP 官方 SDK（`ModelContextProtocol` 2.1.0）、A2A（1.0.0-preview2）             | `openLuo.Capabilities.Mcp` / `.A2A`             |
+| 测试          | xUnit / NSubstitute；**10 个测试工程**分域（见 §8）                              | `tests/`                                        |
+
+> **依赖瘦身原则**：宿主 exe `openLuo` **零 PackageReference**；UI 驱动、向量库、远程 SDK 各自归属使用它们的工程——
+> 客户端只带自己需要的 UI 包，服务端只带内核与 Hub 需要的包（`openLuo.Application` 仅 5 个包：Sqlite / Dapper / DI / Http / Hosting）。
 
 ## 3. 架构：通用 Agent 内核 + 领域扩展
 
-| 层级     | 工程                                                            | 职责                                                         |
-| -------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
-| 协议     | `openLuo.Protocol`                                              | Wire 契约：Envelope、消息类型表、DTO、错误码（零业务依赖）    |
-| 服务端   | `openLuo.Server`                                                | Hub：HTTP 控制面 + WebSocket 数据面，把 `IAgentRuntime` 暴露为协议 |
-| 客户端   | `openLuo.Client`                                                | 客户端 SDK（只依赖 Protocol）：连接、协商、回合流式          |
-| 客户端   | `openLuo.Cli` / `openLuo.Tui` / `openLuo.Gui` / `openLuo.Qqbot` | 各入口**协议客户端**（不引用内核）                           |
-| 领域     | `openLuo.Domain`                                                | 领域模型（Character / GameState / Message…）                 |
-| 基础     | `openLuo.Foundation` / `openLuo.Llm` / `openLuo.Embedding` / `openLuo.Memory` | 基础设施、LLM、Embedding、记忆端口与实现 |
-| 内核契约 | `openLuo.Capabilities` / `openLuo.AgentContext`                 | 能力目录、决策循环、并行调度、状态事务、上下文快照、输出队列 |
-| 桥接     | `openLuo.Capabilities.Llm` / `.Mcp` / `.A2A`                    | LLM 原生 tool calls、MCP、Agent2Agent 远程能力               |
-| 模块     | `openLuo.Modules.WorldState` / `openLuo.Modules.Agent`          | 世界状态、角色 Agent 运行层（独立于宿主 exe）                |
-| 扩展宿主 | `openLuo.Abstractions`                                          | 扩展契约（`IAgentExtension` 等）+ manifest 加载             |
-| 领域扩展 | `extensions/{memory,companion,world,party,sticker,music}`       | 记忆、伴侣人格、世界状态、多角色、表情、音乐分享卡；均只依赖契约/模块程序集 |
-| 宿主/服务端 | `openLuo`（可执行）                                            | **纯入口**（`Program.cs` 50 行）：`--serve` → 启动内核 → 运行 Hub → 关闭 |
-| 应用层   | `openLuo.Application`                                          | 内核装配：组合根 + 配置/作业/调度/日志/资产/会话存储 + 启动编排（`KernelStartup` / `HubStartup`） |
-| 客户端   | `openLuo.Client` + `openLuo.{Cli,Tui,Gui,Qqbot}`（各为可执行）  | 协议客户端：`openluo-cli` / `openluo-tui` / `openluo-gui` / `openluo-qq`；只依赖 Protocol + Client（+ 自己的 UI 驱动） |
-| Demo     | `openLuo.playgraound`（程序集名 `openLuo.Playground`）          | 新内核能力循环最小可运行演示                                 |
+按层列出的程序集（规模数字与实测依赖边见 [`docs/architecture/layers.md`](docs/architecture/layers.md)）：
+
+| 层         | 工程                                                              | 职责                                                                   | 依赖                                       |
+| ---------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------ |
+| 协议 / 基础 | `openLuo.Protocol`                                                | Wire 契约：Envelope、消息类型表、DTO、错误码（唯一跨边界契约）          | **零本仓依赖**                             |
+| 协议 / 基础 | `openLuo.Foundation`                                              | 基础设施端口与实现（日志、配置中心、SQLite、资产端口…）                  | 零本仓依赖                                 |
+| 协议 / 基础 | `openLuo.OneBot`                                                  | OneBot 11 客户端（QQ 桥专用）                                           | 零本仓依赖                                 |
+| 基础能力   | `openLuo.Domain` / `.Llm` / `.Embedding` / `.Modules.WorldState`  | 领域模型、LLM 路由、向量化、世界状态库                                  | `Foundation`                               |
+| 内核       | `openLuo.Capabilities`                                            | 能力目录、决策循环、并行调度、状态事务、输出队列、确认网关              | `Foundation`                               |
+| 内核       | `openLuo.AgentContext`                                            | 上下文装配与回合快照                                                    | `Foundation` + `Capabilities`              |
+| 内核       | `openLuo.Memory`                                                  | RAG 记忆（sqlite-vec + 降级回退）                                       | `Foundation` + `Embedding`                 |
+| 内核       | `openLuo.Modules.Agent`                                           | 角色 Agent 运行层（多角色协作）                                         | `Capabilities` + `Domain`                  |
+| 内核桥接   | `openLuo.Capabilities.Llm` / `.Mcp` / `.A2A`                      | LLM 原生 tool calls、MCP、Agent2Agent 远程能力                          | `Capabilities`（+ `Llm`）                  |
+| 扩展契约   | `openLuo.Abstractions`                                            | 扩展契约（`IAgentExtension` 等）+ manifest 加载                        | `AgentContext` + `Capabilities`            |
+| 领域扩展   | `extensions/{memory,companion,world,party,sticker,music}`          | 记忆、伴侣人格、世界状态、多角色、表情、音乐分享卡                      | `Abstractions` + 各自模块（**不引宿主 exe**） |
+| 网络       | `openLuo.Server`                                                  | Hub：HTTP 控制面 + WS 数据面，把 `IAgentRuntime` 映射为 wire 消息        | `Protocol` + `Capabilities`                |
+| 装配       | `openLuo.Application`                                             | 组合根 + 配置/作业/调度/日志/资产/会话存储 + 启动编排（`KernelStartup` / `HubStartup`） | 内核 + `Server` + `Abstractions`  |
+| 入口       | `openLuo`（可执行）                                                | **纯入口**（`Program.cs` 50 行）：`--serve` → 启动内核 → 运行 Hub → 关闭 | 仅 `openLuo.Application`（**零包依赖**）   |
+| 客户端 SDK | `openLuo.Client`                                                  | 连接、握手协商、回合流式、会话句柄                                      | `Protocol`                                 |
+| 客户端     | `openLuo.Cli` / `.Tui` / `.Gui` / `.Qqbot`（各为**可执行**）       | 产物 `openluo-cli` / `openluo-tui` / `openluo-gui` / `openluo-qq`       | `Client` + `Protocol`（QQ 桥另加 `OneBot`） |
+| Demo       | `openLuo.playground`（程序集名 `openLuo.Playground`）             | 内核能力循环最小演示，离线确定性；`make run-playground`                | `Application` + 内核（**不引宿主 exe**）    |
 
 架构约定：
 
 - 内核零业务配置硬编码；领域数据随扩展走
 - 扩展注册的 `canonicalId` 自动命名空间化为 `<extension-id>:<local-id>`；`core:` 保留给内核
 - 领域扩展目录以 `.disable` 结尾时完全跳过
-- **边界规则**：扩展不得引用宿主 exe（依赖 `openLuo.Abstractions` + 模块工程）；客户端不得引用内核（依赖 `openLuo.Protocol` + `openLuo.Client`）
-- `openLuo/Modules/` 仅保留宿主内部件（`AppShell`：配置加载 / 组合根）；`WorldState`、`Agent` 已迁出为独立工程
+- **边界规则（7 条：B1–B6 由 `ArchitectureBoundaryTests` 8 例守护，B7 由 `HttpSurfaceTests` 5 例守护）**：① 协议零依赖；② 客户端不含内核（只 `Protocol` + `Client`）；③ 服务端不自带内核实现（只 `Protocol` + `Capabilities`）；④ 宿主 exe 只依赖 `Application`；⑤ 扩展不引宿主 exe；⑥ `Application` 不反向依赖 exe / 客户端 / UI 驱动；⑦ **HTTP 面常量全部集中在 Protocol**（`HttpPaths` / `HttpQueryKeys` / `HttpResponseTypes` / `HttpRules`，禁止字面量；状态码映射单点 `ErrorCodes.HttpStatusOf`）且遵循 **REST**（路径只放资源名词、创建回 `201 + Location`、查询串不承载资源身份）
+- 内核侧的目录归属已收敛到 `openLuo.Application/{Hosting,Composition,Modules/AppShell,Infrastructure,Startup}`；宿主 `openLuo/` 只剩 `Program.cs` + `data/` + `native/`
 
 ## 4. 能力与协议
 
@@ -67,7 +85,14 @@ CLI / TUI / GUI / QQ 桥都是**各自独立的程序**（`openluo-cli` / `openl
 - **工具调度**：`DefaultCapabilityDispatcher` 并行调度 + 决策循环（预算/终止条件/非法并行拒绝），调度日志归 `agent/dispatch`（start / ok / failed / batch done）。
 - **Inter-Agent**：最小 `ask_character` + `AgentAsk / AgentReply` 消息协议，角色间真实通信。
 - **记忆 / 状态 / 调度 / 资产**：RAG 记忆检索（sqlite-vec + 降级回退）、状态事务（mutation 冲突检测）、定时/一次性调度（协议 `/v1/schedules` 到期发起**主动回合**）、资产与解锁。
-- **协议域**：会话、回合流式、输出与资产、能力目录、配置（get/post/del）、作业（`/v1/jobs`）、调度（`/v1/schedules`）、观测（`/v1/metrics`）——详见 `docs/architecture/hub-protocol.md`。
+- **多端上下文**：会话按 `(subjectId, agentId, conversationId)` **复用** → PC 客户端与手机 QQ 私聊共享同一段对话；世界状态只读投影（`GET /v1/sessions/{id}/state` + `state.updated`，按 subject 分区、只推变化键、**快照持久化**）；`output.ack` / `output.fail` 投递回执（QQ 桥在 OneBot 真正发出后才 ack）；`turn.cancel` 取消进行中回合；`presence.subscribe{sessionIds}` 按会话过滤在场。详见 hub-protocol §5.4 / §6.1 / §6.2 / §6.4。
+- **Hub 持久化**：`hub.db`（SQLite WAL，独立于业务 `game.db`）承载会话 / 作业 / 调度 / 令牌 / 轨迹 / 世界状态快照；重启**保守恢复**（会话恢复、进行中作业标记 failed、令牌仍有效）。
+- **入口治理**：Hub 在**鉴权之前**限流 + 输入校验（`security.jsonc` 的 `hub*` 键，可热加载）：HTTP/WS 每 key 速率（`429 + 8001`）、路径与 WS 会话 id 白名单（`4003`）、单帧上限（`2002`）、回合文本上限与严格模式（`5004`）——详见 hub-protocol §4.9。
+- **协议域**：会话、回合流式、输出与资产、能力目录、配置（`GET` / `PATCH` / `DELETE`）、作业（`/v1/jobs`）、调度（`/v1/schedules`）、观测（`/v1/metrics` / `/v1/traces`）、日志（`/v1/logs`、`/v1/logs/archive`）、状态投影、鉴权（`POST /v1/tokens`）——详见 `docs/architecture/hub-protocol.md`。
+  **HTTP 面遵循 REST**：路径只用资源名词（动作交给方法）、创建回 `201 + Location`、查询串只承载过滤/分页/视图；
+  路径、查询键、响应 `type`、资源 id 白名单全部是 Protocol 常量（`HttpPaths` / `HttpQueryKeys` / `HttpResponseTypes` / `HttpRules`），
+  错误码 → HTTP 状态码单点在 `ErrorCodes.HttpStatusOf`——`HttpSurfaceTests` 守形状，禁止散落字面量。
+  文档即单一来源：规范内未实现者就地标 **v1 未实现**（可 grep），已声明但未处理的命令回 `2004`、规范外类型回 `2003`（`HubProtocolSurfaceTests` 强制"每个消息类型 ∈ 已实现 ∪ 预留清单"）。
 
 ## 5. 配置
 
@@ -86,6 +111,9 @@ CLI / TUI / GUI / QQ 桥都是**各自独立的程序**（`openluo-cli` / `openl
 
 配置热加载（`RuntimeConfigCenter` 文件监听）。**密钥（API key 等）只在 example 中留空占位，真实值仅存在于 `publish/linux-x64/config/`（gitignore 保护，不进 git）**。
 
+**Hub 入口治理参数**在 `security.jsonc` 的 `security` 段（`hubEnabled` / `hubRequestsPerMinute` / `hubBurstLimit` / `hubMaxInputLength` / `hubMaxFrameBytes` / `hubStrictInputValidation`）：
+默认宽松但真实生效（600 次/分钟、60 次/10 秒突发、文本 ≤32768 字符、单帧 ≤1 MiB），改后热加载——详见 [`docs/architecture/hub-protocol.md`](docs/architecture/hub-protocol.md) §4.9。
+
 ## 6. 日志
 
 双格式设计（`openLuo.Infrastructure.Logging.GameLogger`）：
@@ -96,7 +124,7 @@ CLI / TUI / GUI / QQ 桥都是**各自独立的程序**（`openluo-cli` / `openl
 其他：
 
 - `log.jsonc` 热加载：改 `level` / `categories` 即时生效
-- 启动完成日志：`Startup complete: 6/6 MCP server(s) connected, 4 extension(s) loaded, 21927 ms`
+- 启动完成日志：`Startup complete: 6/6 MCP server(s) connected, 6 extension(s) loaded, 21927 ms`
 - QQ 消息收发日志（`[recv]`/`[send]`）按 `qqbot.jsonc` 的 `logMessages` 控制
 - 插件日志走 `Plugin()` 隔离写入 `log/plugin/`
 
@@ -120,7 +148,7 @@ make publish-fast   # 目录形态发布（无单文件打包，迭代用）
 make clean          # 清理（白名单清空发布目录，保留 build.sh/config/game.db）
 ```
 
-`make publish` 流程：扩展 DLL 增量构建（无改动 0s）→ 服务端与 4 个客户端**各自** `dotnet publish` 到 tmpfs 空目录（~12s/个，绕开非空目录的 36s 黑盒清理）→ 白名单清空 `publish/linux-x64`（`KEEP_ENTRIES = build.sh config game.db`，保留生产密钥/数据库/自定义脚本，其余同步为最新）→ 组装 data/native/mcp/extensions + 5 个可执行。
+`make publish` 流程：扩展 DLL 增量构建（无改动 0s）→ 服务端与 4 个客户端**各自** `dotnet publish` 到 tmpfs 空目录（~12s/个，绕开非空目录的 36s 黑盒清理）→ 白名单清空 `publish/linux-x64`（`KEEP_ENTRIES = build.sh config game.db` 及 `game.db-{journal,wal,shm}`，保留生产密钥/数据库/自定义脚本，其余同步为最新）→ 组装 data/native/mcp/extensions + 5 个可执行。
 
 发布目录是**平铺的 n+1 份独立程序**，共享同一份 `config/`：
 `openLuo`（服务端，含 `extensions/`）+ `openluo-cli` / `openluo-tui` / `openluo-gui` / `openluo-qq`（客户端，各自自包含单文件）。
@@ -128,23 +156,24 @@ make clean          # 清理（白名单清空发布目录，保留 build.sh/con
 
 ## 8. 测试
 
-**10 个测试工程、302 全绿**（0 失败），全部位于 `tests/` 下：
+**10 个测试工程、332 全绿**（0 失败），全部位于 `tests/` 下：
 
 | 工程                            | 数量 | 说明 |
 | ------------------------------- | ---- | ---- |
-| `openLuo.Tests`                 | 81   | 应用层/内核装配（配置、日志、会话、安全、QQ 桥逻辑） |
+| `openLuo.Tests`                 | 89   | 应用层/内核装配（配置、日志、会话、安全、QQ 桥逻辑、状态持久化） |
 | `openLuo.Capabilities.Tests`    | 58   | 能力目录、决策循环、调度、状态事务 |
-| `openLuo.E2E.Tests`             | 45   | 端到端 + **架构边界断言 8 例**（协议零依赖 / 客户端无内核 / 服务端无客户端与 UI 驱动 / exe 只依赖 Application …） |
+| `openLuo.E2E.Tests`             | 66   | 端到端 + **架构边界 8 例** + **协议表面/多端 7 例**（状态投影、回执转发、回合取消、presence 过滤、多端共会话）+ **入口治理 7 例**（限流、帧上限、id 白名单、文本上限、严格模式）+ **枚举对齐 4 例**（内核枚举 ↔ Protocol 常量、删除响应形状）+ **HTTP 面 5 例**（REST 形状、路径常量、状态码映射） |
 | `openLuo.Extensions.Tests`      | 41   | 扩展宿主与 6 个扩展 |
 | `openLuo.Protocol.Tests`        | 31   | 信封、消息类型、错误码 |
 | `openLuo.AgentContext.Tests`    | 13   | 上下文装配 |
-| `openLuo.Persistence.Tests`     | 12   | 持久化 |
-| `openLuo.Logging.Tests`         | 8    | 日志 |
+| `openLuo.Persistence.Tests`     | 12   | 持久化（`game.db`） |
+| `openLuo.Logging.Tests`         | 8    | 日志（热库/冷文件/生命周期） |
 | `openLuo.Assets.Tests`          | 7    | 资产存储 |
-| `openLuo.Cli.Tests`             | 6    | CLI 客户端 + QQ 桥重连 |
+| `openLuo.Cli.Tests`             | 7    | CLI 客户端 + QQ 桥（重连韧性、投递回执） |
 
-> 边界与"表面一致性"断言都在 `openLuo.E2E.Tests`：`ArchitectureBoundaryTests`（程序集引用边）与
-> `HubProtocolSurfaceTests`（命令/事件必须 ∈ 已实现 ∪ 预留清单）。
+> 边界与"表面一致性"断言都在 `openLuo.E2E.Tests`：`ArchitectureBoundaryTests`（程序集引用边，8 例）与
+> `HubProtocolSurfaceTests`（命令/事件必须 ∈ 已实现 ∪ 预留清单，7 例）。
+> 分层图、依赖边清单与技术债见 [`docs/architecture/layers.md`](docs/architecture/layers.md)。
 
 ## 9. 快速开始
 
@@ -196,21 +225,29 @@ cd publish/linux-x64 && ./openluo-qq             # 另开终端启动 QQ bot（�
 
 ### 已完成
 
-- [x] 通用 Agent 内核（能力目录 / 决策循环 / 并行调度 / 状态事务 / 上下文快照）
-- [x] 领域扩展宿主与 4 个扩展（memory / companion / world / party）
-- [x] MCP / A2A 远程能力接入（含 12306 / 高德地图 / mcd / web-fetch 等 server）
-- [x] QQ bot 生产入口（消息收发、多模态分段、`[recv]`/`[send]` 日志）
+- [x] 通用 Agent 内核（能力目录 / 决策循环 / 并行调度 / 状态事务 / 上下文快照 / 输出队列）
+- [x] 领域扩展宿主与 **6 个扩展**（memory / companion / world / party / sticker / music）
+- [x] MCP / A2A 远程能力接入（含 12306 / 高德地图 / mcd / web-fetch 等 server），MCP 失败语义（`isError`）贯通
+- [x] QQ bot 生产入口（消息收发、多模态分段、`[recv]`/`[send]` 日志、断线自愈）
 - [x] Inter-Agent 最小协议（`ask_character`）
-- [x] 工具调度日志、启动完成日志、日志双格式统一
-- [x] 构建加速（47-57s → 13-34s）、发布白名单保护
+- [x] 日志（双格式 + 热库/冷文件 + 检索端点 + 14 天/20 万保留）、观测（`/v1/metrics` / `/v1/traces`）、审计事件
+- [x] **中心 Hub + 瘦客户端**：Wire 协议 v1、鉴权（token/角色/admin 前缀）、会话持久化、资产（assetRef）、作业与调度（cron）、高危能力确认握手
+- [x] **多端上下文**：会话复用（多端共享同一段对话）、世界状态投影与持久化、投递回执、回合取消、presence 过滤
+- [x] **入口治理**：鉴权前限流 + 输入校验（HTTP/WS 同一套策略，`security.jsonc` 热加载，错误码 `8001` / `4003` / `5004` / `2002`）
+- [x] **工程结构**：服务端/客户端拆分（n+1 独立程序）、抽 `openLuo.Application`、依赖收敛、`ArchitectureBoundaryTests` 守边界、测试归位 `tests/`、playground 清瘦且不再依赖宿主 exe
+- [x] 构建与发布（`make publish` 平铺 n+1 份 + 白名单保护 + 构建加速）
 
 ### 未完成
 
+- [ ] Hub ↔ Hub 联邦（协议已定，见 hub-protocol §10）
+- [ ] 上下文「全局 + 局部」分层（风险清单见 `docs/architecture/context-scope-risk.md`）
+- [ ] 插件视角世界状态与内核状态事务的键控统一（建议与「公共/私有记忆」一并设计）
 - [ ] 玩家主对话 / 角色间 backchannel 线程隔离
 - [ ] 角色自主多 Agent 协作增强（`delegate_character_task` / `consult_party`）
-- [ ] TTS 语音合成、Live2D 驱动、VL 多模态（看图理解、视觉记忆）
+- [ ] 语音与多模态：TTS 已以 **MCP 工具外挂**（Qwen-TTS）；客户端侧语音播放、Live2D 驱动、VL 视觉记忆未做
 - [ ] ComfyUI CG 生成管线
-- [ ] 安全治理（插件权限强制、审计、限流）与观测回放（trace / replay / 指标）
+- [ ] 安全治理（**Hub 入口限流/输入校验已做 ✅**；仍缺：插件权限强制、按 subject/租户的细分配额、审计覆盖面）
+- [ ] 观测回放前端（轨迹已入库，回放可视化未做）
 
 ## 11. 贡献规范
 

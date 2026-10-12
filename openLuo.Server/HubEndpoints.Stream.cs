@@ -18,7 +18,7 @@ public static partial class HubServer
         var presenceSubscribers = hub.PresenceSubscribers;
         var auditSubscribers = hub.AuditSubscribers;
 
-        app.Map("/v1/stream", async (HttpContext ctx) =>
+        app.Map(ProtocolInfo.StreamPath, async (HttpContext ctx) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest)
             {

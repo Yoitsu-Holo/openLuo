@@ -14,4 +14,10 @@ public sealed class HubServerOptions
 
     /// <summary>高危能力确认等待上限（秒）；超时视为拒绝。</summary>
     public int ConfirmTimeoutSeconds { get; init; } = 60;
+
+    /// <summary>
+    /// 入口治理策略（限流 + 输入校验，§4.9）。宿主传入**闭包**即可让 <c>security.jsonc</c> 的热加载生效；
+    /// 未提供则用 <see cref="Security.HubSecurityPolicy.Default"/>（宽松但真实生效）。
+    /// </summary>
+    public Func<Security.HubSecurityPolicy>? Security { get; init; }
 }

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using openLuo.Protocol;
 
 namespace openLuo.Server;
@@ -9,7 +10,17 @@ namespace openLuo.Server;
 public static partial class HubServer
 {
     /// <summary>
+    /// 路径里出现的资源 id（会话 / 资产 / 轨迹），供入口治理做 id 白名单校验（§4.9）。
+    /// 捕获整个路径段（`[^/]+`）后用 <see cref="HttpRules.ResourceIdPattern"/> 校验——
+    /// 若只匹配白名单字符会漏判 `bad.id` 这类非法段（匹配在 `.` 处停止，等于放行）。
+    /// </summary>
+    private static readonly Regex ResourceIdInPath = new(
+        $"^{ProtocolInfo.HttpBasePath}/(?:{HttpRules.IdAddressedCollections})/([^/]+)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
     /// 鉴权域：admin/user 权限守卫（**中间件**，必须在端点注册前调用）+ 令牌签发（§4.4/§4.8）。
+    /// 最前面还有入口治理：限流 + 路径资源 id 白名单（§4.9）。
     /// </summary>
     private static void MapAuthEndpoints(WebApplication app, HubContext hub)
     {
@@ -17,14 +28,34 @@ public static partial class HubServer
         var auditSubscribers = hub.AuditSubscribers;
 
         // 权限守卫（§4.8）：admin-only 路径未鉴权 → 3001，越权 → 3002。
-        string[] adminPrefixes = ["/v1/config", "/v1/logs", "/v1/metrics", "/v1/schedules", "/v1/traces"];
+        string[] adminPrefixes = [HttpPaths.Config, HttpPaths.Logs, HttpPaths.Metrics, HttpPaths.Schedules, HttpPaths.Traces];
         app.Use(async (ctx, next) =>
         {
             var path = ctx.Request.Path.Value ?? string.Empty;
-            var needsAdmin = adminPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase))
-                || (path.StartsWith("/v1/jobs", StringComparison.OrdinalIgnoreCase) && !HttpMethods.IsGet(ctx.Request.Method));
+            var guard = hub.Guard;
+            var bearer = TokenRegistry.BearerOf(ctx.Request.Headers.Authorization.ToString());
 
-            var needsUser = path.StartsWith("/v1/assets", StringComparison.OrdinalIgnoreCase);
+            // 入口治理（§4.9）：限流（key = token → 客户端 IP），未通过回 429 + 8001。
+            var key = string.IsNullOrEmpty(bearer) ? ctx.Connection.RemoteIpAddress?.ToString() : bearer;
+            if (!guard.Allow(key))
+            {
+                await WriteErrorAsync(ctx, ErrorCodes.RateLimited, guard.RateLimitHint);
+                return;
+            }
+
+            // 入口治理（§4.9）：路径里的资源 id 白名单（会话 / 资产 / 轨迹），挡路径穿越与分隔符注入。
+            var idMatch = ResourceIdInPath.Match(path);
+            if (idMatch.Success && !guard.ValidResourceId(idMatch.Groups[1].Value))
+            {
+                await WriteErrorAsync(ctx, ErrorCodes.SessionInvalid,
+                    "invalid resource id in path: only letters, digits, '-' and '_' are allowed");
+                return;
+            }
+
+            var needsAdmin = adminPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase))
+                || (path.StartsWith(HttpPaths.Jobs, StringComparison.OrdinalIgnoreCase) && !HttpMethods.IsGet(ctx.Request.Method));
+
+            var needsUser = path.StartsWith(HttpPaths.Assets, StringComparison.OrdinalIgnoreCase);
             if (needsAdmin || needsUser)
             {
                 var role = tokens.Authorize(TokenRegistry.BearerOf(ctx.Request.Headers.Authorization.ToString()));
@@ -43,7 +74,7 @@ public static partial class HubServer
             await next();
         });
 
-        app.MapPost("/v1/auth/token", async (HttpContext ctx, CancellationToken requestCt) =>
+        app.MapPost(HttpPaths.Tokens, async (HttpContext ctx, CancellationToken requestCt) =>
         {
             var request = await JsonSerializer.DeserializeAsync<TokenRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
                           ?? new TokenRequest();
@@ -52,7 +83,7 @@ public static partial class HubServer
                 await AuditAsync(auditSubscribers, "auth.token", request.ClientId, response.Role, "ok", null, requestCt);
 
             return issued
-                ? Json(EnvelopeFactory.Create("auth.token", response))
+                ? Created(ctx, EnvelopeFactory.Create(HttpResponseTypes.Token, response))
                 : Results.Json(
                     EnvelopeFactory.CreateError(EventTypes.Error, errorCode, error),
                     ProtocolJson.Options,
@@ -67,13 +98,13 @@ public static partial class HubServer
         var options = hub.Options;
         var features = hub.Features;
 
-        app.MapGet("/v1/health", () => Json(EnvelopeFactory.Create("health", new HealthDto
+        app.MapGet(HttpPaths.Health, () => Json(EnvelopeFactory.Create(HttpResponseTypes.Health, new HealthDto
         {
             Status = "ok",
             UptimeSec = (DateTimeOffset.UtcNow - startedAt).TotalSeconds,
         })));
 
-        app.MapGet("/v1/version", () => Json(EnvelopeFactory.Create("version", new VersionDto
+        app.MapGet(HttpPaths.Version, () => Json(EnvelopeFactory.Create(HttpResponseTypes.Version, new VersionDto
         {
             ServerVersion = options.ServerVersion,
             ProtocolVersion = ProtocolInfo.MajorVersion,

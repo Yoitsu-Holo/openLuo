@@ -146,7 +146,18 @@ public static class WireMapper
     {
         TurnId = turnId,
         CallId = result.InvocationId,
-        Status = result.Success ? "ok" : result.Status.ToString().ToLowerInvariant(),
+        // 显式映射到 wire 常量（原先 `Status.ToString().ToLowerInvariant()`：内核枚举改名会**静默**改 wire 值）。
+        // 未知成员走 failed（客户端只按字符串判成败）；覆盖性由 WireEnumAlignmentTests 守，新增枚举成员会先让测试失败。
+        Status = result.Success ? CapabilityStatuses.Ok : result.Status switch
+        {
+            CapabilityStatus.Ok => CapabilityStatuses.Ok,
+            CapabilityStatus.Failed => CapabilityStatuses.Failed,
+            CapabilityStatus.Conflict => CapabilityStatuses.Conflict,
+            CapabilityStatus.Rejected => CapabilityStatuses.Rejected,
+            CapabilityStatus.Timeout => CapabilityStatuses.Timeout,
+            CapabilityStatus.Cancelled => CapabilityStatuses.Cancelled,
+            _ => CapabilityStatuses.Failed,
+        },
         Preview = Blank(result.Text ?? result.Error),
     };
 

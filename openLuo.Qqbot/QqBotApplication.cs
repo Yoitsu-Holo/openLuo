@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using openLuo.Client;
 using openLuo.OneBot;
+using openLuo.Protocol;
 
 namespace openLuo.Qqbot;
 
@@ -101,6 +102,10 @@ public sealed class QqBotApplication
                 {
                     await SendPartsAsync(client, isGroup, targetId, [part], config, logLabel, ct);
                     sent++;
+                    // 投递回执：**只有 OneBot 成功发出之后**才 ack（"已成功投递"才名副其实，见协议 §4.6）
+                    if (part.Sequence is { } sequence)
+                        await hub.SendAsync(EnvelopeFactory.Create(
+                            MessageTypes.OutputAck, new OutputAckCommand { Sequence = sequence }), ct);
                 }
                 return;
             }

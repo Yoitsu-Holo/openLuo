@@ -30,7 +30,16 @@ public sealed record CreateJobRequest
     public JsonNode? Payload { get; init; }
 }
 
-// `GET /v1/jobs/{id}` / `DELETE /v1/jobs/{id}` 响应：直接返回 `JobDto`。
+/// <summary>
+/// `PATCH /v1/jobs/{id}` 请求：作业的**状态迁移**（REST：作业是不可删的运行记录，取消不是删除）。
+/// 目前仅支持 <see cref="JobStatuses.Cancelled"/>，其它值回 `1302 job.invalid`。
+/// </summary>
+public sealed record JobUpdateRequest
+{
+    public string Status { get; init; } = JobStatuses.Cancelled;
+}
+
+// `GET /v1/jobs/{id}` 响应：直接返回 `JobDto`；`PATCH /v1/jobs/{id}`（取消）亦返回 `JobDto{status:"cancelled"}`。
 // 规范早期曾定义 `JobStatusResponse` 包装形状，但线上从未使用（服务端一直返回裸 `JobDto`），
 // 故该类型已删除，避免同一端点存在两份互相矛盾的契约。
 

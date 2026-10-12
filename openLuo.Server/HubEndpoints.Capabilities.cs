@@ -13,10 +13,10 @@ public static partial class HubServer
         if (directory is null)
             return;
 
-        app.MapGet("/v1/capabilities", async (string? sessionId, CancellationToken requestCt) =>
+        app.MapGet(HttpPaths.Capabilities, async (string? sessionId, CancellationToken requestCt) =>
         {
             var capabilities = await directory.ListCapabilitiesAsync(sessionId, requestCt);
-            return Json(EnvelopeFactory.Create("capabilities", new CapabilitiesResponse
+            return Json(EnvelopeFactory.Create(HttpResponseTypes.Capabilities, new CapabilitiesResponse
             {
                 Version = 1,
                 Capabilities = capabilities.Select(WireMapper.ToDto).ToList(),

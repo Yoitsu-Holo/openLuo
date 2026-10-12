@@ -130,8 +130,8 @@ public sealed class TokenRegistry
 
     /// <summary>从 Authorization 头解析 token。</summary>
     public static string? BearerOf(string? authorizationHeader) =>
-        authorizationHeader is not null && authorizationHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            ? authorizationHeader["Bearer ".Length..].Trim()
+        authorizationHeader is not null && authorizationHeader.StartsWith(HttpRules.AuthorizationPrefix, StringComparison.OrdinalIgnoreCase)
+            ? authorizationHeader[HttpRules.AuthorizationPrefix.Length..].Trim()
             : null;
 
     /// <summary>连接级鉴权：返回实际角色；不满足策略返回 null。</summary>

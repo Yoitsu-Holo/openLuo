@@ -14,10 +14,10 @@ public static partial class HubServer
         var metrics = hub.Metrics;
         var traces = hub.Traces;
 
-        app.MapGet("/v1/metrics", async (CancellationToken requestCt) =>
+        app.MapGet(HttpPaths.Metrics, async (CancellationToken requestCt) =>
         {
             var sessions = await runtime.ListSessionsAsync(requestCt);
-            return Json(EnvelopeFactory.Create("metrics", new MetricsDto
+            return Json(EnvelopeFactory.Create(HttpResponseTypes.Metrics, new MetricsDto
             {
                 UptimeSec = (DateTimeOffset.UtcNow - startedAt).TotalSeconds,
                 SessionsActive = sessions.Count,
@@ -30,12 +30,12 @@ public static partial class HubServer
         if (traces is null)
             return;
 
-        app.MapGet("/v1/traces/{turnId}", (string turnId) =>
+        app.MapGet(HttpPaths.TraceTemplate, (string turnId) =>
         {
             var trace = traces.Get(turnId);
             return trace is null
                 ? Error(ErrorCodes.TraceNotFound, $"trace not found: {turnId}")
-                : Json(EnvelopeFactory.Create("trace", new TurnTraceDto
+                : Json(EnvelopeFactory.Create(HttpResponseTypes.Trace, new TurnTraceDto
                 {
                     TurnId = trace.TurnId,
                     SessionId = trace.SessionId,

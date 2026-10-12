@@ -3,15 +3,29 @@
   // [热加载] 修改后自动生效
 
   "security": {
+    // 插件调用限流（插件总线用；与下面的 Hub 入口治理是两套独立配额）
     "rateLimitPerMinute": 10,
     "maxInputLength": 1000,
     "burstLimit": 5,
     "promptBreakCharLimit": 10,
+
     // 图片/多模态输入安全限制（字节为单位）
     "maxImageSizeBytes": 10485760,
     "allowedImageMimeTypes": "image/png,image/jpeg,image/gif,image/webp",
     "maxBase64PromptLength": 1048576,
     "imageDownloadTimeoutSeconds": 15,
-    "imageDownloadMaxRetries": 3
+    "imageDownloadMaxRetries": 3,
+
+    // ----- Hub 入口治理（docs/architecture/hub-protocol.md §4.9）-----
+    // 默认宽松但真实生效：默认值 = 每个 key 600 次/分钟、60 次/10 秒突发、
+    // 回合文本 ≤32768 字符、单帧 ≤1 MiB。key = Bearer token（有则优先）或客户端 IP。
+    "hubEnabled": true,
+    "hubRequestsPerMinute": 600,
+    "hubBurstLimit": 60,
+    "hubMaxInputLength": 32768,
+    "hubMaxFrameBytes": 1048576,
+    // 严格模式（默认 false）：回合文本额外过 SQL 关键字/提示词破坏字符启发式。
+    // ⚠ 打开后正常聊天里出现 "SELECT" / "--" / 过多 { } < > 都会被拒（回 5004 turn.invalid），仅对抗性接入场景使用。
+    "hubStrictInputValidation": false
   }
 }

@@ -12,22 +12,24 @@ public sealed class TuiApplication
     private readonly string _hubUrl;
     private readonly string _subjectId;
     private readonly string _agentId;
+    private readonly string? _conversationId;
 
     private HubClient? _client;
     private TextView _history = null!;
     private TextField _input = null!;
 
-    public TuiApplication(string hubUrl, string subjectId = "builtin-rin", string agentId = "companion")
+    public TuiApplication(string hubUrl, string subjectId = "builtin-rin", string agentId = "companion", string? conversationId = null)
     {
         _hubUrl = hubUrl;
         _subjectId = subjectId;
         _agentId = agentId;
+        _conversationId = conversationId;
     }
 
     public async Task RunAsync(CancellationToken ct = default)
     {
         _client = await HubClient.ConnectAsync(_hubUrl, $"tui_{ProtocolIds.NewUlid()}", "tui", ct: ct);
-        await _client.OpenSessionAsync(_subjectId, _agentId, ct: ct);
+        await _client.OpenSessionAsync(_subjectId, _agentId, _conversationId, ct);
 
         TuiApp.Init();
         var top = TuiApp.Top;
@@ -70,7 +72,12 @@ public sealed class TuiApplication
             {
                 case EventTypes.Output:
                     if (evt.DataAs<OutputDto>() is { } interim)
+                    {
                         Append(Render(interim) + "\n");
+                        // 投递回执（任一端 ack 即视为已投递，见协议 §4.6）
+                        await client.SendAsync(EnvelopeFactory.Create(
+                            MessageTypes.OutputAck, new OutputAckCommand { Sequence = interim.Sequence }), ct);
+                    }
                     break;
 
                 case EventTypes.TurnFinal:

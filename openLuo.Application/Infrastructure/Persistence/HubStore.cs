@@ -1,15 +1,18 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
 using openLuo.Capabilities.Core;
 using openLuo.Core.Interfaces;
+using openLuo.Protocol;
 
 namespace openLuo.Infrastructure.Persistence;
 
 /// <summary>
 /// Hub 控制面状态持久化（<c>hub.db</c>，WAL，独立于业务 <c>game.db</c>）：
-/// 会话元数据、作业、调度、已签发令牌。供 Hub 重启后保守恢复（决策 #3）。
+/// 会话元数据、作业、调度、已签发令牌，以及**世界状态快照**（<c>subject_state</c>，供状态事务跨重启保留）。
+/// 供 Hub 重启后保守恢复（决策 #3）。
 /// </summary>
-public sealed class HubStore : ITokenStore, ITraceStore
+public sealed class HubStore : ITokenStore, ITraceStore, IStatePersistence
 {
     private readonly string _dbPath;
 
@@ -36,6 +39,11 @@ public sealed class HubStore : ITokenStore, ITraceStore
               session_id TEXT PRIMARY KEY, subject_id TEXT NOT NULL, agent_id TEXT NOT NULL,
               conversation_id TEXT NOT NULL, client_type TEXT, client_id TEXT,
               created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL
+            );
+            """);
+        Execute(conn, """
+            CREATE TABLE IF NOT EXISTS subject_state (
+              subject_id TEXT PRIMARY KEY, version INTEGER NOT NULL, values_json TEXT NOT NULL, updated_at_ms INTEGER NOT NULL
             );
             """);
         Execute(conn, """
@@ -429,5 +437,48 @@ public sealed class HubStore : ITokenStore, ITraceStore
                 DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(3))));
         }
         return result;
+    }
+
+    // ── 世界状态快照（供状态事务跨重启保留；见 IStatePersistence） ──────────────
+
+    public IReadOnlyList<(string SubjectId, long Version, IReadOnlyDictionary<string, object?> Values)> Load()
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT subject_id, version, values_json FROM subject_state;";
+        var result = new List<(string, long, IReadOnlyDictionary<string, object?>)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            if (JsonNode.Parse(reader.GetString(2)) is JsonObject json)
+            {
+                foreach (var pair in json)
+                    values[pair.Key] = pair.Value?.DeepClone();
+            }
+            result.Add((reader.GetString(0), reader.GetInt64(1), values));
+        }
+        return result;
+    }
+
+    public void Save(string subjectId, long version, IReadOnlyDictionary<string, object?> values)
+    {
+        var json = new JsonObject();
+        foreach (var pair in values)
+            json[pair.Key] = JsonSerializer.SerializeToNode(pair.Value, ProtocolJson.Options);
+
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO subject_state (subject_id, version, values_json, updated_at_ms)
+            VALUES ($id, $v, $json, $now)
+            ON CONFLICT(subject_id) DO UPDATE SET
+              version = excluded.version, values_json = excluded.values_json, updated_at_ms = excluded.updated_at_ms;
+            """;
+        cmd.Parameters.AddWithValue("$id", subjectId);
+        cmd.Parameters.AddWithValue("$v", version);
+        cmd.Parameters.AddWithValue("$json", json.ToJsonString());
+        cmd.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        cmd.ExecuteNonQuery();
     }
 }

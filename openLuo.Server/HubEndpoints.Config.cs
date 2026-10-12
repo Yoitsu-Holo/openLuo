@@ -18,7 +18,7 @@ public static partial class HubServer
         var auditSubscribers = hub.AuditSubscribers;
         string? Actor(HttpContext ctx) => hub.Actor(ctx);
 
-        app.MapGet("/v1/config", () => Json(EnvelopeFactory.Create("config", new ConfigListResponse
+        app.MapGet(HttpPaths.Config, () => Json(EnvelopeFactory.Create(HttpResponseTypes.Config, new ConfigListResponse
         {
             Namespaces = config.ListNamespaces().Select(n => new ConfigNamespaceDto
             {
@@ -29,12 +29,12 @@ public static partial class HubServer
             }).ToList(),
         })));
 
-        app.MapGet("/v1/config/{ns}", async (string ns, CancellationToken requestCt) =>
+        app.MapGet(HttpPaths.ConfigNamespaceTemplate, async (string ns, CancellationToken requestCt) =>
         {
             var view = await config.GetAsync(ns, requestCt);
             return view is null
                 ? Error(ErrorCodes.ConfigNamespaceNotFound, $"config namespace not found: {ns}")
-                : Json(EnvelopeFactory.Create("config", new ConfigGetResponse
+                : Json(EnvelopeFactory.Create(HttpResponseTypes.Config, new ConfigGetResponse
                 {
                     Namespace = view.Namespace,
                     Source = view.Source,
@@ -43,7 +43,7 @@ public static partial class HubServer
                 }));
         });
 
-        app.MapPost("/v1/config/{ns}", async (string ns, HttpContext ctx, CancellationToken requestCt) =>
+        app.MapPatch(HttpPaths.ConfigNamespaceTemplate, async (string ns, HttpContext ctx, CancellationToken requestCt) =>
         {
             var body = await JsonSerializer.DeserializeAsync<ConfigSetRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
                        ?? new ConfigSetRequest();
@@ -52,7 +52,7 @@ public static partial class HubServer
 
             var view = await config.SetAsync(ns, body.Values, body.Persist, requestCt);
             await AuditAsync(auditSubscribers, "config.set", Actor(ctx), ns, "ok", null, requestCt);
-            return Json(EnvelopeFactory.Create("config", new ConfigSetResponse
+            return Json(EnvelopeFactory.Create(HttpResponseTypes.Config, new ConfigSetResponse
             {
                 Namespace = view.Namespace,
                 Source = view.Source,
@@ -60,14 +60,14 @@ public static partial class HubServer
             }));
         });
 
-        app.MapDelete("/v1/config/{ns}", async (string ns, HttpContext ctx, CancellationToken requestCt) =>
+        app.MapDelete(HttpPaths.ConfigNamespaceTemplate, async (string ns, HttpContext ctx, CancellationToken requestCt) =>
         {
-            var persist = string.Equals(ctx.Request.Query["persist"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+            var persist = string.Equals(ctx.Request.Query[HttpQueryKeys.Persist].ToString(), "true", StringComparison.OrdinalIgnoreCase);
             var view = await config.DeleteAsync(ns, persist, requestCt);
             await AuditAsync(auditSubscribers, "config.delete", Actor(ctx), ns, view is null ? "not_found" : "ok", null, requestCt);
             return view is null
                 ? Error(ErrorCodes.ConfigNamespaceNotFound, $"config namespace not found: {ns}")
-                : Json(EnvelopeFactory.Create("config", new ConfigDeleteResponse
+                : Json(EnvelopeFactory.Create(HttpResponseTypes.Config, new ConfigDeleteResponse
                 {
                     Namespace = view.Namespace,
                     Source = view.Source,

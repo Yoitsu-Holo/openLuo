@@ -12,10 +12,10 @@
 | 维度 | 现状 | 证据 |
 | --- | --- | --- |
 | 装配 | 每回合 `IContextAssembler.BuildAsync(ContextBuildRequest)`；贡献者逐块产出 | `openLuo.AgentContext/Core/IContextAssembler.cs`、`Core/IContextContributor.cs` |
-| 贡献者 | companion(Identity,100) / party(Identity,50) / world(SceneState,60) / memory(LongTermMemory,40) / TimeContext / Platform / Capability | 各 `extensions/*/XxxExtension.cs`；`openLuo/Composition/*Contributor.cs` |
+| 贡献者 | companion(Identity,100) / party(Identity,50) / world(SceneState,60) / memory(LongTermMemory,40) / TimeContext / Platform / Capability | 各 `extensions/*/XxxExtension.cs`；`openLuo.Application/Composition/{Time,Platform,Capability}ContextContributor.cs` |
 | 会话 | `DefaultAgentContextSession` per-session 持有 `_current` 快照（贡献 + 对话），`CreateTurnSnapshotAsync` 全量重建 | `openLuo.AgentContext/Infrastructure/DefaultAgentContextSession.cs` |
 | 键控 | 记忆按 `(SessionId, SubjectId)`；`TurnRequest.ActorId` 不落库 → 群内无用户维度 | `extensions/memory/MemoryExtension.cs`；`openLuo.Capabilities/Core/IAgentRuntime.cs` |
-| 会话键 | QQ 会话 = `qq-{scene}-{targetId}`（一个群 = 一个会话 = 一份历史 / 记忆） | `openLuo.Qqbot/Interfaces/QqRuntimeBridge.cs` |
+| 会话键 | QQ 会话 = `qq-{scene}-{targetId}`；**私聊可在桥配置里重定向**到 `qqbot.jsonc` 的 `privateConversationId`（于是 PC 客户端与手机私聊共享同一段对话） | `openLuo.Qqbot/QqRuntimeBridge.cs`（`ConversationOf` / `SessionKey`） |
 
 **要害**：上下文只有「一个会话」这一层隔离轴，没有「全局共享」与「域内独立」的区分。
 

@@ -11,16 +11,18 @@ public sealed class GuiMainViewModel
     private readonly string _hubUrl;
     private readonly string _subjectId;
     private readonly string _agentId;
+    private readonly string? _conversationId;
 
     private HubClient? _client;
 
     public ObservableCollection<string> Messages { get; } = [];
 
-    public GuiMainViewModel(string hubUrl, string subjectId = "builtin-rin", string agentId = "companion")
+    public GuiMainViewModel(string hubUrl, string subjectId = "builtin-rin", string agentId = "companion", string? conversationId = null)
     {
         _hubUrl = hubUrl;
         _subjectId = subjectId;
         _agentId = agentId;
+        _conversationId = conversationId;
     }
 
     private async Task<HubClient> EnsureConnectedAsync(CancellationToken ct)
@@ -29,7 +31,7 @@ public sealed class GuiMainViewModel
             return _client;
 
         _client = await HubClient.ConnectAsync(_hubUrl, $"gui_{ProtocolIds.NewUlid()}", "gui", ct: ct);
-        await _client.OpenSessionAsync(_subjectId, _agentId, ct: ct);
+        await _client.OpenSessionAsync(_subjectId, _agentId, _conversationId, ct);
         return _client;
     }
 
@@ -44,7 +46,12 @@ public sealed class GuiMainViewModel
             {
                 case EventTypes.Output:
                     if (evt.DataAs<OutputDto>() is { } interim)
+                    {
                         Messages.Add(Render(interim));
+                        // 投递回执（任一端 ack 即视为已投递，见协议 §4.6）
+                        await client.SendAsync(EnvelopeFactory.Create(
+                            MessageTypes.OutputAck, new OutputAckCommand { Sequence = interim.Sequence }), ct);
+                    }
                     break;
 
                 case EventTypes.TurnFinal:

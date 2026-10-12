@@ -20,12 +20,12 @@ public static partial class HubServer
         var ct = hub.Cancellation;
         string? Actor(HttpContext ctx) => hub.Actor(ctx);
 
-        app.MapGet("/v1/schedules", () => Json(EnvelopeFactory.Create("schedules", new ScheduleListResponse
+        app.MapGet(HttpPaths.Schedules, () => Json(EnvelopeFactory.Create(HttpResponseTypes.Schedules, new ScheduleListResponse
         {
             Schedules = scheduler.List().Select(WireMapper.ToDto).ToList(),
         })));
 
-        app.MapPost("/v1/schedules", async (HttpContext ctx, CancellationToken requestCt) =>
+        app.MapPost(HttpPaths.Schedules, async (HttpContext ctx, CancellationToken requestCt) =>
         {
             var body = await JsonSerializer.DeserializeAsync<CreateScheduleRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
                        ?? new CreateScheduleRequest();
@@ -36,7 +36,7 @@ public static partial class HubServer
             {
                 var info = scheduler.Add(body.SessionId, body.Kind, body.At, body.Cron, body.Payload);
                 await AuditAsync(auditSubscribers, "schedule.add", Actor(ctx), info.Id, "ok", null, requestCt);
-                return Json(EnvelopeFactory.Create("schedule", WireMapper.ToDto(info)));
+                return Created(ctx, HttpPaths.Schedule(info.Id), EnvelopeFactory.Create(HttpResponseTypes.Schedule, WireMapper.ToDto(info)));
             }
             catch (InvalidOperationException ex)
             {
@@ -44,12 +44,12 @@ public static partial class HubServer
             }
         });
 
-        app.MapDelete("/v1/schedules/{id}", async (string id, HttpContext ctx) =>
+        app.MapDelete(HttpPaths.ScheduleTemplate, async (string id, HttpContext ctx) =>
         {
             var removed = scheduler.Remove(id);
             await AuditAsync(auditSubscribers, "schedule.remove", Actor(ctx), id, removed ? "ok" : "not_found", null, default);
             return removed
-                ? Json(EnvelopeFactory.Create("schedule", new { deleted = true }))
+                ? Json(EnvelopeFactory.Create(HttpResponseTypes.Schedule, new DeletedResponse()))
                 : Error(ErrorCodes.ScheduleNotFound, $"schedule not found: {id}");
         });
 

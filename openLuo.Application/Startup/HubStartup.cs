@@ -45,12 +45,35 @@ public static class HubStartup
         }
 
         var confirmationGate = serviceProvider.GetRequiredService<openLuo.Server.HubConfirmationGate>();
+
+        // 世界状态只读端口：定义在 Capabilities（Server 允许依赖的两层之一），由内核的状态事务实现；
+        // Hub 只做"按会话取 subjectId → 读状态"的投影，不感知具体实现。
+        var stateReader = serviceProvider.GetService<openLuo.Capabilities.Core.IStateReader>();
+
         await openLuo.Server.HubServer.RunAsync(
             runtime,
-            new openLuo.Server.HubServerOptions { Listen = listen },
+            new openLuo.Server.HubServerOptions { Listen = listen, Security = BuildSecurityPolicy() },
             directory, configService, jobs, scheduler, logs, auth, assets, hubStore, outputQueue, hubStore, confirmationGate,
+            stateReader,
             ct);
     }
+
+    /// <summary>
+    /// Hub 入口治理策略（§4.9）：从 <c>security.jsonc</c> 的 <c>security</c> 段映射
+    /// （经静态门面 <see cref="openLuo.Infrastructure.Config.Config"/>，它由 <c>RuntimeConfigCenter</c> 热重载）。
+    /// 返回**闭包**而非快照值，配合 Server 侧每 30 次检查的惰性刷新，改配置无需重启。
+    /// </summary>
+    private static Func<openLuo.Server.Security.HubSecurityPolicy> BuildSecurityPolicy() => () =>
+    {
+        var security = openLuo.Infrastructure.Config.Config.Security;
+        return new openLuo.Server.Security.HubSecurityPolicy(
+            Enabled: security.HubEnabled,
+            RequestsPerMinute: security.HubRequestsPerMinute,
+            BurstLimit: security.HubBurstLimit,
+            MaxInputLength: security.HubMaxInputLength,
+            MaxFrameBytes: security.HubMaxFrameBytes,
+            StrictInputValidation: security.HubStrictInputValidation);
+    };
 
     /// <summary>Hub 鉴权配置来自环境变量（后续可迁至 server.jsonc）。</summary>
     private static openLuo.Server.HubAuthOptions BuildHubAuth()

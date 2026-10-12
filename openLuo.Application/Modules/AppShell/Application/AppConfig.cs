@@ -141,6 +141,26 @@ public class SecurityRuntimeConfig
     public int ImageDownloadTimeoutSeconds { get; set; } = 15;
     public int ImageDownloadMaxRetries { get; set; } = 3;
 
+    // ── Hub 入口治理（hub-protocol §4.9）：限流 + 输入校验，默认宽松但真实生效 ──
+
+    /// <summary>Hub 入口治理总开关。</summary>
+    public bool HubEnabled { get; set; } = true;
+
+    /// <summary>单个 key（token / 客户端 IP / 连接）每分钟请求上限。</summary>
+    public int HubRequestsPerMinute { get; set; } = 600;
+
+    /// <summary>单个 key 每 10 秒突发上限。</summary>
+    public int HubBurstLimit { get; set; } = 60;
+
+    /// <summary>回合文本硬上限（字符）；正常聊天远达不到，用于挡误用与滥用。</summary>
+    public int HubMaxInputLength { get; set; } = 32_768;
+
+    /// <summary>单条 WS 文本帧上限（字节）。</summary>
+    public int HubMaxFrameBytes { get; set; } = 1_048_576;
+
+    /// <summary>严格模式：回合文本额外过 SQL 关键字/提示词破坏字符启发式（默认关，会对正常聊天误判）。</summary>
+    public bool HubStrictInputValidation { get; set; }
+
     public SecurityRuntimeConfig Clone() => new()
     {
         RateLimitPerMinute = RateLimitPerMinute,
@@ -151,7 +171,13 @@ public class SecurityRuntimeConfig
         AllowedImageMimeTypes = AllowedImageMimeTypes,
         MaxBase64PromptLength = MaxBase64PromptLength,
         ImageDownloadTimeoutSeconds = ImageDownloadTimeoutSeconds,
-        ImageDownloadMaxRetries = ImageDownloadMaxRetries
+        ImageDownloadMaxRetries = ImageDownloadMaxRetries,
+        HubEnabled = HubEnabled,
+        HubRequestsPerMinute = HubRequestsPerMinute,
+        HubBurstLimit = HubBurstLimit,
+        HubMaxInputLength = HubMaxInputLength,
+        HubMaxFrameBytes = HubMaxFrameBytes,
+        HubStrictInputValidation = HubStrictInputValidation
     };
 }
 

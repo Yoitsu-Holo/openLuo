@@ -21,7 +21,7 @@ public static partial class HubServer
         var ct = hub.Cancellation;
         string? Actor(HttpContext ctx) => hub.Actor(ctx);
 
-        app.MapPost("/v1/jobs", async (HttpContext ctx, CancellationToken requestCt) =>
+        app.MapPost(HttpPaths.Jobs, async (HttpContext ctx, CancellationToken requestCt) =>
         {
             var body = await JsonSerializer.DeserializeAsync<CreateJobRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
                        ?? new CreateJobRequest();
@@ -32,7 +32,7 @@ public static partial class HubServer
             {
                 var job = await jobs.SubmitAsync(body.Kind, body.Payload, body.SessionId, requestCt);
                 await AuditAsync(auditSubscribers, "job.submit", Actor(ctx), job.Id, "ok", null, requestCt);
-                return Json(EnvelopeFactory.Create("job", WireMapper.ToDto(job)));
+                return Created(ctx, HttpPaths.Job(job.Id), EnvelopeFactory.Create(HttpResponseTypes.Job, WireMapper.ToDto(job)));
             }
             catch (InvalidOperationException ex)
             {
@@ -40,20 +40,27 @@ public static partial class HubServer
             }
         });
 
-        app.MapGet("/v1/jobs/{id}", (string id) =>
+        app.MapGet(HttpPaths.JobTemplate, (string id) =>
         {
             var job = jobs.Get(id);
             return job is null
                 ? Error(ErrorCodes.JobNotFound, $"job not found: {id}")
-                : Json(EnvelopeFactory.Create("job", WireMapper.ToDto(job)));
+                : Json(EnvelopeFactory.Create(HttpResponseTypes.Job, WireMapper.ToDto(job)));
         });
 
-        app.MapDelete("/v1/jobs/{id}", async (string id, HttpContext ctx) =>
+        // REST：作业是不可删的运行记录 → 取消是**状态迁移**，用 PATCH（替代早期的 DELETE 语义错位）。
+        app.MapPatch(HttpPaths.JobTemplate, async (string id, HttpContext ctx, CancellationToken requestCt) =>
         {
+            var body = await JsonSerializer.DeserializeAsync<JobUpdateRequest>(ctx.Request.Body, ProtocolJson.Options, requestCt)
+                       ?? new JobUpdateRequest();
+
+            if (!string.Equals(body.Status, JobStatuses.Cancelled, StringComparison.Ordinal))
+                return Error(ErrorCodes.JobInvalid, $"unsupported job status transition: \"{body.Status}\" (only \"{JobStatuses.Cancelled}\")");
+
             var cancelled = jobs.Cancel(id);
-            await AuditAsync(auditSubscribers, "job.cancel", Actor(ctx), id, cancelled ? "ok" : "not_found", null, default);
+            await AuditAsync(auditSubscribers, "job.cancel", Actor(ctx), id, cancelled ? "ok" : "not_found", null, requestCt);
             return cancelled
-                ? Json(EnvelopeFactory.Create("job", new JobDto { Id = id, Status = JobStatuses.Cancelled, CompletedAt = DateTimeOffset.UtcNow }))
+                ? Json(EnvelopeFactory.Create(HttpResponseTypes.Job, new JobDto { Id = id, Status = JobStatuses.Cancelled, CompletedAt = DateTimeOffset.UtcNow }))
                 : Error(ErrorCodes.JobNotFound, $"job not running: {id}");
         });
 

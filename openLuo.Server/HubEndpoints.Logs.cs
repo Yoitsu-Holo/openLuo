@@ -15,7 +15,7 @@ public static partial class HubServer
         if (logs is null)
             return;
 
-        app.MapGet("/v1/logs", async (string? from, string? to, string? level, string? module, string? category,
+        app.MapGet(HttpPaths.Logs, async (string? from, string? to, string? level, string? module, string? category,
             string? keyword, string? sessionId, string? turnId, int? limit, long? beforeId,
             CancellationToken requestCt) =>
         {
@@ -34,14 +34,14 @@ public static partial class HubServer
             };
 
             var items = await logs.QueryAsync(query, requestCt);
-            return Json(EnvelopeFactory.Create("logs", new LogsResponse
+            return Json(EnvelopeFactory.Create(HttpResponseTypes.Logs, new LogsResponse
             {
                 Items = items.Select(WireMapper.ToDto).ToList(),
                 NextBeforeId = items.Count >= Math.Clamp(query.Limit, 1, 1000) ? items[^1].Id : null,
             }));
         });
 
-        app.MapGet("/v1/logs/archive", async (string? date, string? category, string? keyword, string? level,
+        app.MapGet(HttpPaths.LogsArchive, async (string? date, string? category, string? keyword, string? level,
             int? limit, CancellationToken requestCt) =>
         {
             var items = await logs.SearchArchiveAsync(new ArchiveLogQuery(
@@ -51,18 +51,18 @@ public static partial class HubServer
                 MinLevel: level,
                 Limit: limit ?? 200), requestCt);
 
-            return Json(EnvelopeFactory.Create("logs", new LogsResponse
+            return Json(EnvelopeFactory.Create(HttpResponseTypes.Logs, new LogsResponse
             {
                 Items = items.Select(WireMapper.ToDto).ToList(),
             }));
         });
 
-        app.MapGet("/v1/logs/stats", async (string? from, string? to, string? bucket, CancellationToken requestCt) =>
+        app.MapGet(HttpPaths.LogsStats, async (string? from, string? to, string? bucket, CancellationToken requestCt) =>
         {
             var toTs = ParseTime(to) ?? DateTimeOffset.UtcNow;
             var fromTs = ParseTime(from) ?? toTs.AddHours(-1);
             var buckets = await logs.StatsAsync(fromTs, toTs, ParseBucket(bucket), requestCt);
-            return Json(EnvelopeFactory.Create("logs", new LogStatsResponse
+            return Json(EnvelopeFactory.Create(HttpResponseTypes.Logs, new LogStatsResponse
             {
                 Buckets = buckets.Select(b => new LogBucketDto { Start = b.Start, Counts = b.Counts }).ToList(),
             }));

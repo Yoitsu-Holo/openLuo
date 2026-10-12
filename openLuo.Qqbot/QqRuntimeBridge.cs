@@ -97,14 +97,21 @@ public sealed class QqRuntimeBridge
             {
                 case EventTypes.Output:
                     if (evt.DataAs<OutputDto>() is { } interim)
-                        yield return await ToPartAsync(interim, ct);
+                    {
+                        // 带上 Sequence：只有真正投递给 QQ 之后才 ack（见 QqBotApplication.RunTurnAsync）
+                        var part = await ToPartAsync(interim, ct);
+                        yield return part with { Sequence = interim.Sequence };
+                    }
                     break;
 
                 case EventTypes.TurnFinal:
                     if (evt.DataAs<TurnResultDto>() is { } result)
                     {
                         foreach (var output in result.Outputs)
-                            yield return await ToPartAsync(output, ct);
+                        {
+                            var part = await ToPartAsync(output, ct);
+                            yield return part with { Sequence = output.Sequence };
+                        }
                         if (!string.IsNullOrWhiteSpace(result.FinalText))
                             yield return new QqReplyPart("text", result.FinalText!);
                     }
@@ -190,5 +197,8 @@ public sealed class QqRuntimeBridge
     }
 }
 
-/// <summary>Kind: text | image | music（OneBot music 段，Value 为平台资源 id）| record（语音，Value 为 base64 data URL）。</summary>
-public sealed record QqReplyPart(string Kind, string Value);
+/// <summary>
+/// 一段待发的 QQ 回复。Kind: text | image | music（OneBot music 段，Value 为平台资源 id）| record（语音，Value 为 base64 data URL）。
+/// <paramref name="Sequence"/> 非空表示它来自某个 <c>output</c> 事件（用于投递回执）。
+/// </summary>
+public sealed record QqReplyPart(string Kind, string Value, long? Sequence = null);

@@ -16,7 +16,7 @@ run:
 	dotnet run --project openLuo -- --serve
 
 run-playground:
-	dotnet run --project openLuo.playgraound
+	dotnet run --project openLuo.playground
 
 test:
 	dotnet test openLuo.slnx
