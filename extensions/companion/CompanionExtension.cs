@@ -122,6 +122,44 @@ public sealed class CompanionIdentityContributor : IContextContributor
     public CompanionIdentityContributor(string dataDir) => _dataDir = dataDir;
     public string Id => "companion:identity";
 
+    /// <summary>身份/persona：只与角色有关，同一角色的所有会话共用（D45）。</summary>
+    public ContextScope Scope => ContextScope.Global;
+
+    /// <summary>
+    /// 兜底 TTL 30s（D46）：正常情况下用 <see cref="CurrentVersion"/> 的探针按内容失效，
+    /// TTL 只在探针拿不到版本（目录不可读等）时兜底。内容只依赖 <c>request.SubjectId</c>。
+    /// </summary>
+    public TimeSpan CacheTtl => TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// 内容版本 = 角色档案目录里所有 <c>*.jsonc</c> 的 (mtime, size) 组合（**只 stat，不解析**）。
+    /// 这样"编辑了档案 → 下一回合立刻重建"，既没有 TTL 窗口期的陈旧，也不需要宿主猜何时失效；
+    /// 代价是改任意一个档案会让所有角色一起重建一次（可接受：编辑档案不是高频操作）。
+    /// 探针必须廉价才值得存在——`ContributeAsync` 才是那个"枚举 + 逐个 JSON 解析"的昂贵步骤。
+    /// </summary>
+    public string? CurrentVersion(ContextBuildRequest request)
+    {
+        try
+        {
+            var dir = Path.Combine(_dataDir, "archetypes");
+            if (!Directory.Exists(dir))
+                return null;
+
+            var parts = new List<string>();
+            foreach (var file in Directory.EnumerateFiles(dir, "*.jsonc").OrderBy(f => f, StringComparer.Ordinal))
+            {
+                var info = new FileInfo(file);
+                parts.Add($"{Path.GetFileName(file)}:{info.LastWriteTimeUtc.Ticks}:{info.Length}");
+            }
+
+            return parts.Count == 0 ? null : string.Join("|", parts);
+        }
+        catch
+        {
+            return null;   // 探针失败 → 退回 TTL 语义
+        }
+    }
+
     public Task<ContextContributionResult> ContributeAsync(ContextBuildRequest request, CancellationToken ct = default)
     {
         try
@@ -140,7 +178,7 @@ public sealed class CompanionIdentityContributor : IContextContributor
                 Contributions = [new ContextContribution
                 {
                     Id = "companion-identity", ContributorId = Id, Region = ContextRegion.Identity,
-                    Content = identity, Priority = 100, TokenEstimate = Math.Max(1, identity.Length / 4)
+                    Content = identity, Priority = 100
                 }]
             });
         }

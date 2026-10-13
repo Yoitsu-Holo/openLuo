@@ -14,9 +14,16 @@ var agentId = Environment.GetEnvironmentVariable("OPENLUO_AGENT_ID") ?? "compani
 // 不填则每次启动新建一段对话（原行为）。
 var conversationId = Environment.GetEnvironmentVariable("OPENLUO_CONVERSATION_ID");
 
+// 说话人稳定身份与会话内线程（都可选）：UserId 用于区分"谁在说话"（多人共用一台机器/多账号时
+// Hub 才能把回合归因到正确的人并分区记忆），ThreadId 用于同一会话里的并行话题。
+// 不填 = 不上送 = 行为与从前一致（归因回退到会话主体）。
+var userId = Environment.GetEnvironmentVariable("OPENLUO_USER_ID");
+var threadId = Environment.GetEnvironmentVariable("OPENLUO_THREAD_ID");
+
 try
 {
-    await new CliHubApp(hubUrl, subjectId, agentId, conversationId: conversationId).RunAsync(Console.In);
+    await new CliHubApp(hubUrl, subjectId, agentId, conversationId: conversationId,
+        userId: userId, threadId: threadId).RunAsync(Console.In);
     return 0;
 }
 catch (HubConnectException ex)

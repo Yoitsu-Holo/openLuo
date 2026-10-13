@@ -1,6 +1,12 @@
 # 上下文系统：全局 / 局部改造风险识别
 
-> **状态**：风险识别（本轮**不实施**，按用户要求先识别）。
+> **状态**：风险识别（本文**不实施**）。内核优化步 0 已修掉"预算失真"与"配置假旋钮"两处底座问题
+> （见 [`context-budget.md`](context-budget.md)）；**步 1a 已落地范围/域键与身份维度**、**步 1b 已落地全局块缓存与失效**——
+> R1（契约无 scope）、R3（键控维度不足）、R4（会话边界单一）、R2（全局内容按会话重复）、R5（缓存粒度）均已解，
+> 见 [`context-domains.md`](context-domains.md)（§2–§5 与 §8）；R6（并发）由既有 per-session 回合闸 + 不可变快照覆盖，
+> R7（协议映射）随 `userId`/`threadId` 落地解决。
+> **已确认的范围决定（2026-10-13）**：**多用户 / 多线程维度一次到位**——即 `userId` / `threadId` 不是"先留字段"，
+> 域键设计要把 Global / Session / Thread / User 四个维度一次定完，避免二次迁移。
 > **结论**：当前上下文装配是「**单会话扁平管线**」，未区分 **全局**（所有局部推理共用的身份 / 规则 / 时间）
 > 与 **局部**（好友 / 群聊 / 线程）。迁移到「全局 + 局部」是**结构性改动**，牵动内核契约、缓存、
 > 记忆键控与协议层；下面先固化风险与建议，避免后续边改边乱。
@@ -12,6 +18,7 @@
 | 维度 | 现状 | 证据 |
 | --- | --- | --- |
 | 装配 | 每回合 `IContextAssembler.BuildAsync(ContextBuildRequest)`；贡献者逐块产出 | `openLuo.AgentContext/Core/IContextAssembler.cs`、`Core/IContextContributor.cs` |
+| 预算（**步 0 已修**） | token 上限走配置（`agent.contextTokenBudget`，默认 24000）；保底区域不裁、可裁区域按优先级让位并逐条记账；对话历史按剩余预算从最旧截断 | [`context-budget.md`](context-budget.md)；`ContextRegionPolicies` / `ContextBudgetSnapshot` |
 | 贡献者 | companion(Identity,100) / party(Identity,50) / world(SceneState,60) / memory(LongTermMemory,40) / TimeContext / Platform / Capability | 各 `extensions/*/XxxExtension.cs`；`openLuo.Application/Composition/{Time,Platform,Capability}ContextContributor.cs` |
 | 会话 | `DefaultAgentContextSession` per-session 持有 `_current` 快照（贡献 + 对话），`CreateTurnSnapshotAsync` 全量重建 | `openLuo.AgentContext/Infrastructure/DefaultAgentContextSession.cs` |
 | 键控 | 记忆按 `(SessionId, SubjectId)`；`TurnRequest.ActorId` 不落库 → 群内无用户维度 | `extensions/memory/MemoryExtension.cs`；`openLuo.Capabilities/Core/IAgentRuntime.cs` |

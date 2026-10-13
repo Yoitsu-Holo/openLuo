@@ -29,6 +29,7 @@ public sealed class LoadedExtension
     public IReadOnlyList<(CapabilityDescriptor Descriptor, ICapabilityInvoker Invoker)> InvokableCapabilities { get; init; } = [];
     public IReadOnlyList<ContextContributorRegistration> ContextContributors { get; init; } = [];
     public IReadOnlyList<WorkflowDefinition> Workflows { get; init; } = [];
+    public IReadOnlyList<IWorkflowNodeHandler> WorkflowNodeHandlers { get; init; } = [];
     public IReadOnlyList<SkillDocument> Skills { get; init; } = [];
     public IReadOnlyList<IMessageTagRenderer> TagRenderers { get; init; } = [];
     public IReadOnlyList<StateMutationHandlerRegistration> StateHandlers { get; init; } = [];
@@ -159,7 +160,8 @@ public sealed class ExtensionHost
         {
             Id = manifest.Id, Version = manifest.Version, DataDir = dataDir,
             Capabilities = capabilities, InvokableCapabilities = invokable,
-            ContextContributors = builder.ContextContributors, Workflows = workflows, Skills = skills,
+            ContextContributors = builder.ContextContributors, Workflows = workflows,
+            WorkflowNodeHandlers = builder.WorkflowNodeHandlers, Skills = skills,
             TagRenderers = builder.TagRenderers, StateHandlers = builder.StateHandlers
         };
     }

@@ -17,6 +17,7 @@ public sealed class ExtensionBuilder
     private readonly List<(CapabilityDescriptor Descriptor, ICapabilityInvoker Invoker)> _invokableCapabilities = [];
     private readonly List<ContextContributorRegistration> _contextContributors = [];
     private readonly List<WorkflowDefinition> _workflows = [];
+    private readonly List<IWorkflowNodeHandler> _workflowHandlers = [];
     private readonly List<SkillDocument> _skills = [];
     private readonly List<IMessageTagRenderer> _tagRenderers = [];
     private readonly List<StateMutationHandlerRegistration> _stateHandlers = [];
@@ -49,6 +50,12 @@ public sealed class ExtensionBuilder
     }
 
     public ExtensionBuilder AddWorkflow(WorkflowDefinition definition) { _workflows.Add(definition); return this; }
+
+    /// <summary>
+    /// 注册一个工作流节点处理器（按 <see cref="WorkflowNode.HandlerId"/> 分发）。
+    /// 没有处理器的工作流只能被"看到"却跑不动——所以工作流与处理器必须成对注册。
+    /// </summary>
+    public ExtensionBuilder AddWorkflowNodeHandler(IWorkflowNodeHandler handler) { _workflowHandlers.Add(handler); return this; }
     public ExtensionBuilder AddSkill(SkillDocument skill) { _skills.Add(skill); return this; }
     public ExtensionBuilder AddMessageTagRenderer(IMessageTagRenderer renderer) { _tagRenderers.Add(renderer); return this; }
     public ExtensionBuilder AddStateMutationHandler(IStateMutationHandler handler) { _stateHandlers.Add(new(_extensionId, handler)); return this; }
@@ -57,6 +64,7 @@ public sealed class ExtensionBuilder
     public IReadOnlyList<(CapabilityDescriptor Descriptor, ICapabilityInvoker Invoker)> InvokableCapabilities => _invokableCapabilities;
     public IReadOnlyList<ContextContributorRegistration> ContextContributors => _contextContributors;
     public IReadOnlyList<WorkflowDefinition> Workflows => _workflows;
+    public IReadOnlyList<IWorkflowNodeHandler> WorkflowNodeHandlers => _workflowHandlers;
     public IReadOnlyList<SkillDocument> Skills => _skills;
     public IReadOnlyList<IMessageTagRenderer> TagRenderers => _tagRenderers;
     public IReadOnlyList<StateMutationHandlerRegistration> StateHandlers => _stateHandlers;

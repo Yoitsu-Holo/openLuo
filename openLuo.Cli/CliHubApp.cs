@@ -13,15 +13,20 @@ public sealed class CliHubApp
     private readonly string _subjectId;
     private readonly string _agentId;
     private readonly string? _conversationId;
+    private readonly string? _userId;
+    private readonly string? _threadId;
     private readonly Func<string, Task> _writeLine;
 
     public CliHubApp(string hubUrl, string subjectId = "builtin-rin", string agentId = "companion",
-        Func<string, Task>? writeLine = null, string? conversationId = null)
+        Func<string, Task>? writeLine = null, string? conversationId = null,
+        string? userId = null, string? threadId = null)
     {
         _hubUrl = hubUrl;
         _subjectId = subjectId;
         _agentId = agentId;
         _conversationId = conversationId;
+        _userId = userId;
+        _threadId = threadId;
         _writeLine = writeLine ?? (text => { Console.WriteLine(text); return Task.CompletedTask; });
     }
 
@@ -58,7 +63,18 @@ public sealed class CliHubApp
 
     private async Task RunTurnAsync(HubClient client, string text, CancellationToken ct)
     {
-        await foreach (var evt in client.StreamTurnAsync(new TurnRequestDto { Text = text, SourceId = "cli" }, ct))
+        // 身份随每一回合上送（CLI 只有这一条回合路径）：UserId 是说话人的稳定身份（Hub 据此落库
+        // speaker_id 并作为记忆的 User 域分区键，跨会话有效），ThreadId 是会话内线程。
+        // 两者为空即不序列化（协议 JSON 忽略 null）= 与从前逐字一致的旧行为。
+        var request = new TurnRequestDto
+        {
+            Text = text,
+            SourceId = "cli",
+            UserId = _userId,
+            ThreadId = _threadId,
+        };
+
+        await foreach (var evt in client.StreamTurnAsync(request, ct))
         {
             switch (evt.Type)
             {

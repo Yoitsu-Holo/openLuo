@@ -12,17 +12,22 @@ public sealed class GuiMainViewModel
     private readonly string _subjectId;
     private readonly string _agentId;
     private readonly string? _conversationId;
+    private readonly string? _userId;
+    private readonly string? _threadId;
 
     private HubClient? _client;
 
     public ObservableCollection<string> Messages { get; } = [];
 
-    public GuiMainViewModel(string hubUrl, string subjectId = "builtin-rin", string agentId = "companion", string? conversationId = null)
+    public GuiMainViewModel(string hubUrl, string subjectId = "builtin-rin", string agentId = "companion",
+        string? conversationId = null, string? userId = null, string? threadId = null)
     {
         _hubUrl = hubUrl;
         _subjectId = subjectId;
         _agentId = agentId;
         _conversationId = conversationId;
+        _userId = userId;
+        _threadId = threadId;
     }
 
     private async Task<HubClient> EnsureConnectedAsync(CancellationToken ct)
@@ -40,7 +45,14 @@ public sealed class GuiMainViewModel
         var client = await EnsureConnectedAsync(ct);
         Messages.Add($"你: {text}");
 
-        await foreach (var evt in client.StreamTurnAsync(new TurnRequestDto { Text = text, SourceId = "gui" }, ct))
+        await foreach (var evt in client.StreamTurnAsync(new TurnRequestDto
+        {
+            Text = text,
+            SourceId = "gui",
+            // 身份随每一回合上送（GUI 只有这一条回合路径）；为空即不序列化 = 旧行为不变
+            UserId = _userId,
+            ThreadId = _threadId,
+        }, ct))
         {
             switch (evt.Type)
             {

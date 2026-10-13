@@ -15,7 +15,9 @@ public sealed class App : Avalonia.Application
                 GuiApplication.HubUrl ?? throw new InvalidOperationException("GUI hub url is not configured."),
                 GuiApplication.SubjectId,
                 GuiApplication.AgentId,
-                GuiApplication.ConversationId);
+                GuiApplication.ConversationId,
+                GuiApplication.UserId,
+                GuiApplication.ThreadId);
             var output = new Avalonia.Controls.TextBox { IsReadOnly = true, AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
             var input = new Avalonia.Controls.TextBox { Watermark = "输入消息，Enter 发送" };
             var send = new Avalonia.Controls.Button { Content = "发送" };

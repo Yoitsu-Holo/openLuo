@@ -56,7 +56,7 @@ public sealed class QqRuntimeBridge
 
     /// <summary>感知通道：消息写入会话历史但不触发回合（群聊未 @ 的消息）。</summary>
     public async Task ObserveAsync(
-        string scene, long targetId, string text, string? senderName,
+        string scene, long targetId, long actorId, string text, string? senderName,
         IReadOnlyList<JsonNode>? blocks, CancellationToken ct)
     {
         var sessionId = await EnsureSessionAsync(scene, targetId, ct);
@@ -64,6 +64,7 @@ public sealed class QqRuntimeBridge
         {
             SessionId = sessionId,
             SenderName = senderName,
+            UserId = actorId.ToString(),   // 稳定身份：群聊"看但不回"的消息也要能归因到人（D45）
             Text = text,
             Blocks = blocks,
         }, sessionId: sessionId), ct);

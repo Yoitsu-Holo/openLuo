@@ -38,6 +38,9 @@ namespace openLuo.Modules.AppShell.Application;
 /// </summary>
 public static class ServiceCollectionExtensions
 {
+    /// <summary>单对话同时可加载的技能数上限（按对话计；超出淘汰最久未用）——控制"已加载正文"占用的预算。</summary>
+    private const int LoadedSkillCapacity = 3;
+
     public static IServiceCollection AddOpenLuo(
         this IServiceCollection services, AppConfig config, string baseDir)
     {
@@ -123,12 +126,22 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IConversationStore>(sp => new SqliteConversationStore(connectionString));
         services.AddSingleton<IOutputQueue, InMemoryOutputQueue>();
         services.AddSingleton<IMessageTagPipeline, DefaultMessageTagPipeline>();
+        // 上下文预算（D44）：token 计数 + 限额来源。限额经端口取当前快照 → 配置热加载对
+        // 长生命周期的装配器/会话立即生效（与 HubServerOptions.Security 的做法一致）。
+        services.AddSingleton<ITokenCounter>(_ => HeuristicTokenCounter.Instance);
+        services.AddSingleton<IContextLimitsProvider, ConfigContextLimitsProvider>();
         services.AddSingleton<IContextAssembler>(sp =>
         {
             var registry = sp.GetRequiredService<ExtensionRegistry>();
             var contributors = sp.GetServices<IContextContributor>().Concat(registry.Contributors);
-            return new DefaultContextAssembler(contributors);
+            return new DefaultContextAssembler(
+                contributors,
+                sp.GetRequiredService<ITokenCounter>(),
+                sp.GetRequiredService<IContextLimitsProvider>());
         });
+        // ⚠ 装配器同时挂在 IContextAssembler 与 IContextGlobalCache 两个描述符下（同一实例）：
+        //    容器释放会对它调用两次 Dispose——它不可释放，安全（参见 LogStore 的教训）。
+        services.AddSingleton<IContextGlobalCache>(sp => (IContextGlobalCache)sp.GetRequiredService<IContextAssembler>());
         services.AddSingleton<IContextUpdater, SessionContextUpdater>();
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<ICapabilityDecisionModel, LlmCapabilityDecisionModel>();
@@ -172,6 +185,41 @@ public static class ServiceCollectionExtensions
                 confirmationGate: sp.GetRequiredService<openLuo.Server.HubConfirmationGate>());
         });
         services.AddSingleton<ICapabilityDecisionLoop, DefaultCapabilityDecisionLoop>();
+
+        // ── 技能 / 工作流（D12/D13/D30）────────────────────────────────
+        // 机制早就在（SkillDocument/ISkillService、WorkflowDefinition/IWorkflowRunner、扩展的 AddSkill/AddWorkflow），
+        // 但从未接线：目录恒空、正文加载与编排执行都没有入口。这里把它接起来：
+        //   技能 → ISkillService（摘要进目录、正文按需 core:load_skill）
+        //   工作流 → DefaultWorkflowRunner（按 HandlerId 分发节点；core:run_workflow 黑盒触发）
+        // ⚠ 全部在解析时从注册表按需读取：扩展是启动后加载的，早解析会拿到空表。
+        // 技能有两个来源：扩展用 AddSkill 声明的（代码侧）+ 作者写在 data/skills/*.md 的（文件侧）。
+        // **只在启动期加载一次**（重启即更新）——刻意不做热加载：技能正文的版本与进程生命周期绑定，
+        // 避免"同一段对话里出现半旧半新的正文"这类需要持续维护的一致性问题（见 skills-workflows.md 决策记录）。
+        services.AddSingleton<ISkillService>(sp => new DefaultSkillService(
+            [
+                .. sp.GetRequiredService<ExtensionRegistry>().Skills,
+                .. openLuo.Infrastructure.Skills.SkillFileLoader.Load(Path.Combine(baseDir, "data", "skills")),
+            ]));
+        services.AddSingleton(sp =>
+        {
+            var registry = sp.GetRequiredService<ExtensionRegistry>();
+            var runner = new DefaultWorkflowRunner(registry.WorkflowHandlers);
+            foreach (var workflow in registry.Workflows)
+                runner.Register(workflow);
+            return runner;
+        });
+        services.AddSingleton<IWorkflowRunner>(sp => sp.GetRequiredService<DefaultWorkflowRunner>());
+        // 已加载技能的**引用**集合（按对话分区，上限 3）＋把它展开成正文的贡献者：
+        // core:load_skill 只登记 id，正文由贡献者在每个请求里从技能库取最新内容拼进系统块。
+        services.AddSingleton<ILoadedSkillSet>(_ => new InMemoryLoadedSkillSet(capacity: LoadedSkillCapacity));
+        services.AddSingleton<IContextContributor, LoadedSkillsContributor>();
+        services.AddSingleton<ICapabilitySource>(sp =>
+            new SkillCapabilitySource(sp.GetRequiredService<ISkillService>(), sp.GetRequiredService<ILoadedSkillSet>()));
+        services.AddSingleton<ICapabilitySource>(sp =>
+            new UnloadSkillCapabilitySource(sp.GetRequiredService<ILoadedSkillSet>()));
+        services.AddSingleton<ICapabilitySource>(sp =>
+            new WorkflowCapabilitySource(sp.GetRequiredService<IWorkflowRunner>()));
+        services.AddSingleton<ITurnCatalog, RegisteredTurnCatalog>();
         services.AddSingleton<ICapabilityCatalog>(sp =>
         {
             var catalog = new DefaultCapabilityCatalog(sp.GetServices<ICapabilitySource>());
@@ -186,7 +234,11 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IMessageTagPipeline>(),
             sp.GetRequiredService<IOutputQueue>(),
             sp.GetRequiredService<SessionStore>(),
-            sp.GetService<DatabaseInitializer>()));
+            sp.GetService<DatabaseInitializer>(),
+            sp.GetRequiredService<ITokenCounter>(),
+            sp.GetRequiredService<IContextLimitsProvider>(),
+            sp.GetService<Core.Interfaces.IGameLogger>(),
+            sp.GetRequiredService<ITurnCatalog>()));
         return services;
     }
 }

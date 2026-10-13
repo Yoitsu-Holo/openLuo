@@ -24,6 +24,9 @@ CLI / TUI / GUI / QQ 桥都是**各自独立的程序**（`openluo-cli` / `openl
 | [`docs/architecture/layers.md`](docs/architecture/layers.md) | **架构检视**：分层图、实测依赖边、6 条边界规则、技术债清单 |
 | [`docs/architecture/hub-protocol.md`](docs/architecture/hub-protocol.md) | 中心 Hub 架构 + **Wire 协议 v1**（唯一跨边界契约，含实现状态标注） |
 | [`docs/architecture/log-store.md`](docs/architecture/log-store.md) | 日志存储：热库（SQLite + FTS5）+ 冷文件 + 保留策略 |
+| [`docs/architecture/context-budget.md`](docs/architecture/context-budget.md) | **上下文预算**：token 计数口径、保底/可裁区域、裁剪算法、被裁明细、配置真值表 |
+| [`docs/architecture/context-domains.md`](docs/architecture/context-domains.md) | **上下文域键**：Global/Session/Thread/User 四个域的语义、键形状、内容归属与身份（userId）落地 |
+| [`docs/architecture/skills-workflows.md`](docs/architecture/skills-workflows.md) | **技能与工作流**：目录注入 + 按需使用（`core:load_skill` / `core:run_workflow`）、文件化技能格式、扩展作者指南 |
 | [`docs/architecture/context-scope-risk.md`](docs/architecture/context-scope-risk.md) | 上下文「全局 + 局部」改造的风险识别与建议 |
 
 ## 2. 技术栈
@@ -74,6 +77,7 @@ CLI / TUI / GUI / QQ 桥都是**各自独立的程序**（`openluo-cli` / `openl
 - 领域扩展目录以 `.disable` 结尾时完全跳过
 - **边界规则（7 条：B1–B6 由 `ArchitectureBoundaryTests` 8 例守护，B7 由 `HttpSurfaceTests` 5 例守护）**：① 协议零依赖；② 客户端不含内核（只 `Protocol` + `Client`）；③ 服务端不自带内核实现（只 `Protocol` + `Capabilities`）；④ 宿主 exe 只依赖 `Application`；⑤ 扩展不引宿主 exe；⑥ `Application` 不反向依赖 exe / 客户端 / UI 驱动；⑦ **HTTP 面常量全部集中在 Protocol**（`HttpPaths` / `HttpQueryKeys` / `HttpResponseTypes` / `HttpRules`，禁止字面量；状态码映射单点 `ErrorCodes.HttpStatusOf`）且遵循 **REST**（路径只放资源名词、创建回 `201 + Location`、查询串不承载资源身份）
 - 内核侧的目录归属已收敛到 `openLuo.Application/{Hosting,Composition,Modules/AppShell,Infrastructure,Startup}`；宿主 `openLuo/` 只剩 `Program.cs` + `data/` + `native/`
+- **上下文域（D45）**：内容按 `ContextScope`（Global / Session / Thread / User）归属，键形状由 `ContextDomainKeys` 唯一定义——身份/persona/时间/规则/能力清单是 Global（所有会话共用），世界状态/历史/在场是 Session，长期记忆是 **User（跨会话的用户↔角色）**。说话人用**稳定身份**（平台 userId，如 QQ 号）归因：`speaker_id` 存稳定 id、`speaker_name` 存显示名（渲染给模型用显示名）；平台没给身份时回退到会话主体（改造前行为）——详见 [`docs/architecture/context-domains.md`](docs/architecture/context-domains.md)
 
 ## 4. 能力与协议
 
@@ -88,6 +92,7 @@ CLI / TUI / GUI / QQ 桥都是**各自独立的程序**（`openluo-cli` / `openl
 - **多端上下文**：会话按 `(subjectId, agentId, conversationId)` **复用** → PC 客户端与手机 QQ 私聊共享同一段对话；世界状态只读投影（`GET /v1/sessions/{id}/state` + `state.updated`，按 subject 分区、只推变化键、**快照持久化**）；`output.ack` / `output.fail` 投递回执（QQ 桥在 OneBot 真正发出后才 ack）；`turn.cancel` 取消进行中回合；`presence.subscribe{sessionIds}` 按会话过滤在场。详见 hub-protocol §5.4 / §6.1 / §6.2 / §6.4。
 - **Hub 持久化**：`hub.db`（SQLite WAL，独立于业务 `game.db`）承载会话 / 作业 / 调度 / 令牌 / 轨迹 / 世界状态快照；重启**保守恢复**（会话恢复、进行中作业标记 failed、令牌仍有效）。
 - **入口治理**：Hub 在**鉴权之前**限流 + 输入校验（`security.jsonc` 的 `hub*` 键，可热加载）：HTTP/WS 每 key 速率（`429 + 8001`）、路径与 WS 会话 id 白名单（`4003`）、单帧上限（`2002`）、回合文本上限与严格模式（`5004`）——详见 hub-protocol §4.9。
+- **技能与工作流**：每轮上下文注入**摘要目录**（`[Skills]` / `[Workflows]` / `[RemoteAgents]`）；技能用 `core:load_skill` 按 id **登记引用**，正文随后以 `[LoadedSkills]` 系统块注入（**引用展开**：上下文里永远是最新版本、正文不算对话内容、走可裁的系统块预算），用完可用 `core:unload_skill` 卸载；工作流用 `core:run_workflow` 黑盒执行多步编排。技能有两个来源：扩展 `AddSkill(...)`（代码侧）与 **`data/skills/*.md`**（文件侧，**加/改技能不用重编译**，**重启即更新**——有意不做热加载）；工作流与它的节点处理器必须成对注册。详见 [`docs/architecture/skills-workflows.md`](docs/architecture/skills-workflows.md)。
 - **协议域**：会话、回合流式、输出与资产、能力目录、配置（`GET` / `PATCH` / `DELETE`）、作业（`/v1/jobs`）、调度（`/v1/schedules`）、观测（`/v1/metrics` / `/v1/traces`）、日志（`/v1/logs`、`/v1/logs/archive`）、状态投影、鉴权（`POST /v1/tokens`）——详见 `docs/architecture/hub-protocol.md`。
   **HTTP 面遵循 REST**：路径只用资源名词（动作交给方法）、创建回 `201 + Location`、查询串只承载过滤/分页/视图；
   路径、查询键、响应 `type`、资源 id 白名单全部是 Protocol 常量（`HttpPaths` / `HttpQueryKeys` / `HttpResponseTypes` / `HttpRules`），
@@ -96,23 +101,36 @@ CLI / TUI / GUI / QQ 桥都是**各自独立的程序**（`openluo-cli` / `openl
 
 ## 5. 配置
 
-运行时从 `./config/` 加载 `{name}.jsonc`（模板在 `openLuo/data/config/*.example.jsonc`，共 15 个）：
+运行时从 `./config/` 加载 `{name}.jsonc`（模板在 `openLuo/data/config/*.example.jsonc`，共 10 份）：
 
-| 配置                                                                                                                                | 说明                                                              |
-| ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `llm.jsonc`                                                                                                                         | LLM 路由（多 route：模型/供应商/API key/启用开关）                |
-| `mcp-servers.jsonc`                                                                                                                 | MCP server 列表（传输、URL/command、per-server 请求头）           |
-| `qqbot.jsonc`                                                                                                                       | QQ bot 平台配置（监听群/好友、admin、`logMessages` 消息日志开关） |
-| `agent.jsonc`                                                                                                                       | 运行时参数（chat 轮询超时、上下文保留轮数、时间注入）             |
-| `executors.jsonc`                                                                                                                   | 各执行器温度/最大 token                                           |
-| `embedding.jsonc` / `memory.jsonc`                                                                                                  | 向量检索与记忆                                                    |
-| `log.jsonc`                                                                                                                         | 日志级别 / 分类 / 终端输出开关（热加载）                          |
-| `timeouts.jsonc` / `resilience.jsonc` / `security.jsonc` / `lifecycle.jsonc` / `inter-agent.jsonc` / `world.jsonc` / `plugin.jsonc` | 超时、重试、安全、生命周期、角色间、世界、插件策略                |
+| 配置                                    | 说明                                                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `llm.jsonc`                             | LLM 路由（多 route：模型/供应商/API key/temperature/maxTokens/超时/重试/限速/能力开关 + 路由策略）        |
+| `mcp-servers.jsonc`                     | MCP server 列表（传输、URL/command、per-server 请求头、`env`）                                           |
+| `a2a-agents.jsonc`                      | A2A 远端 Agent 列表（`agents[]`，按路径直读的整份配置）                                                  |
+| `qqbot.jsonc`                           | QQ bot 平台配置（监听群/好友、admin、`logMessages` 消息日志开关）                                        |
+| `agent.jsonc`                           | 回合时限、上下文预算与历史窗口、时间注入（`contextTokenBudget` / `contextConversationRetainCount` 等）    |
+| `embedding.jsonc` / `memory.jsonc`      | 向量检索、embedding（`memory.jsonc` 只剩 `sqliteVec`：扩展路径 + 向量维度，改动需重启）                  |
+| `log.jsonc`                             | 日志级别 / 分类 / 终端输出 / 热库（`hot`）与冷文件（`archive`）（热加载）                                |
+| `security.jsonc`                        | Hub 入口治理（限流 / 帧上限 / 文本上限 / 严格模式）                                                      |
+| `database.jsonc`                        | `databasePath`（game.db 路径；早先叫 `world.jsonc`——世界状态早已不在配置里，**文件名不影响加载**）        |
+
+**每个键都必须有消费者**：零读取消费者的配置段已删除（`executors` / `timeouts` / `resilience` /
+`lifecycle` / `inter-agent` / `plugin` 六段与 `memoryRetrieval` / `memoryStore`、`security` 段旧键、`agent` 段两个超时键、
+`log.categories` 里 9 个来自旧链路的分类名）。
+这些段曾是"假旋钮"（改了不生效），对应功能落地时**连同实现一起**加回。
+
+**双向一致性由测试守护**（`tests/openLuo.Tests/Config/ConfigExampleSurfaceTests.cs`，3 例）：示例里**不允许**出现模型没有的键
+（过时键 / 凭空键）；模型里每个字段都必须在示例里说明过（密钥类字段允许以注释形式给出）；`log.categories` 的名字必须来自
+「代码实际会打日志的分类」白名单。新增配置键或改日志分类时，这个测试会先红。
 
 配置热加载（`RuntimeConfigCenter` 文件监听）。**密钥（API key 等）只在 example 中留空占位，真实值仅存在于 `publish/linux-x64/config/`（gitignore 保护，不进 git）**。
 
 **Hub 入口治理参数**在 `security.jsonc` 的 `security` 段（`hubEnabled` / `hubRequestsPerMinute` / `hubBurstLimit` / `hubMaxInputLength` / `hubMaxFrameBytes` / `hubStrictInputValidation`）：
 默认宽松但真实生效（600 次/分钟、60 次/10 秒突发、文本 ≤32768 字符、单帧 ≤1 MiB），改后热加载——详见 [`docs/architecture/hub-protocol.md`](docs/architecture/hub-protocol.md) §4.9。
+
+**上下文预算**见 [`docs/architecture/context-budget.md`](docs/architecture/context-budget.md)：token 上限、保底/可裁区域、
+被裁明细（`Budget.DroppedContributions`）、历史窗口裁剪与客户端预算覆盖的服务端夹取。
 
 ## 6. 日志
 
@@ -156,24 +174,25 @@ make clean          # 清理（白名单清空发布目录，保留 build.sh/con
 
 ## 8. 测试
 
-**10 个测试工程、332 全绿**（0 失败），全部位于 `tests/` 下：
+**10 个测试工程、441 全绿**（0 失败），全部位于 `tests/` 下：
 
 | 工程                            | 数量 | 说明 |
 | ------------------------------- | ---- | ---- |
-| `openLuo.Tests`                 | 89   | 应用层/内核装配（配置、日志、会话、安全、QQ 桥逻辑、状态持久化） |
+| `openLuo.Tests`                 | 150  | 应用层/内核装配（配置、日志、会话、安全、QQ 桥逻辑、状态持久化、**LLM 参数真值 7 例**、**回合预算夹取 5 例**、**配置示例双向一致性 3 例**、**记忆用户维度 4 例**、**技能/工作流能力与目录 8 例**、**技能提示注入 5 例**、**文件化技能 14 例**、**技能引用方案 9 例**） |
 | `openLuo.Capabilities.Tests`    | 58   | 能力目录、决策循环、调度、状态事务 |
-| `openLuo.E2E.Tests`             | 66   | 端到端 + **架构边界 8 例** + **协议表面/多端 7 例**（状态投影、回执转发、回合取消、presence 过滤、多端共会话）+ **入口治理 7 例**（限流、帧上限、id 白名单、文本上限、严格模式）+ **枚举对齐 4 例**（内核枚举 ↔ Protocol 常量、删除响应形状）+ **HTTP 面 5 例**（REST 形状、路径常量、状态码映射） |
-| `openLuo.Extensions.Tests`      | 41   | 扩展宿主与 6 个扩展 |
+| `openLuo.E2E.Tests`             | 67   | 端到端 + **架构边界 8 例** + **协议表面/多端 7 例**（状态投影、回执转发、回合取消、presence 过滤、多端共会话）+ **入口治理 7 例**（限流、帧上限、id 白名单、文本上限、严格模式）+ **枚举对齐 4 例**（内核枚举 ↔ Protocol 常量、删除响应形状）+ **HTTP 面 5 例**（REST 形状、路径常量、状态码映射） |
+| `openLuo.Extensions.Tests`      | 48   | 扩展宿主与 6 个扩展（含记忆能力用户维度 4 例、人格档案版本探针 3 例） |
 | `openLuo.Protocol.Tests`        | 31   | 信封、消息类型、错误码 |
-| `openLuo.AgentContext.Tests`    | 13   | 上下文装配 |
+| `openLuo.AgentContext.Tests`    | 46   | 上下文装配 + **预算与保留策略** + **域键与归因** + **全局块缓存**（版本探针/TTL 兜底/失效/跨角色不共享/引用而非复制） |
 | `openLuo.Persistence.Tests`     | 12   | 持久化（`game.db`） |
 | `openLuo.Logging.Tests`         | 8    | 日志（热库/冷文件/生命周期） |
 | `openLuo.Assets.Tests`          | 7    | 资产存储 |
-| `openLuo.Cli.Tests`             | 7    | CLI 客户端 + QQ 桥（重连韧性、投递回执） |
+| `openLuo.Cli.Tests`             | 14   | CLI/TUI/GUI 客户端 + QQ 桥（重连韧性、投递回执、**说话人身份 7 例**含真实二进制实测） |
 
 > 边界与"表面一致性"断言都在 `openLuo.E2E.Tests`：`ArchitectureBoundaryTests`（程序集引用边，8 例）与
 > `HubProtocolSurfaceTests`（命令/事件必须 ∈ 已实现 ∪ 预留清单，7 例）。
-> 分层图、依赖边清单与技术债见 [`docs/architecture/layers.md`](docs/architecture/layers.md)。
+> 分层图、依赖边清单与技术债见 [`docs/architecture/layers.md`](docs/architecture/layers.md)；
+> 上下文预算的语义与验证方式见 [`docs/architecture/context-budget.md`](docs/architecture/context-budget.md)。
 
 ## 9. 快速开始
 
@@ -210,6 +229,12 @@ dotnet run --project openLuo.Gui    # GUI 客户端（Avalonia）
 > 与 QQ 桥配置（`config/qqbot.jsonc` 的 `defaultSubjectId` / `defaultAgentId` / `privateConversationId`）填同一组值时，
 > **PC 客户端与手机 QQ 私聊就共享同一段对话上下文**（Hub 按 `(subjectId, agentId, conversationId)` 复用会话，
 > 两端都能看到彼此的消息，回合按会话串行）；不填 conversation 仍每次新建，不同 conversation 之间互不影响。
+>
+> **说话人身份**（PC 三端 CLI / TUI / GUI 均支持，**可选**）：
+> `OPENLUO_USER_ID` = 说话人稳定身份（平台用户 id）。填上后 Hub 会把回合归因到这个身份（落库 `speaker_id`，
+> 并作为记忆的 User 域分区键）——**多人共用一台机器 / 一个客户端多账号时用它**才能把回合分清是谁说的；
+> 与 QQ 桥自动填的 `UserId`（QQ 号）是同一个字段。`OPENLUO_THREAD_ID` = 会话内线程 id（同一会话里并行话题）。
+> **两者不设 = 不上送该字段，行为与从前完全一致**（归因回退到会话主体）。
 
 ### 9.3 生产部署
 
@@ -235,6 +260,8 @@ cd publish/linux-x64 && ./openluo-qq             # 另开终端启动 QQ bot（�
 - [x] **多端上下文**：会话复用（多端共享同一段对话）、世界状态投影与持久化、投递回执、回合取消、presence 过滤
 - [x] **入口治理**：鉴权前限流 + 输入校验（HTTP/WS 同一套策略，`security.jsonc` 热加载，错误码 `8001` / `4003` / `5004` / `2002`）
 - [x] **工程结构**：服务端/客户端拆分（n+1 独立程序）、抽 `openLuo.Application`、依赖收敛、`ArchitectureBoundaryTests` 守边界、测试归位 `tests/`、playground 清瘦且不再依赖宿主 exe
+- [x] **内核优化步 0（预算 + 真值轴）**：上下文预算成真（token 计数口径、保底区域不裁 + 被裁逐条记账、历史纳入预算）、配置真值化（删除 6 个零消费配置段与 8 个假键、接上 4 个真键、LLM route 的 temperature/maxTokens 不再被硬编码顶掉）、回合预算上 wire 并由服务端夹取、game.db 死 schema 清渣（`DatabaseInitializer` 954 → 459 行）、**旧 python 插件宿主遗骸删除**（`openLuo/data/plugins`，73 文件；其能力已由 `extensions/` 的 C# 扩展与 `mcp/` 的 MCP server 取代）
+- [x] **技能与工作流接线**：目录注入（`[Skills]`/`[Workflows]`/`[RemoteAgents]`）+ 按需使用（`core:load_skill` 取正文、`core:run_workflow` 黑盒编排）+ 文件化技能（`data/skills/*.md`，加技能不用重编译）+ 工作流节点处理器注册入口
 - [x] 构建与发布（`make publish` 平铺 n+1 份 + 白名单保护 + 构建加速）
 
 ### 未完成
@@ -246,7 +273,7 @@ cd publish/linux-x64 && ./openluo-qq             # 另开终端启动 QQ bot（�
 - [ ] 角色自主多 Agent 协作增强（`delegate_character_task` / `consult_party`）
 - [ ] 语音与多模态：TTS 已以 **MCP 工具外挂**（Qwen-TTS）；客户端侧语音播放、Live2D 驱动、VL 视觉记忆未做
 - [ ] ComfyUI CG 生成管线
-- [ ] 安全治理（**Hub 入口限流/输入校验已做 ✅**；仍缺：插件权限强制、按 subject/租户的细分配额、审计覆盖面）
+- [ ] 安全治理（**Hub 入口限流/输入校验已做 ✅**；仍缺：扩展权限强制、按 subject/租户的细分配额、审计覆盖面）
 - [ ] 观测回放前端（轨迹已入库，回放可视化未做）
 
 ## 11. 贡献规范

@@ -66,7 +66,8 @@ public static partial class HubServer
             try
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(requestCt);
-                timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, options.ConfirmTimeoutSeconds)));
+                var confirmSeconds = options.ConfirmTimeoutSeconds?.Invoke() ?? HubServerOptions.DefaultConfirmTimeoutSeconds;
+                timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, confirmSeconds)));
                 using var registration = timeout.Token.Register(() => completion.TrySetResult(false));
                 return await completion.Task;
             }
@@ -469,7 +470,7 @@ public static partial class HubServer
                     }
 
                     await runtime.AppendMessageAsync(append.SessionId, append.SenderName, append.Text,
-                        await MapBlocksAsync(assets, append.Blocks, ct), ct);
+                        await MapBlocksAsync(assets, append.Blocks, ct), append.UserId, append.ThreadId, ct);
                     break;
                 }
 
@@ -740,6 +741,11 @@ public static partial class HubServer
             SenderName = req.SenderName,
             Text = req.Text,
             Blocks = await MapBlocksAsync(assets, req.Blocks, ct),
+            // 身份与线程（D45）：以前这四项在 Hub 被静默丢弃——桥侧其实早就把 QQ 号发上来了。
+            UserId = req.UserId, ThreadId = req.ThreadId, Mentions = req.Mentions ?? [],
+            Meta = req.Meta?.ToDictionary(kv => kv.Key, kv => (object?)kv.Value, StringComparer.OrdinalIgnoreCase),
+            // 客户端预算覆盖（服务端夹取，见 TurnBudgetPolicy）；null 时由运行时用配置默认。
+            Budgets = TurnBudgetPolicy.From(req.Budgets),
         };
 
         try

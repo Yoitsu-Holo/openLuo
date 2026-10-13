@@ -22,7 +22,8 @@
 
 - 依赖：`openLuo.Foundation`（`IDatabaseConnectionFactory`、静态 `Logger`）、`openLuo.Embedding`（`IEmbeddingClient`）
 - 包：`Dapper`（仓储查询）、`Microsoft.Data.Sqlite`（经 Foundation 传递）
-- 配置 POCO 定义在本工程 `Core/Models/MemoryConfigModels.cs`：`SqliteVecConfig`（sqlite-vec 扩展路径/向量维度）、`MemoryRetrievalConfig`（topK/距离阈值）、`MemoryStoreConfig`（embedding 超时/压缩参数）；宿主 `AppConfig` 直接复用
+- 配置 POCO 定义在本工程 `Core/Models/MemoryConfigModels.cs`：**只剩** `SqliteVecConfig`（sqlite-vec 扩展路径 / 向量维度，改动需重启）；宿主 `AppConfig` 直接复用。
+  `MemoryRetrievalConfig` / `MemoryStoreConfig` 已删除——它们的键在本仓没有任何消费者（检索器只认 `SemanticRecallQuery.TopK/Scopes`，实际调用方 `extensions/memory` 写死 `TopK=3`；embedding 超时真值在 `openLuo.Embedding` 的 `EmbeddingConfig.TimeoutSeconds`；压缩功能未实现）。召回参数会随"记忆召回质量"一起重新设计（配置与实现同时落地）。
 - 数据库连接不感知配置：仓储/检索器只依赖 `IDatabaseConnectionFactory` 接口，连接串由宿主 DI 构造 `SqliteConnectionFactory` 时注入
 - namespace 保持 `openLuo.Modules.Memory.*`（与拆分前一致，调用方零改动）
 

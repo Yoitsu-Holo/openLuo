@@ -12,8 +12,15 @@ public sealed class HubServerOptions
     /// <summary>单资产字节上限（超出回 `7002 asset.too_large`）。</summary>
     public long AssetMaxBytes { get; init; } = 16L * 1024 * 1024;
 
-    /// <summary>高危能力确认等待上限（秒）；超时视为拒绝。</summary>
-    public int ConfirmTimeoutSeconds { get; init; } = 60;
+    /// <summary>
+    /// 高危能力确认等待上限（秒）；超时视为拒绝。宿主传**闭包**即可让 agent.jsonc 的
+    /// <c>pendingAbilityConfirmTimeoutSeconds</c> 热加载生效；未提供则用
+    /// <see cref="DefaultConfirmTimeoutSeconds"/>。
+    /// </summary>
+    public Func<int>? ConfirmTimeoutSeconds { get; init; }
+
+    /// <summary>确认等待上限的默认值（无消费者提供闭包时用）。</summary>
+    public const int DefaultConfirmTimeoutSeconds = 60;
 
     /// <summary>
     /// 入口治理策略（限流 + 输入校验，§4.9）。宿主传入**闭包**即可让 <c>security.jsonc</c> 的热加载生效；

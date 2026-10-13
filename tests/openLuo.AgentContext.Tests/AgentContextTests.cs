@@ -22,8 +22,7 @@ public class DefaultContextAssemblerTests
                         ContributorId = Id,
                         Region = region,
                         Content = content,
-                        Priority = priority,
-                        TokenEstimate = content.Length / 4
+                        Priority = priority
                     }
                 ]
             });
@@ -81,13 +80,14 @@ public class DefaultContextAssemblerTests
     }
 
     [Fact]
-    public async Task Build_RespectsTokenBudget()
+    public async Task Build_PinnedRegionSurvivesEvenWhenOverBudget()
     {
+        // 保底块（Identity）自身超上限：仍然保留，并显式标记 OverBudget + 记录被裁条目。
         var assembler = new DefaultContextAssembler(
         [
-            new FakeContributor("a", ContextRegion.WorldContext, new string('x', 100)),
-            new FakeContributor("b", ContextRegion.Identity, new string('y', 100))
-        ], maxTokenBudget: 30);
+            new FakeContributor("a", ContextRegion.LongTermMemory, new string('x', 400), priority: 90),
+            new FakeContributor("b", ContextRegion.Identity, new string('y', 400))
+        ], limits: new StaticContextLimitsProvider(new ContextLimits { MaxTokens = 10 }));
 
         var context = await assembler.BuildAsync(new ContextBuildRequest
         {
@@ -96,7 +96,60 @@ public class DefaultContextAssemblerTests
             TurnId = "t1"
         });
 
-        Assert.Single(context.Contributions);
+        var kept = Assert.Single(context.Contributions);
+        Assert.Equal(ContextRegion.Identity, kept.Region);
+        Assert.True(context.Budget.OverBudget);
+        Assert.Equal(100, context.Budget.SystemTokens);              // 400 个窄字符 ≈ 100 token
+        Assert.Equal(10, context.Budget.MaxTokens);
+        var dropped = Assert.Single(context.Budget.DroppedContributions);
+        Assert.Equal("a:contrib", dropped.Id);
+        Assert.Equal(ContextRegion.LongTermMemory, dropped.Region);
+    }
+
+    [Fact]
+    public async Task Build_DroppableSkipsOversizedItemAndKeepsSmallerOne()
+    {
+        // 旧实现按区域序 break：第一条放不下就整段丢弃，后面更小的条目也一起饿死。
+        // 现在按优先级贪心 + 跳过，小条目仍能进。
+        var assembler = new DefaultContextAssembler(
+        [
+            new FakeContributor("big", ContextRegion.SceneState, new string('x', 400), priority: 90),   // ≈100 token，放不下
+            new FakeContributor("small", ContextRegion.LongTermMemory, new string('y', 40), priority: 10) // 10 token，应变裁但收下
+        ], limits: new StaticContextLimitsProvider(new ContextLimits { MaxTokens = 30 }));
+
+        var context = await assembler.BuildAsync(new ContextBuildRequest
+        {
+            SessionId = "s1",
+            SubjectId = "sub",
+            TurnId = "t1"
+        });
+
+        var kept = Assert.Single(context.Contributions);
+        Assert.Equal("small", kept.ContributorId);
+        Assert.False(context.Budget.OverBudget);
+        Assert.Equal(10, context.Budget.SystemTokens);
+        Assert.Equal("big:contrib", Assert.Single(context.Budget.DroppedContributions).Id);
+    }
+
+    [Fact]
+    public async Task Build_KeepsPresentationOrderStable()
+    {
+        // 呈现序 = 区域枚举序 → 区域内 Priority 降序（稳定前缀，利于模型侧缓存）
+        var assembler = new DefaultContextAssembler(
+        [
+            new FakeContributor("mem", ContextRegion.LongTermMemory, "m"),
+            new FakeContributor("low", ContextRegion.Identity, "l", priority: 1),
+            new FakeContributor("high", ContextRegion.Identity, "h", priority: 99)
+        ]);
+
+        var context = await assembler.BuildAsync(new ContextBuildRequest
+        {
+            SessionId = "s1",
+            SubjectId = "sub",
+            TurnId = "t1"
+        });
+
+        Assert.Equal(["high", "low", "mem"], context.Contributions.Select(c => c.ContributorId));
     }
 }
 
@@ -154,43 +207,11 @@ public class DefaultSkillServiceTests
     };
 
     [Fact]
-    public async Task LoadFull_CachesAndLists()
-    {
-        var service = new DefaultSkillService([Doc("gift"), Doc("math")]);
-
-        var doc = await service.LoadFullAsync("gift");
-        Assert.NotNull(doc);
-        Assert.Equal("full-gift", doc!.FullContent);
-
-        Assert.Contains("gift", service.ListLoaded());
-        Assert.DoesNotContain("math", service.ListLoaded());
-    }
-
-    [Fact]
-    public async Task Unload_RemovesFromCache()
-    {
-        var service = new DefaultSkillService([Doc("gift")]);
-        await service.LoadFullAsync("gift");
-        await service.UnloadAsync("gift");
-
-        Assert.DoesNotContain("gift", service.ListLoaded());
-    }
-
-    [Fact]
     public async Task LoadFull_Unknown_ReturnsNull()
     {
         var service = new DefaultSkillService([]);
         Assert.Null(await service.LoadFullAsync("nope"));
     }
 
-    [Fact]
-    public async Task MaxLoaded_EvictsOldest()
-    {
-        var service = new DefaultSkillService([Doc("a"), Doc("b"), Doc("c")], maxLoaded: 2);
-        await service.LoadFullAsync("a");
-        await service.LoadFullAsync("b");
-        await service.LoadFullAsync("c");
 
-        Assert.Equal(2, service.ListLoaded().Count);
-    }
 }

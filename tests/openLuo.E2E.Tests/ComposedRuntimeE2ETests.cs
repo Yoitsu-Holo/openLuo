@@ -45,12 +45,16 @@ public sealed class ComposedRuntimeE2ETests
             new DefaultMessageTagPipeline(), new InMemoryOutputQueue(), new SessionStore());
         await runtime.OpenSessionAsync(new SessionOpenRequest { SessionId = "s", SubjectId = "player", AgentId = "demo" });
 
-        await runtime.RunTurnAsync(new TurnRequest { SessionId = "s", TurnId = "t1", Text = "hello", SenderName = "阿明" });
+        // 身份与显示名分别落库（D45）：稳定 id 用于归因/键控，显示名只用于渲染。
+        await runtime.RunTurnAsync(new TurnRequest
+        {
+            SessionId = "s", TurnId = "t1", Text = "hello", SenderName = "阿明", UserId = "10001"
+        });
 
         var summary = await runtime.GetContextSummaryAsync("s");
         Assert.NotNull(summary);
         Assert.Contains("session: s", summary);
-        Assert.Contains("inbound(阿明): hello", summary);   // 发送者标识进历史
+        Assert.Contains("inbound(10001/阿明): hello", summary);   // 稳定身份 + 显示名都进历史
         Assert.Null(await runtime.GetContextSummaryAsync("unknown-session"));
     }
 

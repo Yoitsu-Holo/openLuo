@@ -97,6 +97,9 @@ public sealed class WorldStateContributor : IContextContributor
     public WorldStateContributor(IStateQueryService query) => _query = query;
     public string Id => "world:state";
 
+    /// <summary>场景/世界状态：属于某一段对话（D45）。</summary>
+    public ContextScope Scope => ContextScope.Session;
+
     public async Task<ContextContributionResult> ContributeAsync(ContextBuildRequest request, CancellationToken ct = default)
     {
         try
@@ -109,7 +112,7 @@ public sealed class WorldStateContributor : IContextContributor
                 Contributions = string.IsNullOrWhiteSpace(text) ? [] : [new ContextContribution
                 {
                     Id = "world-state", ContributorId = Id, Region = ContextRegion.SceneState,
-                    Content = text, Priority = 60, TokenEstimate = Math.Max(1, text.Length / 4)
+                    Content = text, Priority = 60
                 }]
             };
         }

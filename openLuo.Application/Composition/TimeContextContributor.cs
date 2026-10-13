@@ -11,6 +11,11 @@ public sealed class TimeContextContributor : IContextContributor
 {
     public string Id => "host.time";
 
+    /// <summary>时间块：所有局部推理共用（D45）。</summary>
+    public ContextScope Scope => ContextScope.Global;
+
+    // 刻意**不设** CacheTtl：时间每回合都在变——给它 TTL 等于把时间冻结在缓存里。
+
     public Task<ContextContributionResult> ContributeAsync(ContextBuildRequest request, CancellationToken ct = default)
     {
         var inject = openLuo.Infrastructure.Config.Config.Agent.InjectTimeContext;
@@ -30,7 +35,7 @@ public sealed class TimeContextContributor : IContextContributor
                 new ContextContribution
                 {
                     Id = "time", ContributorId = Id, Region = ContextRegion.TimeContext,
-                    Content = content, Priority = 0, TokenEstimate = 4
+                    Content = content, Priority = 0
                 }
             ]
         });

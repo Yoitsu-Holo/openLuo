@@ -19,8 +19,20 @@ public class RequiredLlmCapabilities
 
 public class LlmOptions
 {
-    public float? Temperature { get; set; } = 0.5f;
-    public int? MaxTokens { get; set; } = 4096;
+    /// <summary>
+    /// 采样温度。<c>null</c> = 调用方未指定 → 由 route 配置（llm.jsonc 的 temperature）决定；
+    /// 显式赋值（含 0f）才覆盖 route。绝不在这里写硬编码默认值：
+    /// 一旦非 null，LlmClientBase.MergeOptions 的 `?? route 值` 就永远命中不到 route 配置。
+    /// </summary>
+    public float? Temperature { get; set; } = null;
+
+    /// <summary>
+    /// 输出 token 上限。语义同 <see cref="Temperature"/>：<c>null</c> = 不指定 →
+    /// route 配置决定；route 也为 null 时请求体里不出现 max_tokens（表示“用服务端默认”），
+    /// 而不是注入一个硬编码上限。
+    /// </summary>
+    public int? MaxTokens { get; set; } = null;
+
     public bool JsonMode { get; set; } = false;
     /// <summary>
     /// When true AND the model supports vision, ImageBlocks are serialized as image_url content parts.

@@ -3,7 +3,12 @@
   // [热加载] 修改后自动生效
   //
   // level: off / error / warn / info / debug
-  // categories: 按模块独立设置日志级别
+  // categories: 按模块独立设置日志级别。分类名 = 代码里日志调用的 category，
+  //   当前**实际会打日志**的只有这 5 个（其它名字写了不会匹配到任何输出）：
+  //     llm / embedding / memory / agent/dispatch（工具调度）/ agent/context（上下文预算账目）
+  //   另有一个保留入口 `plugin`（扩展日志 → log/plugin/<id>.jsonl），当前没有调用方。
+  //   ⚠ 早期版本里的 executor / inter-agent / character/tool / character/turn / engine /
+  //     command/gate / agent/chat / agent/runtime / protocol 来自已删除或更名前的旧链路，写在这里没有任何作用。
   //
   // outputToConsole: true 时，终端输出为文本格式（时间 level: 类别 消息，
   //   与启动期 BootstrapLogger 一致）；文件始终为 JSONL（log/core/*.jsonl，
@@ -14,7 +19,27 @@
     "outputToConsole": false,
     "categories": {
       // 工具调度（能力调度器）：[tool] start / ok / failed / batch rejected / batch done
-      "agent/dispatch": "info"
+      "agent/dispatch": "info",
+      // 上下文装配账目：[ctx] turn=… tokens=…/上限 system=… conversation=… dropped=… overBudget=…
+      // 预算压力与"哪些块被裁"只在这里可见（见 docs/architecture/context-budget.md）
+      "agent/context": "info"
+    },
+
+    // 热库：近期日志落 SQLite（logs/hot.db），支持 SQL 热查询与 FTS 检索；按天/行数保留
+    // （见 docs/architecture/log-store.md §保留策略）
+    "hot": {
+      "enabled": true,
+      "path": "hot.db",
+      "retainDays": 14,
+      "maxRows": 200000,
+      "batchSize": 200,
+      "flushMs": 250
+    },
+
+    // 冷文件：全量 JSONL 落盘（log/<dir>/<category>.jsonl，按天分目录）
+    "archive": {
+      "enabled": true,
+      "dir": "core"
     }
   }
 }

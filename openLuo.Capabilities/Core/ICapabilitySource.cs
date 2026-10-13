@@ -49,6 +49,12 @@ public sealed class CapabilityExecutionContext
     public string SessionId { get; init; } = string.Empty;
     public string TurnId { get; init; } = string.Empty;
     public string SubjectId { get; init; } = string.Empty;
+    /// <summary>说话人稳定身份（平台用户 id）；能力写入方据此把内容落到正确的域（D45）。</summary>
+    public string? UserId { get; init; }
+    /// <summary>会话内线程标识；为空表示不切分线程。</summary>
+    public string? ThreadId { get; init; }
+    /// <summary>会话键（多端共享同一段对话的支点）；缺省等于 <see cref="SessionId"/>。</summary>
+    public string ConversationId { get; init; } = string.Empty;
     public long SnapshotVersion { get; init; }
     public string InvocationId { get; init; } = string.Empty;
     public string IdempotencyKey { get; init; } = string.Empty;

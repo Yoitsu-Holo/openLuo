@@ -53,6 +53,12 @@ public abstract class LlmClientBase : ILlmClient
 
     protected virtual LlmOptions NormalizeOptions(LlmOptions options) => options;
 
+    /// <summary>
+    /// 合并调用方选项与 route 配置：调用方“未指定”（null）的采样参数回落到 route 配置
+    /// （LlmRouteConfig.Temperature / MaxTokens），而不是任何硬编码默认。
+    /// 陷阱：这里的 `??` 只在 LlmOptions 的默认值为 null 时才有意义——
+    /// 若给 LlmOptions.Temperature/MaxTokens 写死默认值，route 配置会被永久遮蔽。
+    /// </summary>
     protected LlmOptions MergeOptions(LlmOptions? options) => new()
     {
         Temperature = options?.Temperature ?? _defaultOptions.Temperature,

@@ -20,6 +20,10 @@ public sealed record AgentDecisionContext
     public IReadOnlyList<WorkflowSummary> Workflows { get; init; } = [];
     public IReadOnlyList<RemoteAgentSummary> RemoteAgents { get; init; } = [];
     public DecisionBudgets Budgets { get; init; } = DecisionBudgets.Default;
+    /// <summary>本轮 token 预算账目（D44）：上限、系统块/对话占用、被裁明细。</summary>
+    public ContextBudgetSnapshot Budget { get; init; } = ContextBudgetSnapshot.Empty;
+    /// <summary>本轮全局块缓存账目（D46）：复用/重算了几块。</summary>
+    public ContextCacheStats Cache { get; init; } = ContextCacheStats.Empty;
     public string? UserInput { get; init; }
     public IReadOnlyList<object>? UserBlocks { get; init; }
 }

@@ -77,7 +77,7 @@ internal sealed class AskCharacterInvoker : ICapabilityInvoker
         if (character is null)
             return new CapabilityResult { InvocationId = call.InvocationId, Success = false, Status = CapabilityStatus.Rejected, Error = $"character not found: {target}" };
 
-        var response = await _hub.RequestAsync(character.Id, AgentMessageType.AgentAsk, "party", question, context.GameId, context.TurnId, TimeSpan.FromSeconds(30), ct);
+        var response = await _hub.RequestAsync(character.Id, AgentMessageType.AgentAsk, "party", question, context.GameId, context.TurnId, IAgentRuntimeHub.DefaultRequestTimeout, ct);
         return new CapabilityResult
         {
             InvocationId = call.InvocationId, Success = response is not null, Status = response is null ? CapabilityStatus.Failed : CapabilityStatus.Ok,
@@ -92,6 +92,12 @@ public sealed class PartyRosterContributor : IContextContributor
     public PartyRosterContributor(IAgentRoster roster) => _roster = roster;
     public string Id => "party:roster";
 
+    /// <summary>可用角色列表：与角色/会话无关（D45）。</summary>
+    public ContextScope Scope => ContextScope.Global;
+
+    // 刻意**不设** CacheTtl：名册查询带 sessionId（不同会话可能看到不同角色），
+    // 在"是否真的与会话无关"被证实之前不缓存。
+
     public async Task<ContextContributionResult> ContributeAsync(ContextBuildRequest request, CancellationToken ct = default)
     {
         try
@@ -104,7 +110,7 @@ public sealed class PartyRosterContributor : IContextContributor
                 Contributions = string.IsNullOrWhiteSpace(text) ? [] : [new ContextContribution
                 {
                     Id = "party-roster", ContributorId = Id, Region = ContextRegion.Identity,
-                    Content = $"Available characters: {text}", Priority = 50, TokenEstimate = Math.Max(1, text.Length / 4)
+                    Content = $"Available characters: {text}", Priority = 50
                 }]
             };
         }

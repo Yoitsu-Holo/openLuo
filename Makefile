@@ -114,12 +114,12 @@ format-csharp:
 	dotnet format openLuo.slnx
 
 format-python:
-	@if [ -x ".venv/bin/black" ]; then \
-		.venv/bin/black openLuo/data/plugins; \
+	@if [ -x ".venv/bin/black" ] && .venv/bin/black --version >/dev/null 2>&1; then \
+		.venv/bin/black mcp; \
 	elif command -v black >/dev/null 2>&1; then \
-		black openLuo/data/plugins; \
+		black mcp; \
 	else \
-		echo "black 未安装。请先运行 '.venv/bin/python -m pip install black'"; \
+		echo "black 不可用（未安装，或 .venv/bin/black 的 shebang 指向已不存在的解释器）。请运行 '.venv/bin/python -m pip install black' 或全局安装 black"; \
 		exit 1; \
 	fi
 

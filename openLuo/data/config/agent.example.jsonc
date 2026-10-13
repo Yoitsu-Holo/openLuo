@@ -1,13 +1,27 @@
 {
   // ===== Agent 运行时配置 =====
   // [热加载] 修改后自动生效
+  //
+  // 注意：早期版本里的 taskDispatchTimeoutSeconds / invocationConfirmTimeoutSeconds 是
+  // 零消费者的假旋钮（对应子系统已删除），已从这里去掉。
 
   "agent": {
-    "chatRoundTimeoutSeconds": 60,
-    "taskDispatchTimeoutSeconds": 24,
+    // 回合总时限（秒）。语义：两次决策之间的时钟比较，不打断已开始的工具调用
+    // （单工具超时由内核预算 StepIdleTimeout 负责，默认 240s）。慢工具链路（远程 TTS ≈150s）需要余量。
+    "chatRoundTimeoutSeconds": 600,
+
+    // Hub 高危能力确认握手超时（秒）
     "pendingAbilityConfirmTimeoutSeconds": 45,
-    "invocationConfirmTimeoutSeconds": 30,
+
+    // 单回合抓取的最大历史条数（抓取上限；真正的裁剪由 contextTokenBudget 决定，从最旧一侧截断）
     "contextConversationRetainCount": 24,
+
+    // 上下文 token 预算上限（系统块 + 对话历史）。估算口径：CJK 1 字 ≈ 1 token，其余 4 字符 ≈ 1 token。
+    // 超预算时保底区域（人格/时间/平台规则/能力说明/当轮输入/工具结果）仍保留，
+    // 可裁区域（记忆/场景/世界/历史）按优先级让位，被裁明细记在快照 Budget.DroppedContributions；
+    // 每回合会打一行 [ctx] 账目（分类 agent/context，见 docs/architecture/context-budget.md）。
+    "contextTokenBudget": 24000,
+
     // 向每个对话上下文注入当前时间标记
     "injectTimeContext": true
     // 注入方案由内核 TimeMode 决定（Realtime → 绝对时间，Virtual → 相对时间）

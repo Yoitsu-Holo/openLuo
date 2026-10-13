@@ -30,6 +30,7 @@ public sealed class SqliteMemoryRepository : IMemoryRepository
                 id,
                 game_id,
                 character_id,
+                user_id,
                 memory_format_version,
                 scope,
                 source_text,
@@ -48,6 +49,7 @@ public sealed class SqliteMemoryRepository : IMemoryRepository
                 @Id,
                 @GameId,
                 @CharacterId,
+                @UserId,
                 @MemoryFormatVersion,
                 @Scope,
                 @SourceText,
@@ -68,6 +70,8 @@ public sealed class SqliteMemoryRepository : IMemoryRepository
                 Id = record.Id,
                 GameId = record.GameId,
                 CharacterId = record.OwnerCharacterId,
+                // 空 user_id 落成空串（列 NOT NULL DEFAULT ''），语义 = 未按用户分区。
+                UserId = record.UserId ?? string.Empty,
                 MemoryFormatVersion = 2,
                 Scope = (int)record.Scope,
                 SourceText = record.SourceText,
@@ -108,11 +112,14 @@ public sealed class SqliteMemoryRepository : IMemoryRepository
         string? ownerCharacterId,
         IReadOnlyList<MemoryScope> scopes,
         int limit,
+        string? userId = null,
         CancellationToken ct = default)
     {
         await using var conn = await _connectionFactory.OpenAsync(ct);
         var includePrivate = scopes.Count == 0 || scopes.Contains(MemoryScope.CharacterPrivate);
         var includeShared = scopes.Contains(MemoryScope.Shared);
+        // userId 为空 = 不做用户过滤（与改造前逐字一致）；非空 = 只取"该用户 + 未分区"的记忆。
+        var partitionByUser = !string.IsNullOrWhiteSpace(userId);
 
         var rows = await conn.QueryAsync<dynamic>(new CommandDefinition("""
             SELECT *
@@ -123,6 +130,7 @@ public sealed class SqliteMemoryRepository : IMemoryRepository
                     (@IncludePrivate = 1 AND character_id = @CharacterId)
                  OR (@IncludeShared = 1 AND (@CharacterId IS NULL OR character_id <> @CharacterId))
               )
+              AND (@PartitionByUser = 0 OR user_id = @UserId OR user_id = '')
             ORDER BY occurred_at DESC
             LIMIT @Limit
             """,
@@ -132,6 +140,8 @@ public sealed class SqliteMemoryRepository : IMemoryRepository
                 CharacterId = ownerCharacterId,
                 IncludePrivate = includePrivate ? 1 : 0,
                 IncludeShared = includeShared ? 1 : 0,
+                PartitionByUser = partitionByUser ? 1 : 0,
+                UserId = userId ?? string.Empty,
                 Limit = limit
             },
             cancellationToken: ct));
@@ -181,6 +191,7 @@ public sealed class SqliteMemoryRepository : IMemoryRepository
             Id = row.id,
             GameId = row.game_id,
             OwnerCharacterId = row.character_id,
+            UserId = GetString(rowMap, "user_id"),
             Scope = (MemoryScope)GetInt(rowMap, "scope", (int)MemoryScope.CharacterPrivate),
             OccurredAtUtc = DateTime.SpecifyKind(DateTime.Parse((string)row.occurred_at, CultureInfo.InvariantCulture), DateTimeKind.Utc),
             SourceText = sourceText,

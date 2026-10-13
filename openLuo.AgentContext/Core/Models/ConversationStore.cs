@@ -8,9 +8,16 @@ public sealed class ConversationTurn
 {
     public string SessionId { get; init; } = string.Empty;
     public string TurnId { get; init; } = string.Empty;
+    /// <summary>
+    /// 说话人**稳定身份**（平台用户 id）。为空 = 平台未提供（回退到会话主体）。
+    /// 注意：历史上这里曾写入"显示名"——老行不迁移（语义偏差无害），新行一律写稳定 id。
+    /// </summary>
     public string SpeakerId { get; init; } = string.Empty;
+    /// <summary>说话人显示名（群聊昵称等），仅用于渲染，不参与任何键控。</summary>
     public string SpeakerName { get; init; } = string.Empty;
     public string SpeakerRole { get; init; } = string.Empty;   // user | agent | system | outbound
+    /// <summary>会话内线程标识（群内每话题/每用户）；为空表示不切分线程。</summary>
+    public string? ThreadId { get; init; }
     public string Content { get; init; } = string.Empty;
     /// <summary>工具消息引用的模型 tool_call id（仅内存，不持久化）。</summary>
     public string? ToolCallId { get; init; }

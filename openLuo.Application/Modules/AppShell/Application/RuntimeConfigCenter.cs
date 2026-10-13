@@ -41,6 +41,12 @@ public sealed class RuntimeConfigCenter : IRuntimeConfigCenter, IDisposable
 
     public string ConfigPath => _configDir;
 
+    /// <summary>
+    /// 配置热重载成功后触发（D46）。宿主据此让"内容来源变了"的缓存立刻失效
+    /// （例如全局块缓存里的 platform 规则来自 security/agent 段）。
+    /// </summary>
+    public event Action? Reloaded;
+
     public AppConfig GetSnapshot() => _snapshot.Clone();
 
     private void OnConfigFileChanged(object? sender, FileSystemEventArgs e)
@@ -61,6 +67,7 @@ public sealed class RuntimeConfigCenter : IRuntimeConfigCenter, IDisposable
             var next = ApplyReloadRules(current, loaded, out var deferredPaths);
             _snapshot = next;
             openLuo.Infrastructure.Config.Config.UpdateSnapshot(next);
+            Reloaded?.Invoke();
 
             if (deferredPaths.Count > 0)
             {

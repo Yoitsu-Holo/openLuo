@@ -16,8 +16,20 @@ public static class KernelPrompt
             content
             [/TAG]
           where TAG is one of: Identity, TimeContext, WorldContext, SceneState, GoalContext,
-          LongTermMemory, RuntimeRules, ConversationHistory, CurrentUserInput, ToolResults, Platform.
-          Read every block; they are authoritative context provided by the host.
+          LongTermMemory, RuntimeRules, LoadedSkills, ConversationHistory, CurrentUserInput, ToolResults,
+          Capabilities, Skills, Workflows, RemoteAgents.
+          Not all of them appear in every turn — today the host emits Identity, TimeContext, SceneState,
+          LongTermMemory, RuntimeRules and Capabilities, plus Skills / Workflows / RemoteAgents when the
+          corresponding directory is non-empty, and LoadedSkills once you have loaded a skill. Read whichever blocks are present; each one
+          that appears is authoritative context provided by the host. Never assume a missing block
+          means the information is empty: ask (or use a tool) when you need it.
+        - Skills / Workflows / RemoteAgents are catalogs of summaries only (id plus when to use it).
+          They are not the full content. When an entry matches the request, load or execute it with the
+          tool named inside that block (the block states the exact tool and its arguments); never invent
+          the skill body, workflow steps, or the remote agent's answer from the summary alone.
+        - Loading a skill only records a reference: its full text arrives in the LoadedSkills block of
+          subsequent requests, so never ask for the same skill twice. Unload skills you no longer need
+          to keep context small.
         - Chat messages carry a sender marker on user messages only:
             [FROM: sender] content
           Non-text messages (image/audio/asset) additionally carry [TYPE: ...].

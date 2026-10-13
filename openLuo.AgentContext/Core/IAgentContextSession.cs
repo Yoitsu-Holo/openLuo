@@ -14,6 +14,13 @@ public sealed class TurnCompletion
     public string? UserText { get; init; }
     /// <summary>发送者显示名（群聊昵称等）；为空回退到会话主体。</summary>
     public string? SenderName { get; init; }
+    /// <summary>
+    /// 发送者**稳定身份**（平台用户 id）。写入历史时作为 `speaker_id`；
+    /// 为空则回退到会话主体（<c>subjectId</c>），即改造前的行为。
+    /// </summary>
+    public string? UserId { get; init; }
+    /// <summary>会话内线程标识（与请求同源，随历史落库）。</summary>
+    public string? ThreadId { get; init; }
 }
 
 /// <summary>

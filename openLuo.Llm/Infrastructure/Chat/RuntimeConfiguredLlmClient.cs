@@ -24,6 +24,8 @@ public sealed class RuntimeConfiguredLlmClient : ILlmClient
         var decision = await SelectRouteAsync(messageList, options, streaming: false, ct);
         // 路由决策反哺主请求：判"不需要识图"时强制关闭多模态（图块不上线），
         // 判"需要"时确保开启（即使调用方未显式要求）。
+        // 调用方未传 options 时补一个空 options：其 Temperature/MaxTokens 默认是 null（= 未指定），
+        // 由内层 LlmClientBase.MergeOptions 回落到 route 配置；若这里换成带默认值的对象，route 配置会被遮蔽。
         var effectiveOptions = options ?? new LlmOptions();
         if (effectiveOptions.EnableMultimodal != decision.EnableMultimodal)
             effectiveOptions.EnableMultimodal = decision.EnableMultimodal;

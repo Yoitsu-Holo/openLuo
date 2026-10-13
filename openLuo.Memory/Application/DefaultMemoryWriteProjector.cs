@@ -23,6 +23,8 @@ public sealed class DefaultMemoryWriteProjector : IMemoryWriteProjector
             Id = Guid.NewGuid().ToString("N"),
             GameId = input.GameId,
             OwnerCharacterId = input.CharacterId,
+            // 输入里没有 userId（null）就落成空串：未分区记忆，对所有用户可见（老写入的语义）。
+            UserId = input.UserId ?? string.Empty,
             Scope = input.Scope,
             OccurredAtUtc = input.OccurredAtUtc,
             SourceText = content,

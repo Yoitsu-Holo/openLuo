@@ -17,6 +17,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\openLuo.Cli\openLuo.Cli.csproj" />
+    <!-- 本工程实为"客户端测试"（Qqbot/Cli/Tui/Gui 三端身份贯穿都在这里断言） -->
+    <ProjectReference Include="..\..\openLuo.Tui\openLuo.Tui.csproj" />
+    <ProjectReference Include="..\..\openLuo.Gui\openLuo.Gui.csproj" />
     <ProjectReference Include="..\..\openLuo\openLuo.csproj" />
     <!-- QQ 桥测试用到 openLuo.Qqbot（QqBotConfig 等）：宿主拆分后需显式声明 -->
     <ProjectReference Include="..\..\openLuo.Qqbot\openLuo.Qqbot.csproj" />

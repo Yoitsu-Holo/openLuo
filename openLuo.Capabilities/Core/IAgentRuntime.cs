@@ -31,6 +31,15 @@ public sealed class TurnRequest
     public string ChannelId { get; init; } = string.Empty;
     public string ActorId { get; init; } = string.Empty;      // "player" / 角色 id
     public string? SenderName { get; init; }                  // 平台层发送者显示名（群聊昵称等）
+    /// <summary>
+    /// 发送者**稳定身份**（平台用户 id，如 QQ 号）。为空 = 平台未提供 → 归因/记忆回退旧行为。
+    /// 注意：桥侧早就把 QQ 号发到了 wire，是 Hub 一直把它丢掉（D45 起落地）。
+    /// </summary>
+    public string? UserId { get; init; }
+    /// <summary>会话内线程标识（群内每话题/每用户）；为空表示不切分线程。</summary>
+    public string? ThreadId { get; init; }
+    /// <summary>被 @ 的目标（userId 或角色 id）。</summary>
+    public IReadOnlyList<string> Mentions { get; init; } = [];
     public string Text { get; init; } = string.Empty;
     public IReadOnlyList<object>? Blocks { get; init; }
     /// <summary>平台元数据（scene/sender/channel 等），透传到上下文构建的 Extras。</summary>
@@ -78,8 +87,13 @@ public interface IAgentRuntime
     Task<TurnResult> RunTurnAsync(TurnRequest request, CancellationToken ct = default);
     IAsyncEnumerable<TurnEvent> StreamTurnAsync(TurnRequest request, CancellationToken ct = default);
 
-    /// <summary>轻量感知通道：将一条入站消息写入会话历史但不触发 LLM 回合（"看但不回"场景）。</summary>
-    Task AppendMessageAsync(string sessionId, string? senderName, string text, IReadOnlyList<object>? blocks = null, CancellationToken ct = default);
+    /// <summary>
+    /// 轻量感知通道：将一条入站消息写入会话历史但不触发 LLM 回合（"看但不回"场景）。
+    /// <paramref name="userId"/> 是说话人稳定身份（平台用户 id）——群聊里"看但不回"的消息同样要能归因到人（D45）。
+    /// </summary>
+    Task AppendMessageAsync(string sessionId, string? senderName, string text,
+        IReadOnlyList<object>? blocks = null, string? userId = null, string? threadId = null,
+        CancellationToken ct = default);
 
     /// <summary>当前会话决策上下文摘要（调试/平台命令用；未开启会话返回 null）。</summary>
     Task<string?> GetContextSummaryAsync(string sessionId, CancellationToken ct = default);

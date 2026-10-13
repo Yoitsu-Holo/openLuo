@@ -35,7 +35,7 @@ public sealed class ComposedAgentRuntimeTests
         sessions ?? new SessionStore());
 
     [Fact]
-    public async Task AppendMessageAsync_WritesInboundTurnWithoutLlm()
+    public async Task AppendMessageAsync_UsesStableUserIdForSpeaker()
     {
         var store = new MemoryConversationStore();
         var runtime = CreateRuntime(store);
@@ -44,19 +44,19 @@ public sealed class ComposedAgentRuntimeTests
             SessionId = "qq-group-1", SubjectId = "builtin-rin", AgentId = "companion", ConversationId = "qq-group-1"
         }, CancellationToken.None);
 
-        await runtime.AppendMessageAsync("qq-group-1", "阿明", "群聊闲聊", ct: CancellationToken.None);
+        await runtime.AppendMessageAsync("qq-group-1", "阿明", "群聊闲聊", userId: "10001", ct: CancellationToken.None);
 
         var turn = Assert.Single(store.Turns);
         Assert.Equal("qq-group-1", turn.SessionId);
         Assert.EndsWith(":observe", turn.TurnId);
         Assert.Equal("inbound", turn.SpeakerRole);
-        Assert.Equal("阿明", turn.SpeakerId);
+        Assert.Equal("10001", turn.SpeakerId);      // 稳定身份（D45）；显示名只用于渲染
         Assert.Equal("阿明", turn.SpeakerName);
         Assert.Equal("群聊闲聊", turn.Content);
     }
 
     [Fact]
-    public async Task AppendMessageAsync_FallsBackToSubjectAsSpeaker()
+    public async Task AppendMessageAsync_FallsBackToSubjectWhenNoStableId()
     {
         var store = new MemoryConversationStore();
         var runtime = CreateRuntime(store);
@@ -65,10 +65,12 @@ public sealed class ComposedAgentRuntimeTests
             SessionId = "qq-group-1", SubjectId = "builtin-rin", AgentId = "companion", ConversationId = "qq-group-1"
         }, CancellationToken.None);
 
-        await runtime.AppendMessageAsync("qq-group-1", null, "无昵称消息", ct: CancellationToken.None);
+        // 平台给了昵称但没给稳定身份（老客户端）→ 归因回退到会话主体，显示名仍保留
+        await runtime.AppendMessageAsync("qq-group-1", "阿明", "无身份消息", ct: CancellationToken.None);
 
         var turn = Assert.Single(store.Turns);
         Assert.Equal("builtin-rin", turn.SpeakerId);
+        Assert.Equal("阿明", turn.SpeakerName);
     }
 
     [Fact]
@@ -94,7 +96,7 @@ public sealed class ComposedAgentRuntimeTests
             Kind = openLuo.Core.Models.BlockKind.Image, AssetId = "a1", MimeType = "image/png"
         };
 
-        await runtime.AppendMessageAsync("qq-group-1", "阿明", "看图", [block], CancellationToken.None);
+        await runtime.AppendMessageAsync("qq-group-1", "阿明", "看图", [block], ct: CancellationToken.None);
 
         var turn = Assert.Single(store.Turns);
         Assert.Same(block, Assert.Single(turn.Blocks!));
@@ -183,6 +185,59 @@ public sealed class ComposedAgentRuntimeTests
         finally
         {
             try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task Turn_FillsSkillAndWorkflowCatalogIntoDecisionContext()
+    {
+        // 接线前 `CapabilityDecisionContext.Skills/Workflows` 恒空（模型看不到任何技能与编排）。
+        // 这里锁住运行时的装填：目录必须真的出现在传给决策循环的上下文里。
+        var store = new MemoryConversationStore();
+        var loop = new CapturingLoop();
+        var runtime = new ComposedAgentRuntime(
+            // 真装配器（空贡献者）：替换件会返回 null 快照，`built with {…}` 会直接 NRE
+            Substitute.For<ICapabilityCatalog>(), loop, new DefaultContextAssembler([]), store,
+            Substitute.For<IMessageTagPipeline>(), Substitute.For<IOutputQueue>(), new SessionStore(),
+            turnCatalog: new FixedCatalog(
+                [new SkillSummary { Id = "demo:comfort", Title = "安慰", WhenToUse = "用户难过时" }],
+                [new WorkflowSummary { Id = "world:gift", Description = "送礼流程" }]));
+        await runtime.OpenSessionAsync(new SessionOpenRequest
+        {
+            SessionId = "s", SubjectId = "builtin-rin", AgentId = "companion"
+        }, CancellationToken.None);
+
+        await runtime.RunTurnAsync(new TurnRequest { SessionId = "s", TurnId = "t1", Text = "hi" });
+
+        Assert.Equal("demo:comfort", Assert.Single(loop.LastRequest!.Context.Skills).Id);
+        Assert.Equal("world:gift", Assert.Single(loop.LastRequest.Context.Workflows).Id);
+    }
+
+    private sealed class FixedCatalog(
+        IReadOnlyList<SkillSummary> skills, IReadOnlyList<WorkflowSummary> workflows) : ITurnCatalog
+    {
+        public IReadOnlyList<SkillSummary> Skills => skills;
+        public IReadOnlyList<WorkflowSummary> Workflows => workflows;
+        public IReadOnlyList<RemoteAgentSummary> RemoteAgents => [];
+    }
+
+    /// <summary>记录最后一次决策请求的假循环（真正的目录装填发生在运行时、传给循环之前）。</summary>
+    private sealed class CapturingLoop : ICapabilityDecisionLoop
+    {
+        public DecisionLoopRequest? LastRequest { get; private set; }
+
+        public Task<DecisionLoopResult> RunAsync(DecisionLoopRequest request, CancellationToken ct = default)
+        {
+            LastRequest = request;
+            return Task.FromResult(new DecisionLoopResult { Success = true, FinalText = "ok" });
+        }
+
+        public async IAsyncEnumerable<DecisionEvent> RunStreamAsync(
+            DecisionLoopRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            LastRequest = request;
+            await Task.Yield();
+            yield return new DecisionEvent { TurnId = request.TurnId, Kind = DecisionEventKind.Final, Payload = new DecisionLoopResult { Success = true, FinalText = "ok" } };
         }
     }
 }

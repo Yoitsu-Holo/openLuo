@@ -180,6 +180,28 @@ public sealed class DefaultCapabilityDecisionLoop : ICapabilityDecisionLoop
                 });
             }
 
+            // 单次决策的工具调用上限（D41 预算落地）：模型一次吐出过多调用会放大延迟、成本与副作用面。
+            // 超出部分**不执行**，但在轨迹里留痕（steps），避免"静默少执行"这种最难查的偏差。
+            if (budgets.MaxToolCallsPerDecision > 0
+                && decisionResult.Calls.Count > budgets.MaxToolCallsPerDecision)
+            {
+                var dropped = decisionResult.Calls.Skip(budgets.MaxToolCallsPerDecision).ToList();
+                steps.Add(new AgentToolUseStep
+                {
+                    Decision = decision,
+                    Action = "tool_calls_truncated",
+                    Name = string.Join(",", dropped.Select(c => c.CanonicalId)),
+                    Success = false,
+                    Summary = $"dropped {dropped.Count} of {decisionResult.Calls.Count} calls (max {budgets.MaxToolCallsPerDecision} per decision)",
+                    DurationMs = sw.ElapsedMilliseconds
+                });
+                decisionResult = new CapabilityDecision
+                {
+                    Messages = decisionResult.Messages,
+                    Calls = [.. decisionResult.Calls.Take(budgets.MaxToolCallsPerDecision)]
+                };
+            }
+
             foreach (var call in decisionResult.Calls)
                 emit?.Invoke(new DecisionEvent { TurnId = request.TurnId, Kind = DecisionEventKind.ToolCall, Payload = call });
 

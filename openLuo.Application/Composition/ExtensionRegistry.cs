@@ -51,6 +51,16 @@ public sealed class ExtensionRegistry
         }
     }
 
+    /// <summary>扩展声明的技能（id 已被命名空间化为 <c>&lt;ext&gt;:&lt;id&gt;</c>）。</summary>
+    public IReadOnlyList<SkillDocument> Skills => _extensions.SelectMany(e => e.Skills).ToList();
+
+    /// <summary>扩展声明的工作流（同样是黑盒能力，模型只按 id 触发）。</summary>
+    public IReadOnlyList<WorkflowDefinition> Workflows => _extensions.SelectMany(e => e.Workflows).ToList();
+
+    /// <summary>工作流节点处理器（按 HandlerId 分发）。</summary>
+    public IReadOnlyList<IWorkflowNodeHandler> WorkflowHandlers =>
+        _extensions.SelectMany(e => e.WorkflowNodeHandlers).ToList();
+
     public IReadOnlyList<IMessageTagRenderer> TagRenderers =>
         _extensions.SelectMany(e => e.TagRenderers).ToList();
 

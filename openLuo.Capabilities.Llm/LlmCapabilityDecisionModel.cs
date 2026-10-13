@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using openLuo.Capabilities.Core;
@@ -43,6 +44,12 @@ public sealed class LlmCapabilityDecisionModel : ICapabilityDecisionModel
             if (!string.IsNullOrWhiteSpace(block) && !block.Contains("[Capabilities]", StringComparison.Ordinal))
                 messages.Add(new ChatMessage(ChatMessageRole.System, block));
         }
+
+        // 目录块（D12/D13）：技能 / 工作流 / 远程 Agent 的摘要目录。
+        // 只渲染摘要，正文与编排留在能力里按需触发——每轮塞全文既吃掉上下文，
+        // 又诱导模型照抄正文当回复。空集合不产出块（不塞空标题）。
+        foreach (var catalogBlock in BuildCatalogBlocks(context))
+            messages.Add(new ChatMessage(ChatMessageRole.System, catalogBlock));
 
         // Conversation 对话消息（用户消息携带多模态块：图片经 DataUri 送视觉模型）
         foreach (var message in context.Conversation)
@@ -120,6 +127,100 @@ public sealed class LlmCapabilityDecisionModel : ICapabilityDecisionModel
                 : [new FlowItem { Mode = FlowMode.Inqueue, Kind = ReplyItemKind.Text, Payload = response.Content }]
         };
     }
+
+    /// <summary>技能正文加载能力（canonical id，D12）。</summary>
+    private const string SkillLoadCapabilityId = "core:load_skill";
+    private const string SkillUnloadCapabilityId = "core:unload_skill";
+
+    /// <summary>工作流执行能力（canonical id，D13）。</summary>
+    private const string WorkflowRunCapabilityId = "core:run_workflow";
+
+    /// <summary>
+    /// 目录块（D12/D13）：技能 / 工作流 / 远程 Agent 的摘要目录，随 system 消息下发。
+    /// 空集合不出块：模型只在确有候选时才该知道“能加载/能编排”，
+    /// 每轮塞一个空目录既浪费上下文也稀释真正的指令。
+    /// </summary>
+    private static IEnumerable<string> BuildCatalogBlocks(CapabilityDecisionContext context)
+    {
+        if (context.Skills.Count > 0)
+            yield return BuildSkillBlock(context);
+        if (context.Workflows.Count > 0)
+            yield return BuildWorkflowBlock(context);
+        if (context.RemoteAgents.Count > 0)
+            yield return BuildRemoteAgentBlock(context);
+    }
+
+    private static string BuildSkillBlock(CapabilityDecisionContext context)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("[Skills]");
+        builder.AppendLine("下列技能是可加载的操作指南；这里只有摘要。加载只登记引用——正文会在后续请求的 [LoadedSkills] 块里自动出现，不要重复加载。");
+        foreach (var skill in context.Skills)
+        {
+            builder.Append("- ").Append(SingleLine(skill.Id)).Append(": ").Append(SingleLine(skill.Title));
+            // WhenToUse 缺失时退回 Summary：目录的价值就是让模型知道“什么时候用得上”
+            var whenToUse = string.IsNullOrWhiteSpace(skill.WhenToUse) ? skill.Summary : skill.WhenToUse;
+            if (!string.IsNullOrWhiteSpace(whenToUse))
+                builder.Append("。适用时机：").Append(SingleLine(whenToUse));
+            builder.AppendLine();
+        }
+        builder.Append("需要某个技能时调用工具 ").Append(ToolReference(context, SkillLoadCapabilityId))
+            .AppendLine("，参数 {\"id\":\"<skillId>\"}；用完不再需要时调用 ")
+            .Append(ToolReference(context, SkillUnloadCapabilityId))
+            .AppendLine(" 把它从 [LoadedSkills] 里移除（省预算）。");
+        builder.Append("[/Skills]");
+        return builder.ToString();
+    }
+
+    private static string BuildWorkflowBlock(CapabilityDecisionContext context)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("[Workflows]");
+        builder.AppendLine("下列工作流是封装好的多步编排；执行交给工作流能力，不要自行逐步重演。");
+        foreach (var workflow in context.Workflows)
+        {
+            builder.Append("- ").Append(SingleLine(workflow.Id)).Append(": ").AppendLine(SingleLine(workflow.Description));
+        }
+        builder.Append("执行时调用工具 ").Append(ToolReference(context, WorkflowRunCapabilityId))
+            .AppendLine("，参数 {\"id\":\"<workflowId>\"}；其余输入按该工作流定义的键名平铺传入（扁平标量，别嵌套对象）。");
+        builder.Append("[/Workflows]");
+        return builder.ToString();
+    }
+
+    private static string BuildRemoteAgentBlock(CapabilityDecisionContext context)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("[RemoteAgents]");
+        builder.AppendLine("下列远程 Agent 可接收委派（id 与能力目录一致，用同名工具转发请求）。");
+        foreach (var agent in context.RemoteAgents)
+        {
+            builder.Append("- ").Append(SingleLine(agent.Id));
+            if (!string.IsNullOrWhiteSpace(agent.DisplayName))
+                builder.Append(" (").Append(SingleLine(agent.DisplayName)).Append(')');
+            var description = string.IsNullOrWhiteSpace(agent.Description) ? string.Empty : "：" + SingleLine(agent.Description);
+            builder.AppendLine(description);
+        }
+        builder.Append("[/RemoteAgents]");
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// 能力引用：本轮 tools 参数里已有该能力时给真实函数名（内核协议要求模型只能用 tools
+    /// 列表里的名字调用），否则退回 canonical id（例如能力未注册或被权限过滤）。
+    /// </summary>
+    private static string ToolReference(CapabilityDecisionContext context, string canonicalId)
+    {
+        var modelToolName = context.Capabilities.FirstOrDefault(c =>
+            !string.IsNullOrWhiteSpace(c.ModelToolName)
+            && string.Equals(c.CanonicalId, canonicalId, StringComparison.OrdinalIgnoreCase))?.ModelToolName;
+        return string.IsNullOrWhiteSpace(modelToolName) ? canonicalId : $"{modelToolName}（canonical id {canonicalId}）";
+    }
+
+    /// <summary>摘要里的换行会把一条目录项拆成多行、看起来像新的指令行；压成单行。</summary>
+    private static string SingleLine(string? text) =>
+        string.IsNullOrWhiteSpace(text)
+            ? string.Empty
+            : string.Join(' ', text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
     private static string ResolveCanonicalId(string modelToolName, CapabilityDecisionContext context)
     {
@@ -243,15 +344,18 @@ public sealed class LlmCapabilityDecisionModel : ICapabilityDecisionModel
     };
 }
 
-/// <summary>构建 LlmOptions（温度/token 上限等），宿主可覆盖。</summary>
+/// <summary>构建 LlmOptions（能力开关等），宿主可覆盖。采样参数默认留空 = 交 route 配置。</summary>
 public class LlmOptionsFactory
 {
     public static LlmOptionsFactory Default { get; } = new();
 
+    /// <summary>
+    /// 只表达“需要什么”，不替用户定采样参数：Temperature/MaxTokens 留空（null）= 交 route 配置
+    /// （llm.jsonc）。历史上这里硬编码 0.7f/2048，把 route 里写的 temperature/maxTokens 全部顶掉，
+    /// 用户配置形同虚设。
+    /// </summary>
     public virtual LlmOptions Build(CapabilityDecisionContext context) => new()
     {
-        Temperature = 0.7f,
-        MaxTokens = 2048,
         // 上下文或当前输入含图时自动开启多模态：路由据此要求视觉模型，
         // 且 ImageBlock.DataUri 才会真正序列化为 image_url（LlmClientBase 双重门控）。
         EnableMultimodal = context.UserBlocks?.Any(b => b is ImageBlock) == true

@@ -53,12 +53,16 @@ public sealed class KeywordMemoryRetriever : IMemoryRetriever
     {
         var includePrivate = query.Scopes.Count == 0 || query.Scopes.Contains(MemoryScope.CharacterPrivate);
         var includeShared = query.Scopes.Contains(MemoryScope.Shared);
+        // 用户维度：非空才加过滤（"该用户 + 未分区"），为空时 SQL 与改造前逐字一致。
+        var partitionByUser = !string.IsNullOrWhiteSpace(query.UserId);
         var parameters = new DynamicParameters(new
         {
             query.GameId,
             CharacterId = query.CharacterId,
             IncludePrivate = includePrivate ? 1 : 0,
             IncludeShared = includeShared ? 1 : 0,
+            PartitionByUser = partitionByUser ? 1 : 0,
+            UserId = query.UserId ?? string.Empty,
             CandidateLimit = Math.Max(query.TopK * 8, 32)
         });
 
@@ -71,6 +75,7 @@ public sealed class KeywordMemoryRetriever : IMemoryRetriever
                     (@IncludePrivate = 1 AND character_id = @CharacterId)
                  OR (@IncludeShared = 1 AND character_id <> @CharacterId)
               )
+              AND (@PartitionByUser = 0 OR user_id = @UserId OR user_id = '')
             """);
 
         if (query.MinImportance.HasValue)
@@ -112,6 +117,7 @@ public sealed class KeywordMemoryRetriever : IMemoryRetriever
                     (@IncludePrivate = 1 AND character_id = @CharacterId)
                  OR (@IncludeShared = 1 AND character_id <> @CharacterId)
               )
+              AND (@PartitionByUser = 0 OR user_id = @UserId OR user_id = '')
             ORDER BY occurred_at DESC
             LIMIT @CandidateLimit
             """,
@@ -176,6 +182,7 @@ public sealed class KeywordMemoryRetriever : IMemoryRetriever
             Id = row.id,
             GameId = row.game_id,
             OwnerCharacterId = characterId,
+            UserId = GetString(rowMap, "user_id"),
             Scope = (MemoryScope)GetInt(rowMap, "scope", (int)MemoryScope.CharacterPrivate),
             OccurredAtUtc = DateTime.SpecifyKind(DateTime.Parse((string)row.occurred_at, CultureInfo.InvariantCulture), DateTimeKind.Utc),
             SourceText = sourceText,

@@ -19,6 +19,12 @@ public sealed class CapabilityContextContributor : IContextContributor
     public CapabilityContextContributor(ICapabilityCatalog catalog) => _catalog = catalog;
     public string Id => "host.capabilities";
 
+    /// <summary>能力清单：与角色/会话无关（D45）。</summary>
+    public ContextScope Scope => ContextScope.Global;
+
+    // 刻意**不设** CacheTtl：内容按本轮 UserInput 的关键词相关度裁剪（RankByRelevance），
+    // 每回合都可能不同——设了 TTL 等于把首轮输入的相关性冻结下来。
+
     public async Task<ContextContributionResult> ContributeAsync(
         ContextBuildRequest request,
         CancellationToken ct = default)
@@ -54,7 +60,7 @@ public sealed class CapabilityContextContributor : IContextContributor
                 new ContextContribution
                 {
                     Id = "capabilities", ContributorId = Id, Region = ContextRegion.Capabilities,
-                    Content = text, Priority = 10, TokenEstimate = Math.Max(1, text.Length / 4)
+                    Content = text, Priority = 10
                 }
             ]
         };

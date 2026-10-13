@@ -47,6 +47,10 @@ public sealed record MessageAppendCommand
 {
     public string SessionId { get; init; } = string.Empty;
     public string? SenderName { get; init; }
+    /// <summary>发送者稳定身份（平台用户 id）。群聊"看但不回"的消息也要能归因到人（D45）。</summary>
+    public string? UserId { get; init; }
+    /// <summary>会话内线程标识（可选）。</summary>
+    public string? ThreadId { get; init; }
     public string Text { get; init; } = string.Empty;
     public IReadOnlyList<JsonNode>? Blocks { get; init; }
     public IReadOnlyDictionary<string, JsonNode?>? Meta { get; init; }

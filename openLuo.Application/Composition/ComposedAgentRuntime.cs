@@ -21,6 +21,10 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
     private readonly IOutputQueue _outputQueue;
     private readonly SessionStore _sessions;
     private readonly DatabaseInitializer? _databaseInitializer;
+    private readonly ITokenCounter _tokenCounter;
+    private readonly IContextLimitsProvider _contextLimits;
+    private readonly openLuo.Core.Interfaces.IGameLogger? _logger;
+    private readonly ITurnCatalog _turnCatalog;
     private readonly SemaphoreSlim _initGate = new(1, 1);
 
     /// <summary>
@@ -36,7 +40,9 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
     public ComposedAgentRuntime(
         ICapabilityCatalog catalog, ICapabilityDecisionLoop loop, IContextAssembler assembler,
         IConversationStore conversationStore, IMessageTagPipeline tagPipeline, IOutputQueue outputQueue,
-        SessionStore sessions, DatabaseInitializer? databaseInitializer = null)
+        SessionStore sessions, DatabaseInitializer? databaseInitializer = null,
+        ITokenCounter? tokenCounter = null, IContextLimitsProvider? contextLimits = null,
+        openLuo.Core.Interfaces.IGameLogger? logger = null, ITurnCatalog? turnCatalog = null)
     {
         _catalog = catalog;
         _loop = loop;
@@ -46,6 +52,10 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         _outputQueue = outputQueue;
         _sessions = sessions;
         _databaseInitializer = databaseInitializer;
+        _tokenCounter = tokenCounter ?? HeuristicTokenCounter.Instance;
+        _contextLimits = contextLimits ?? StaticContextLimitsProvider.Default;
+        _logger = logger;
+        _turnCatalog = turnCatalog ?? NullTurnCatalog.Instance;
     }
 
     /// <summary>首次会话前惰性初始化数据库 schema（扩展表：memories/vec_memories 等）。</summary>
@@ -82,7 +92,9 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         }
 
         var conversationId = request.ConversationId ?? request.SessionId;
-        _sessions.GetOrAdd(request.SessionId, _ => new DefaultAgentContextSession(request.SessionId, request.SubjectId, _assembler, _conversationStore, _tagPipeline));
+        _sessions.GetOrAdd(request.SessionId, _ => new DefaultAgentContextSession(
+            request.SessionId, request.SubjectId, _assembler, _conversationStore, _tagPipeline,
+            _tokenCounter, _contextLimits, conversationId));
         var session = new AgentSession { SessionId = request.SessionId, SubjectId = request.SubjectId, AgentId = request.AgentId, ConversationId = conversationId };
         _sessions.SetMeta(session, request.ClientType, request.ClientId);
         return session;
@@ -97,6 +109,37 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
     public Task<bool> CloseSessionAsync(string sessionId, CancellationToken ct = default) =>
         Task.FromResult(_sessions.Remove(sessionId));
 
+    /// <summary>
+    /// 未由客户端覆盖时的回合预算：回合总时限取 <c>agent.chatRoundTimeoutSeconds</c>
+    /// （经静态配置门面读当前快照 → 热加载生效）。其余字段用内核默认。
+    /// </summary>
+    private static DecisionBudgets BuildDefaultBudgets()
+    {
+        var seconds = openLuo.Infrastructure.Config.Config.Agent.ChatRoundTimeoutSeconds;
+        return new DecisionBudgets { OverallDeadline = TimeSpan.FromSeconds(Math.Max(1, seconds)) };
+    }
+
+    /// <summary>
+    /// 记录本轮上下文预算账目。**这是"被裁"唯一的外部信号**——没有它，预算压力只会表现为
+    /// 模型"忽然不知道平台规则/不会用工具"，排查时无从下手。
+    /// 被裁条目只记数量与前几条 id（列表可能很长），完整明细在快照 <c>Budget.DroppedContributions</c>。
+    /// </summary>
+    private void LogContextBudget(string turnId, ContextBudgetSnapshot budget, ContextCacheStats cache,
+        int skills = 0, int workflows = 0)
+    {
+        if (_logger is null)
+            return;
+
+        var dropped = budget.DroppedContributions.Count == 0
+            ? "-"
+            : $"{budget.DroppedContributions.Count}({string.Join(",", budget.DroppedContributions.Take(5).Select(d => d.Id))})";
+        _logger.Info("agent/context",
+            $"[ctx] turn={turnId} tokens={budget.TotalTokens}/{budget.MaxTokens} " +
+            $"system={budget.SystemTokens} conversation={budget.ConversationTokens} " +
+            $"(turns dropped={budget.ConversationTurnsDropped}) dropped={dropped} overBudget={budget.OverBudget} " +
+            $"cache={cache} skills={skills} workflows={workflows}");
+    }
+
     /// <summary>回合准备结果（快照/目录/决策上下文/请求），供非流式与流式共用。</summary>
     private sealed record PreparedTurn(
         DefaultAgentContextSession Session,
@@ -109,15 +152,25 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         await EnsureInitializedAsync(ct);
         var session = _sessions.Get(request.SessionId)
             ?? throw new InvalidOperationException($"Session is not open: {request.SessionId}");
-        var budgets = request.Budgets ?? DecisionBudgets.Default;
+        var budgets = request.Budgets ?? BuildDefaultBudgets();
         var built = await session.CreateTurnSnapshotAsync(new ContextBuildRequest
         {
             SessionId = request.SessionId, SubjectId = session.SubjectId, TurnId = request.TurnId,
+            ConversationId = session.ConversationId,
+            UserId = request.UserId, ThreadId = request.ThreadId, Mentions = request.Mentions,
             UserInput = request.Text, UserBlocks = request.Blocks, ReceivedAtUtc = DateTimeOffset.UtcNow,
             Extras = request.Meta is { Count: > 0 }
                 ? request.Meta.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         }, ct);
+        // 「我能做什么」目录（D30）：摘要随快照注入；正文/编排由 core:load_skill / core:run_workflow 按需拉取。
+        built = built with
+        {
+            Skills = _turnCatalog.Skills,
+            Workflows = _turnCatalog.Workflows,
+            RemoteAgents = _turnCatalog.RemoteAgents,
+        };
+        LogContextBudget(request.TurnId, built.Budget, built.Cache, built.Skills.Count, built.Workflows.Count);
         var snapshot = await _catalog.BuildSnapshotAsync(new CatalogBuildContext
         {
             SessionId = request.SessionId, SubjectId = session.SubjectId, TurnId = request.TurnId, Budgets = budgets
@@ -132,6 +185,8 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
             {
                 GameId = request.SessionId, SessionId = request.SessionId, TurnId = request.TurnId,
                 SubjectId = session.SubjectId, SnapshotVersion = built.SnapshotVersion,
+                // 身份与线程随执行上下文下传：能力写入方（如 memory:write）据此把内容落到正确的域（D45）
+                UserId = request.UserId, ThreadId = request.ThreadId, ConversationId = session.ConversationId,
                 DeadlineUtc = DateTimeOffset.UtcNow + budgets.OverallDeadline, OutputQueue = _outputQueue,
                 SystemBlocks = systemBlocks, UserBlocks = request.Blocks
             }
@@ -152,7 +207,8 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         await prepared.Session.CommitTurnAsync(new TurnCompletion
         {
             TurnId = request.TurnId, FinalText = sanitizedFinalText, Outputs = sanitizedOutputs, Success = result.Success,
-            UserText = request.Text, SenderName = request.SenderName
+            UserText = request.Text, SenderName = request.SenderName,
+            UserId = request.UserId, ThreadId = request.ThreadId
         }, ct);
         return new TurnResult
         {
@@ -181,7 +237,9 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         }
     }
 
-    public async Task AppendMessageAsync(string sessionId, string? senderName, string text, IReadOnlyList<object>? blocks = null, CancellationToken ct = default)
+    public async Task AppendMessageAsync(string sessionId, string? senderName, string text,
+        IReadOnlyList<object>? blocks = null, string? userId = null, string? threadId = null,
+        CancellationToken ct = default)
     {
         await EnsureInitializedAsync(ct);
         var session = _sessions.Get(sessionId)
@@ -192,9 +250,11 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         {
             SessionId = sessionId,
             TurnId = $"{Guid.NewGuid():N}:observe",
-            SpeakerId = string.IsNullOrWhiteSpace(senderName) ? session.SubjectId : senderName!,
+            // 稳定身份优先（D45）；未提供才回退会话主体。显示名单独保留，仅用于渲染。
+            SpeakerId = string.IsNullOrWhiteSpace(userId) ? session.SubjectId : userId!,
             SpeakerName = senderName ?? string.Empty,
             SpeakerRole = "inbound",
+            ThreadId = threadId,
             Content = text,
             Blocks = blocks,
             TimestampUtc = DateTimeOffset.UtcNow
@@ -215,7 +275,7 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
         {
             return $"session: {sessionId} (opened, no turn yet)";
         }
-        var history = await _conversationStore.GetRecentAsync(sessionId, 32, ct);
+        var history = await _conversationStore.GetRecentAsync(sessionId, _contextLimits.Current.ConversationRetainCount, ct);
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"session: {sessionId}  subject: {session.SubjectId}  snapshot: v{current.SnapshotVersion}");
         sb.AppendLine($"contributions: {current.Contributions.Count}");
@@ -223,7 +283,13 @@ public sealed class ComposedAgentRuntime : IAgentRuntime
             sb.AppendLine($"  [{c.Region}] {c.Content}");
         sb.AppendLine($"conversation: {history.Count} turns");
         foreach (var t in history.TakeLast(8))
-            sb.AppendLine($"  {t.SpeakerRole}({t.SpeakerId}): {(t.Content.Length > 80 ? t.Content[..80] + "…" : t.Content)}");
+        {
+            // 调试摘要同时给出稳定身份与显示名（群聊里两者都有用）：`inbound(10001/阿明): …`
+            var who = string.IsNullOrWhiteSpace(t.SpeakerName) || t.SpeakerName == t.SpeakerId
+                ? t.SpeakerId
+                : $"{t.SpeakerId}/{t.SpeakerName}";
+            sb.AppendLine($"  {t.SpeakerRole}({who}): {(t.Content.Length > 80 ? t.Content[..80] + "…" : t.Content)}");
+        }
         sb.AppendLine($"userInput: {current.UserInput}");
         return sb.ToString();
     }
@@ -322,7 +388,13 @@ public static partial class AgentContextConverter
         var typePrefix = string.IsNullOrWhiteSpace(type) || type.Equals("text", StringComparison.OrdinalIgnoreCase)
             ? string.Empty
             : $"[TYPE: {type}] ";
-        var sender = string.IsNullOrWhiteSpace(turn.SpeakerId) ? "user" : turn.SpeakerId;
+        // 渲染给模型看的是**显示名**（昵称/名字），不是稳定 id——模型不需要看到 QQ 号。
+        // 稳定 id 只用于归因/键控（D45）；显示名为空时才回退到 id，最后回退到 "user"。
+        var sender = turn.SpeakerName;
+        if (string.IsNullOrWhiteSpace(sender))
+            sender = turn.SpeakerId;
+        if (string.IsNullOrWhiteSpace(sender))
+            sender = "user";
         return $"{typePrefix}[FROM: {sender}] {turn.Content}";
     }
 

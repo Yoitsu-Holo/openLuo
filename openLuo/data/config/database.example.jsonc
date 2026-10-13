@@ -1,0 +1,15 @@
+{
+  // ===== 数据库配置 =====
+  // 本文件早先叫 world.jsonc、注释写作"世界/数据库配置"——但世界状态早已不在配置里
+  // （它由扩展 openLuo.Extension.World + 内核状态事务负责），这里只剩 game.db 的路径，故改名。
+  // 注意：文件名本身不影响加载（config/*.jsonc 是按「段名」合并的），改不改名都能用；
+  // 你的 live 文件若是 config/world.jsonc，继续用也完全正常。
+  // [需重启] 修改后需重启生效
+  //
+  // databasePath: 留空使用默认路径
+  //   Windows: %APPDATA%\openLuo\game.db
+  //   macOS:   ~/Library/Application Support/openLuo/game.db
+  //   Linux:   ~/.config/openLuo/game.db
+
+  "databasePath": ""
+}

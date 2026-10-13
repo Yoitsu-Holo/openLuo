@@ -42,13 +42,17 @@ public sealed class VectorMemoryRetriever : IMemoryRetriever
 
         var includePrivate = query.Scopes.Count == 0 || query.Scopes.Contains(MemoryScope.CharacterPrivate);
         var includeShared = query.Scopes.Contains(MemoryScope.Shared);
+        // 用户维度：vec_memories 里没有 user_id（不动向量表结构），过滤落在 JOIN 后的 memories 行上。
+        // 因为过滤发生在 k 邻居之后，按用户分区时必须放宽向量候选数，否则近邻被别的用户占满会假性召回为空。
+        var partitionByUser = !string.IsNullOrWhiteSpace(query.UserId);
+        var candidateK = partitionByUser ? query.TopK * 4 : query.TopK;
 
         var rows = await conn.QueryAsync<dynamic>(new CommandDefinition("""
             WITH vec_hits AS (
                 SELECT memory_id, character_id, distance
                 FROM vec_memories
                 WHERE embedding MATCH @Embedding
-                  AND k = @TopK
+                  AND k = @VecK
                   AND game_id = @GameId
                   AND (
                         (@IncludePrivate = 1 AND character_id = @CharacterId)
@@ -60,6 +64,7 @@ public sealed class VectorMemoryRetriever : IMemoryRetriever
             JOIN memories m ON m.id = h.memory_id
             WHERE m.game_id = @GameId
               AND m.is_compressed = 0
+              AND (@PartitionByUser = 0 OR m.user_id = @UserId OR m.user_id = '')
             ORDER BY h.distance
             LIMIT @TopK
             """,
@@ -67,9 +72,12 @@ public sealed class VectorMemoryRetriever : IMemoryRetriever
             {
                 query.GameId,
                 query.CharacterId,
-                query.TopK,
+                TopK = query.TopK,
+                VecK = candidateK,
                 IncludePrivate = includePrivate ? 1 : 0,
                 IncludeShared = includeShared ? 1 : 0,
+                PartitionByUser = partitionByUser ? 1 : 0,
+                UserId = query.UserId ?? string.Empty,
                 Embedding = BuildVectorLiteral(embedding)
             },
             cancellationToken: ct));
@@ -126,6 +134,7 @@ public sealed class VectorMemoryRetriever : IMemoryRetriever
             Id = row.id,
             GameId = row.game_id,
             OwnerCharacterId = row.character_id,
+            UserId = GetString(rowMap, "user_id"),
             Scope = (MemoryScope)GetInt(rowMap, "scope", (int)MemoryScope.CharacterPrivate),
             OccurredAtUtc = DateTime.SpecifyKind(DateTime.Parse((string)row.occurred_at, CultureInfo.InvariantCulture), DateTimeKind.Utc),
             SourceText = sourceText,

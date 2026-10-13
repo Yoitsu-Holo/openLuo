@@ -52,7 +52,12 @@ public static class HubStartup
 
         await openLuo.Server.HubServer.RunAsync(
             runtime,
-            new openLuo.Server.HubServerOptions { Listen = listen, Security = BuildSecurityPolicy() },
+            new openLuo.Server.HubServerOptions
+            {
+                Listen = listen,
+                Security = BuildSecurityPolicy(),
+                ConfirmTimeoutSeconds = BuildConfirmTimeout(),
+            },
             directory, configService, jobs, scheduler, logs, auth, assets, hubStore, outputQueue, hubStore, confirmationGate,
             stateReader,
             ct);
@@ -74,6 +79,13 @@ public static class HubStartup
             MaxFrameBytes: security.HubMaxFrameBytes,
             StrictInputValidation: security.HubStrictInputValidation);
     };
+
+    /// <summary>
+    /// 高危能力确认握手的等待上限：取 <c>agent.pendingAbilityConfirmTimeoutSeconds</c>
+    /// （闭包 → 每次确认都读当前配置快照，热加载生效）。
+    /// </summary>
+    private static Func<int> BuildConfirmTimeout() =>
+        () => openLuo.Infrastructure.Config.Config.Agent.PendingAbilityConfirmTimeoutSeconds;
 
     /// <summary>Hub 鉴权配置来自环境变量（后续可迁至 server.jsonc）。</summary>
     private static openLuo.Server.HubAuthOptions BuildHubAuth()

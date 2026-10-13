@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using openLuo.AgentContext.Core;
 using Microsoft.Extensions.Logging;
 using openLuo.Core.Interfaces;
 using openLuo.Infrastructure.IO;
@@ -68,6 +69,10 @@ public static class OpenLuoBootstrapper
         RegisterRemoteCapabilitySources(services, configDir, logger);
 
         var serviceProvider = services.BuildServiceProvider();
+
+        // 配置热重载 → 让全局块缓存失效（D46）：平台的 rule/persona 类内容可能来自配置段，
+        // 不失效就要等 TTL 才生效。装配器同时以 IContextAssembler 与 IContextGlobalCache 暴露（同一实例）。
+        configCenter.Reloaded += () => serviceProvider.GetRequiredService<IContextGlobalCache>().Invalidate();
 
         // 初始化静态日志系统 — 此后全局 Logger.Xxx 调用都走 GameLogger
         var gameLogger = serviceProvider.GetRequiredService<openLuo.Infrastructure.Logging.GameLogger>();

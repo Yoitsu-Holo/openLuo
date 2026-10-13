@@ -1,21 +1,12 @@
 {
   // ===== 记忆系统配置 =====
-  // [热加载] 修改后自动生效
+  // 说明：本文件只保留**有真实实现**的键。早期版本的 memoryRetrieval（characterTopK/globalTopK/
+  // recentN/emotionalN/globalDistanceMax）与 memoryStore（embeddingOperationTimeoutSeconds/
+  // compressionLookbackDays/compressionCheckCount）在本仓没有任何消费者（检索器只认查询自带的
+  // TopK/Scopes；embedding 超时真值在 embedding 配置里；压缩功能未实现），已删除——
+  // 召回参数会随"记忆召回质量"一起重新设计，届时配置与实现同时落地。
 
-  "memoryRetrieval": {
-    "characterTopK": 8,
-    "globalTopK": 4,
-    "recentN": 12,
-    "emotionalN": 8,
-    "globalDistanceMax": 0.7
-  },
-
-  "memoryStore": {
-    "embeddingOperationTimeoutSeconds": 8,
-    "compressionLookbackDays": 30,
-    "compressionCheckCount": 50
-  },
-
+  // sqlite-vec 扩展（改动需重启：建 vec0 表与加载扩展都只在启动期做一次）
   "sqliteVec": {
     "extensionPath": "",
     "vectorDimensions": 2560

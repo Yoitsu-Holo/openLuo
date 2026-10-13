@@ -61,6 +61,8 @@ internal sealed class MemorySearchInvoker : ICapabilityInvoker
         var result = await _service.RecallAsync(new SemanticRecallQuery
         {
             GameId = context.GameId, CharacterId = context.SubjectId, SearchText = query,
+            // 用户维度来自逐调用下传的执行上下文；平台没给 userId 时为 null → 检索不过滤，行为同改造前。
+            UserId = context.UserId,
             TopK = ParsePositiveInt(call.Options, "limit", 5), Scopes = [MemoryScope.CharacterPrivate, MemoryScope.Shared],
             Reason = "agent capability memory:search"
         }, ct);
@@ -92,6 +94,8 @@ internal sealed class MemoryWriteInvoker : ICapabilityInvoker
         var result = await _service.WriteAsync(new MemoryWriteInput
         {
             GameId = context.GameId, CharacterId = context.SubjectId, RawContent = content,
+            // 落库归属：有 userId 时这条记忆只对同一用户可见；没有则不分区（老语义）。
+            UserId = context.UserId,
             Source = "agent capability memory:write", Importance = ParseImportance(call.Options)
         }, ct);
         return new CapabilityResult
@@ -113,6 +117,9 @@ public sealed class MemoryBaselineContributor : IContextContributor
     public MemoryBaselineContributor(IMemoryRecallService service) => _service = service;
     public string Id => "memory:baseline";
 
+    /// <summary>长期记忆：属于「用户↔角色」，跨会话（D45）。</summary>
+    public ContextScope Scope => ContextScope.User;
+
     public async Task<ContextContributionResult> ContributeAsync(ContextBuildRequest request, CancellationToken ct = default)
     {
         try
@@ -122,13 +129,16 @@ public sealed class MemoryBaselineContributor : IContextContributor
             var result = await _service.RecallAsync(new SemanticRecallQuery
             {
                 GameId = request.SessionId, CharacterId = request.SubjectId, SearchText = request.UserInput,
+                // 用域键（唯一形状定义处）判空：取不到 User 域键说明平台没给 userId，
+                // 此时 UserId 留空 → 召回退回 (会话, 角色) 分区、含未分区记忆，与改造前一致。
+                UserId = request.DomainKey(ContextScope.User) is null ? null : request.UserId,
                 TopK = 3, Scopes = [MemoryScope.CharacterPrivate, MemoryScope.Shared], Reason = "memory baseline context"
             }, ct);
             var text = string.IsNullOrWhiteSpace(result.Summary) ? string.Join("\n", result.Records.Select(r => r.Summary)) : result.Summary;
             return Ok(string.IsNullOrWhiteSpace(text) ? [] : [new ContextContribution
             {
                 Id = "memory-baseline", ContributorId = Id, Region = ContextRegion.LongTermMemory,
-                Content = text, Priority = 40, TokenEstimate = Math.Max(1, text.Length / 4)
+                Content = text, Priority = 40
             }]);
         }
         catch (Exception ex)

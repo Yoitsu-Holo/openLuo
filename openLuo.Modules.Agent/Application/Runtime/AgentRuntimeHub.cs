@@ -9,6 +9,12 @@ namespace openLuo.Modules.Agent.Application.Runtime;
 /// </summary>
 public interface IAgentRuntimeHub
 {
+    /// <summary>
+    /// 角色间提问的默认超时。曾是 extensions/party 里的散落字面量（<c>TimeSpan.FromSeconds(30)</c>），
+    /// 而配置里另有一个零消费的 12s——真值只在这里，调用方不传 timeout 时用它。
+    /// </summary>
+    static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(30);
+
     Task<AgentMessage?> RequestAsync(
         string characterId,
         AgentMessageType type,

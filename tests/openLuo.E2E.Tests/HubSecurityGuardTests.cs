@@ -378,7 +378,9 @@ public sealed class HubSecurityGuardTests
             };
         }
 
-        public Task AppendMessageAsync(string sessionId, string? senderName, string text, IReadOnlyList<object>? blocks = null, CancellationToken ct = default) =>
+        public Task AppendMessageAsync(string sessionId, string? senderName, string text,
+            IReadOnlyList<object>? blocks = null, string? userId = null, string? threadId = null,
+            CancellationToken ct = default) =>
             Task.CompletedTask;
 
         public Task<string?> GetContextSummaryAsync(string sessionId, CancellationToken ct = default) =>

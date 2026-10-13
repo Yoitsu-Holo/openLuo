@@ -11,10 +11,13 @@ var subjectId = Environment.GetEnvironmentVariable("OPENLUO_SUBJECT_ID") ?? "bui
 var agentId = Environment.GetEnvironmentVariable("OPENLUO_AGENT_ID") ?? "companion";
 // 会话寻址：与其它端（CLI / QQ 桥的 privateConversationId）填同一个值即共享同一段对话
 var conversationId = Environment.GetEnvironmentVariable("OPENLUO_CONVERSATION_ID");
+// 说话人稳定身份与会话内线程（都可选）：不填 = 不上送 = 行为与从前一致
+var userId = Environment.GetEnvironmentVariable("OPENLUO_USER_ID");
+var threadId = Environment.GetEnvironmentVariable("OPENLUO_THREAD_ID");
 
 try
 {
-    GuiApplication.Launch(hubUrl, subjectId, agentId, conversationId);
+    GuiApplication.Launch(hubUrl, subjectId, agentId, conversationId, userId, threadId);
     return 0;
 }
 catch (HubConnectException ex)

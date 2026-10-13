@@ -69,11 +69,33 @@ public class LogArchiveConfig
 
 public class AgentRuntimeConfig
 {
-    public int ChatRoundTimeoutSeconds { get; set; } = 60;
-    public int TaskDispatchTimeoutSeconds { get; set; } = 24;
+    /// <summary>
+    /// 回合总时限（秒）→ 内核 <c>DecisionBudgets.OverallDeadline</c>。
+    /// 注意语义：这是**两次决策之间**的时钟比较，不是 CancelAfter——已经开始的工具调用不会被它打断
+    /// （单工具超时由 <c>DecisionBudgets.StepIdleTimeout</c> 负责）。默认 600s，因为慢工具链路
+    /// （远程 TTS 实测约 150s + 后续决策）需要余量。
+    /// </summary>
+    public int ChatRoundTimeoutSeconds { get; set; } = 600;
+
+    /// <summary>Hub 高危能力确认握手超时（秒）→ <c>HubServerOptions.ConfirmTimeoutSeconds</c>。</summary>
     public int PendingAbilityConfirmTimeoutSeconds { get; set; } = 45;
-    public int InvocationConfirmTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// 单回合从对话存储抓取的最大历史条数（**抓取上限**，真正的裁剪由
+    /// <see cref="ContextTokenBudget"/> 的剩余预算决定，从最旧一侧截断）。默认 24。
+    /// </summary>
     public int ContextConversationRetainCount { get; set; } = 24;
+
+    /// <summary>
+    /// 上下文 token 预算上限（系统块 + 对话历史；估算口径见内核 <c>ITokenCounter</c>，
+    /// 默认启发式：CJK 1 字 ≈ 1 token、其余 4 字符 ≈ 1 token）。默认 24000。
+    /// <para>
+    /// 超出预算时：保底区域（人格 / 时间 / 平台规则 / 能力说明 / 当轮输入 / 工具结果）仍然保留，
+    /// 可裁区域（记忆 / 场景 / 世界 / 历史）按优先级让位；被裁明细记录在快照
+    /// <c>Budget.DroppedContributions</c>，保底集自身超支时标记 <c>Budget.OverBudget</c>。
+    /// </para>
+    /// </summary>
+    public int ContextTokenBudget { get; set; } = 24_000;
 
     /// <summary>
     /// 是否向每个对话上下文注入当前时间标记（内核能力，默认开启）。
@@ -85,63 +107,18 @@ public class AgentRuntimeConfig
     public AgentRuntimeConfig Clone() => new()
     {
         ChatRoundTimeoutSeconds = ChatRoundTimeoutSeconds,
-        TaskDispatchTimeoutSeconds = TaskDispatchTimeoutSeconds,
         PendingAbilityConfirmTimeoutSeconds = PendingAbilityConfirmTimeoutSeconds,
-        InvocationConfirmTimeoutSeconds = InvocationConfirmTimeoutSeconds,
         ContextConversationRetainCount = ContextConversationRetainCount,
+        ContextTokenBudget = ContextTokenBudget,
         InjectTimeContext = InjectTimeContext
-    };
-}
-
-public class InterAgentConfig
-{
-    public int AskTimeoutSeconds { get; set; } = 12;
-    public int SessionTurnTimeoutSeconds { get; set; } = 12;
-    public int HiddenDialogueFuseTurns { get; set; } = 24;
-
-    public InterAgentConfig Clone() => new()
-    {
-        AskTimeoutSeconds = AskTimeoutSeconds,
-        SessionTurnTimeoutSeconds = SessionTurnTimeoutSeconds,
-        HiddenDialogueFuseTurns = HiddenDialogueFuseTurns
-    };
-}
-
-public class PluginRuntimeConfig
-{
-    public int DefaultCommandTimeoutSeconds { get; set; } = 30;
-    public int ChatCommandTimeoutSeconds { get; set; } = 120;
-    public int HookCallTimeoutSeconds { get; set; } = 120;
-    public int RpcDefaultTimeoutSeconds { get; set; } = 5;
-    public int RpcHandshakeTimeoutSeconds { get; set; } = 15;
-    public int HostRequestDefaultTimeoutSeconds { get; set; } = 30;
-    public int ProcessShutdownGraceMs { get; set; } = 500;
-
-    public PluginRuntimeConfig Clone() => new()
-    {
-        DefaultCommandTimeoutSeconds = DefaultCommandTimeoutSeconds,
-        ChatCommandTimeoutSeconds = ChatCommandTimeoutSeconds,
-        HookCallTimeoutSeconds = HookCallTimeoutSeconds,
-        RpcDefaultTimeoutSeconds = RpcDefaultTimeoutSeconds,
-        RpcHandshakeTimeoutSeconds = RpcHandshakeTimeoutSeconds,
-        HostRequestDefaultTimeoutSeconds = HostRequestDefaultTimeoutSeconds,
-        ProcessShutdownGraceMs = ProcessShutdownGraceMs
     };
 }
 
 public class SecurityRuntimeConfig
 {
-    public int RateLimitPerMinute { get; set; } = 10;
-    public int MaxInputLength { get; set; } = 1000;
-    public int BurstLimit { get; set; } = 5;
-    public int PromptBreakCharLimit { get; set; } = 10;
-    public int MaxImageSizeBytes { get; set; } = 10_485_760;
-    public string AllowedImageMimeTypes { get; set; } = "image/png,image/jpeg,image/gif,image/webp";
-    public int MaxBase64PromptLength { get; set; } = 1_048_576;
-    public int ImageDownloadTimeoutSeconds { get; set; } = 15;
-    public int ImageDownloadMaxRetries { get; set; } = 3;
-
     // ── Hub 入口治理（hub-protocol §4.9）：限流 + 输入校验，默认宽松但真实生效 ──
+    // 说明：早期的 RateLimitPerMinute/MaxInputLength/BurstLimit/PromptBreakCharLimit 与
+    // 图像尺寸/下载相关键均为**零消费**的假旋钮（实现早已迁到 HubSecurityPolicy + 平台侧），已删除。
 
     /// <summary>Hub 入口治理总开关。</summary>
     public bool HubEnabled { get; set; } = true;
@@ -163,15 +140,6 @@ public class SecurityRuntimeConfig
 
     public SecurityRuntimeConfig Clone() => new()
     {
-        RateLimitPerMinute = RateLimitPerMinute,
-        MaxInputLength = MaxInputLength,
-        BurstLimit = BurstLimit,
-        PromptBreakCharLimit = PromptBreakCharLimit,
-        MaxImageSizeBytes = MaxImageSizeBytes,
-        AllowedImageMimeTypes = AllowedImageMimeTypes,
-        MaxBase64PromptLength = MaxBase64PromptLength,
-        ImageDownloadTimeoutSeconds = ImageDownloadTimeoutSeconds,
-        ImageDownloadMaxRetries = ImageDownloadMaxRetries,
         HubEnabled = HubEnabled,
         HubRequestsPerMinute = HubRequestsPerMinute,
         HubBurstLimit = HubBurstLimit,
@@ -181,102 +149,6 @@ public class SecurityRuntimeConfig
     };
 }
 
-public class LifecycleConfig
-{
-    public int WakeUpBaseMinute { get; set; } = 480;
-    public int LateSleepThresholdMinute { get; set; } = 120;
-    public double MinimumRecoveryDelta { get; set; } = 20.0;
-
-    public LifecycleConfig Clone() => new()
-    {
-        WakeUpBaseMinute = WakeUpBaseMinute,
-        LateSleepThresholdMinute = LateSleepThresholdMinute,
-        MinimumRecoveryDelta = MinimumRecoveryDelta
-    };
-}
-
-public class TimeoutPolicyConfig
-{
-    public int DefaultTimeoutSeconds { get; set; } = 30;
-    public int ChatTimeoutSeconds { get; set; } = 120;
-
-    public TimeoutPolicyConfig Clone() => new()
-    {
-        DefaultTimeoutSeconds = DefaultTimeoutSeconds,
-        ChatTimeoutSeconds = ChatTimeoutSeconds
-    };
-}
-
-public class ResiliencePolicyConfig
-{
-    public int LlmMaxRetryAttempts { get; set; } = 3;
-    public int LlmRetryDelaySeconds { get; set; } = 1;
-    public int DatabaseMaxRetryAttempts { get; set; } = 2;
-    public int DatabaseRetryDelayMilliseconds { get; set; } = 500;
-
-    public ResiliencePolicyConfig Clone() => new()
-    {
-        LlmMaxRetryAttempts = LlmMaxRetryAttempts,
-        LlmRetryDelaySeconds = LlmRetryDelaySeconds,
-        DatabaseMaxRetryAttempts = DatabaseMaxRetryAttempts,
-        DatabaseRetryDelayMilliseconds = DatabaseRetryDelayMilliseconds
-    };
-}
-
-
-public class PerExecutorConfig
-{
-    public float? Temperature { get; set; } = null;
-    public int? MaxTokens { get; set; } = null;
-
-    public PerExecutorConfig Clone() => new()
-    {
-        Temperature = Temperature,
-        MaxTokens = MaxTokens
-    };
-}
-
-public class ExecutorConfigs
-{
-    public PerExecutorConfig CharacterResponse { get; set; } = new();
-    public PerExecutorConfig StateUpdate { get; set; } = new();
-    public PerExecutorConfig ToolUse { get; set; } = new();
-    public PerExecutorConfig GiftIntent { get; set; } = new();
-    public PerExecutorConfig FlowRouting { get; set; } = new();
-    public PerExecutorConfig TODOList { get; set; } = new();
-    public PerExecutorConfig GoalExecution { get; set; } = new();
-
-    public ExecutorConfigs Clone() => new()
-    {
-        CharacterResponse = CharacterResponse.Clone(),
-        StateUpdate = StateUpdate.Clone(),
-        ToolUse = ToolUse.Clone(),
-        GiftIntent = GiftIntent.Clone(),
-        FlowRouting = FlowRouting.Clone(),
-        TODOList = TODOList.Clone(),
-        GoalExecution = GoalExecution.Clone()
-    };
-
-    /// <summary>Fill any executor slot that still has null Temperature/MaxTokens with C# defaults.</summary>
-    internal ExecutorConfigs EnsureDefaults()
-    {
-        CharacterResponse.Temperature ??= 0.7f;
-        StateUpdate.Temperature ??= 0.1f;
-        StateUpdate.MaxTokens ??= 2048;
-        ToolUse.Temperature ??= 0.2f;
-        ToolUse.MaxTokens ??= 2048;
-        FlowRouting.Temperature ??= 0.0f;
-        FlowRouting.MaxTokens ??= 512;
-        GiftIntent.Temperature ??= 0.0f;
-        GiftIntent.MaxTokens ??= 512;
-        TODOList.Temperature ??= 0.2f;
-        TODOList.MaxTokens ??= 2048;
-        GoalExecution.Temperature ??= 0.2f;
-        GoalExecution.MaxTokens ??= 2048;
-        return this;
-    }
-}
-
 public class AppConfig
 {
     public LlmConfig Llm { get; set; } = new();
@@ -284,21 +156,8 @@ public class AppConfig
     public string DatabasePath { get; set; } = string.Empty;
     public LogConfig Log { get; set; } = new();
     public SqliteVecConfig SqliteVec { get; set; } = new();
-    public MemoryRetrievalConfig MemoryRetrieval { get; set; } = new();
     public AgentRuntimeConfig Agent { get; set; } = new();
-    public InterAgentConfig InterAgent { get; set; } = new();
-    public PluginRuntimeConfig PluginRuntime { get; set; } = new();
     public SecurityRuntimeConfig Security { get; set; } = new();
-    public LifecycleConfig Lifecycle { get; set; } = new();
-    public MemoryStoreConfig MemoryStore { get; set; } = new();
-    public TimeoutPolicyConfig Timeouts { get; set; } = new();
-    public ResiliencePolicyConfig Resilience { get; set; } = new();
-    public ExecutorConfigs Executors { get; set; } = new();
-
-    internal void Normalize()
-    {
-        Executors.EnsureDefaults();
-    }
 
     public AppConfig Clone() => new()
     {
@@ -307,15 +166,7 @@ public class AppConfig
         DatabasePath = DatabasePath,
         Log = Log.Clone(),
         SqliteVec = SqliteVec.Clone(),
-        MemoryRetrieval = MemoryRetrieval.Clone(),
         Agent = Agent.Clone(),
-        InterAgent = InterAgent.Clone(),
-        PluginRuntime = PluginRuntime.Clone(),
         Security = Security.Clone(),
-        Lifecycle = Lifecycle.Clone(),
-        MemoryStore = MemoryStore.Clone(),
-        Timeouts = Timeouts.Clone(),
-        Resilience = Resilience.Clone(),
-        Executors = Executors.Clone(),
     };
 }

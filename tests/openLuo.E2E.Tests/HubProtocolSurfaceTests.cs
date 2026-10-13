@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Text.Json.Nodes;
 using openLuo.Capabilities.Core;
 using openLuo.Capabilities.Core.Models;
 using openLuo.Client;
@@ -379,6 +380,66 @@ public sealed class HubProtocolSurfaceTests
         return null;
     }
 
+    [Fact]
+    public async Task turn_request的身份与线程字段_落到内核()
+    {
+        // D45 守卫：`turn.request` 的 userId/threadId/mentions/meta 曾被 Hub 静默丢弃
+        // （桥侧早就把 QQ 号发上来了）。这条测试钉住"必须传进内核"。
+        var port = FreePort();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var runtime = new SessionfulStubRuntime();
+        var run = HubServer.RunAsync(runtime, new HubServerOptions { Listen = $"http://127.0.0.1:{port}" }, ct: cts.Token);
+
+        var client = await ConnectWithRetryAsync($"ws://127.0.0.1:{port}/v1/stream", cts.Token);
+        try
+        {
+            var session = await OpenSessionAsync(client, "builtin-rin", "companion", "qq-group-1", cts.Token);
+
+            await client.SendAsync(EnvelopeFactory.Create(MessageTypes.TurnSubmit, new TurnRequestDto
+            {
+                Text = "hi",
+                UserId = "10001",
+                ThreadId = "topic-7",
+                Mentions = ["rin"],
+                Meta = new Dictionary<string, JsonNode?> { ["scene"] = "group" },
+            }), cts.Token);
+
+            var sawFinal = false;
+            while (!sawFinal)
+            {
+                var evt = await client.ReceiveAsync(cts.Token) ?? throw new IOException("hub closed the connection");
+                if (evt.Type == EventTypes.TurnFinal)
+                    sawFinal = true;
+            }
+
+            var request = runtime.LastTurnRequest ?? throw new InvalidOperationException("内核未收到回合请求");
+            Assert.Equal("10001", request.UserId);
+            Assert.Equal("topic-7", request.ThreadId);
+            Assert.Equal(["rin"], request.Mentions);
+            Assert.Equal("group", request.Meta!["scene"]!.ToString());
+
+            // 感知通道（群聊"看但不回"）同样要带稳定身份，否则历史归因又退化成显示名
+            await client.SendAsync(EnvelopeFactory.Create(MessageTypes.MessageAppend, new MessageAppendCommand
+            {
+                SessionId = session.SessionId, SenderName = "阿明", UserId = "10002", Text = "群聊闲聊",
+            }), cts.Token);
+
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (runtime.LastAppend is null && DateTime.UtcNow < deadline)
+                await Task.Delay(50, cts.Token);
+
+            var append = runtime.LastAppend ?? throw new InvalidOperationException("内核未收到感知消息");
+            Assert.Equal("10002", append.UserId);
+            Assert.Equal("阿明", append.SenderName);
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await cts.CancelAsync();
+            try { await run; } catch (OperationCanceledException) { /* 取消退出 */ }
+        }
+    }
+
     private static int FreePort()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -457,6 +518,12 @@ public sealed class HubProtocolSurfaceTests
         /// <summary>回合流的延迟（&gt;0 时用于验证 turn.cancel：延迟期间取消会抛 OperationCanceledException）。</summary>
         public TimeSpan StreamDelay { get; set; } = TimeSpan.Zero;
 
+        /// <summary>最近一次收到的内核回合请求（守护 wire → 内核 的身份/线程映射，别再把它们丢掉）。</summary>
+        public TurnRequest? LastTurnRequest { get; private set; }
+
+        /// <summary>最近一次感知消息写入（守护 message.append 的身份映射）。</summary>
+        public (string SessionId, string? SenderName, string? UserId, string? ThreadId)? LastAppend { get; private set; }
+
         public Task<AgentSession> OpenSessionAsync(SessionOpenRequest request, CancellationToken ct = default)
         {
             if (!string.IsNullOrWhiteSpace(request.ConversationId)
@@ -489,6 +556,7 @@ public sealed class HubProtocolSurfaceTests
         public async IAsyncEnumerable<TurnEvent> StreamTurnAsync(
             TurnRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
         {
+            LastTurnRequest = request;
             if (StreamDelay > TimeSpan.Zero)
                 await Task.Delay(StreamDelay, ct);   // 取消时在这里抛出 → 验证 turn.cancel
             else
@@ -505,7 +573,13 @@ public sealed class HubProtocolSurfaceTests
                 },
             };
         }
-        public Task AppendMessageAsync(string sessionId, string? senderName, string text, IReadOnlyList<object>? blocks = null, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task AppendMessageAsync(string sessionId, string? senderName, string text,
+            IReadOnlyList<object>? blocks = null, string? userId = null, string? threadId = null,
+            CancellationToken ct = default)
+        {
+            LastAppend = (sessionId, senderName, userId, threadId);
+            return Task.CompletedTask;
+        }
         public Task<string?> GetContextSummaryAsync(string sessionId, CancellationToken ct = default) => throw new NotSupportedException();
 
         private static string Key(string subjectId, string agentId, string conversationId) => $"{subjectId}\u001f{agentId}\u001f{conversationId}";

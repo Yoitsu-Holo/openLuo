@@ -33,21 +33,15 @@ public static class Config
     }
 
     // ── 配置段属性（全部指向当前 _snapshot 下的对应段）──
+    // 只保留**有真实消费者**的段：Agent（回合/上下文预算）、Security（Hub 入口治理）、
+    // SqliteVec（vec0 扩展）、Log、Llm、Embedding。零消费的段已删除（见 AppConfig 注释）。
 
     public static LlmConfig Llm => _snapshot.Llm;
     public static EmbeddingConfig Embedding => _snapshot.Embedding;
     public static LogConfig Log => _snapshot.Log;
     public static SqliteVecConfig SqliteVec => _snapshot.SqliteVec;
-    public static MemoryRetrievalConfig MemoryRetrieval => _snapshot.MemoryRetrieval;
     public static AgentRuntimeConfig Agent => _snapshot.Agent;
-    public static InterAgentConfig InterAgent => _snapshot.InterAgent;
-    public static PluginRuntimeConfig PluginRuntime => _snapshot.PluginRuntime;
     public static SecurityRuntimeConfig Security => _snapshot.Security;
-    public static LifecycleConfig Lifecycle => _snapshot.Lifecycle;
-    public static MemoryStoreConfig MemoryStore => _snapshot.MemoryStore;
-    public static TimeoutPolicyConfig Timeouts => _snapshot.Timeouts;
-    public static ResiliencePolicyConfig Resilience => _snapshot.Resilience;
-    public static ExecutorConfigs Executors => _snapshot.Executors;
 
     // ── 标量属性 ──
 

@@ -12,6 +12,11 @@ public sealed class PlatformContextContributor : IContextContributor
 {
     public string Id => "host.platform";
 
+    /// <summary>平台运行时规则：与角色有关、与会话无关（D45）。</summary>
+    public ContextScope Scope => ContextScope.Global;
+
+    // 刻意**不设** CacheTtl：内容读 request.Extras（平台元数据），逐回合可能不同。
+
     public Task<ContextContributionResult> ContributeAsync(
         ContextBuildRequest request,
         CancellationToken ct = default)
@@ -38,7 +43,7 @@ public sealed class PlatformContextContributor : IContextContributor
                 new ContextContribution
                 {
                     Id = "platform", ContributorId = Id, Region = ContextRegion.RuntimeRules,
-                    Content = content, Priority = 90, TokenEstimate = Math.Max(1, content.Length / 4)
+                    Content = content, Priority = 90
                 }
             ]
         });

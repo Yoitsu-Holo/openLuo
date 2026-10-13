@@ -226,7 +226,7 @@ public sealed class QqBotApplication
                 {
                     // 感知通道：未 @ 的消息写入会话历史（“看但不回”），不触发 LLM 回合
                     var observer = new QqRuntimeBridge(await EnsureHubAsync(ct), _http, _httpBase, current);
-                    await observer.ObserveAsync("group", ev.GroupId.Value, text, senderName, blocks, ct);
+                    await observer.ObserveAsync("group", ev.GroupId.Value, ev.UserId, text, senderName, blocks, ct);
                     return;
                 }
 

@@ -16,7 +16,7 @@ public class DatabaseInitializer(
         await CreateTablesAsync(conn);
         await MigrateAsync(conn);
         await EnsureMemoriesTableSchemaAsync(conn);
-        await RebuildMemoriesFtsAsync(conn);
+        await EnsureMemoryUserDimensionAsync(conn);
         await InitializeSqliteVecAsync(conn);
     }
 
@@ -108,7 +108,7 @@ public class DatabaseInitializer(
                     INSERT INTO vec_memories_new (memory_id, game_id, character_id, embedding)
                     SELECT
                         v.memory_id,
-                        COALESCE(NULLIF(m.game_id, ''), (SELECT id FROM game_state LIMIT 1), ''),
+                        COALESCE(m.game_id, ''),
                         m.character_id,
                         v.embedding
                     FROM vec_memories v
@@ -150,60 +150,6 @@ public class DatabaseInitializer(
 
     private static async Task MigrateAsync(SqliteConnection conn)
     {
-        // v2: add current_minute column
-        try
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "ALTER TABLE game_state ADD COLUMN current_minute INTEGER DEFAULT 480";
-            await cmd.ExecuteNonQueryAsync();
-        }
-        catch { /* column already exists */ }
-
-        // v3: add current_location column
-        try
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "ALTER TABLE game_state ADD COLUMN current_location TEXT DEFAULT ''";
-            await cmd.ExecuteNonQueryAsync();
-        }
-        catch { /* column already exists */ }
-
-        // v5: add last_interaction_day column
-        try
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "ALTER TABLE game_state ADD COLUMN last_interaction_day INTEGER DEFAULT 1";
-            await cmd.ExecuteNonQueryAsync();
-        }
-        catch { /* column already exists */ }
-
-        // Agent context speaker display names are optional; legacy turns keep null.
-        try
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "ALTER TABLE agent_context_turns ADD COLUMN speaker_name TEXT";
-            await cmd.ExecuteNonQueryAsync();
-        }
-        catch { /* column already exists or table not created yet */ }
-
-        // Agent turn game time (message-local Day/Minute snapshot for virtual-mode time tags).
-        try
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "ALTER TABLE agent_context_turns ADD COLUMN game_day INTEGER";
-            await cmd.ExecuteNonQueryAsync();
-        }
-        catch { /* column already exists or table not created yet */ }
-
-        try
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "ALTER TABLE agent_context_turns ADD COLUMN game_minute INTEGER";
-            await cmd.ExecuteNonQueryAsync();
-        }
-        catch { /* column already exists or table not created yet */ }
-
-
         // v6: add enum_values column to state_defs
         try
         {
@@ -255,44 +201,8 @@ public class DatabaseInitializer(
         }
         catch { /* column already exists */ }
 
-        // Backfill empty game_id with current game_state id
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                UPDATE memories
-                SET game_id = COALESCE(
-                    NULLIF((SELECT id FROM game_state LIMIT 1), ''),
-                    game_id
-                )
-                WHERE IFNULL(game_id, '') = ''
-                """;
-            await cmd.ExecuteNonQueryAsync();
-        }
-
-        // v7: add game_id column to diaries for multi-save isolation
-        try
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "ALTER TABLE diaries ADD COLUMN game_id TEXT DEFAULT ''";
-            await cmd.ExecuteNonQueryAsync();
-        }
-        catch { /* column already exists */ }
-
-        // Backfill empty diary game_id with the latest known game_state id.
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                UPDATE diaries
-                SET game_id = COALESCE(
-                    NULLIF((SELECT id FROM game_state ORDER BY updated_at DESC, created_at DESC, id ASC LIMIT 1), ''),
-                    game_id
-                )
-                WHERE IFNULL(game_id, '') = ''
-                """;
-            await cmd.ExecuteNonQueryAsync();
-        }
-
-        await EnsureInventoryScopedByGameAsync(conn);
+        // 不再回填 game_id：旧回填依赖已废弃的单存档游戏状态表（该表不再创建，子查询会直接报错），
+        // 且多存档下应由写入方显式提供 game_id；空串不影响 memories 的读写。
     }
 
     private static async Task EnsureMemoriesTableSchemaAsync(SqliteConnection conn)
@@ -446,133 +356,54 @@ public class DatabaseInitializer(
         await tx.CommitAsync();
     }
 
-    private static async Task RebuildMemoriesFtsAsync(SqliteConnection conn)
+    /// <summary>
+    /// 给 <c>memories</c> 补"用户维度"（v9，D45）：列 <c>user_id</c> + 召回索引。
+    /// 必须排在 <see cref="EnsureMemoriesTableSchemaAsync"/> **之后**：那条路径会 DROP/RENAME 重建表，
+    /// 而它的 memories_new DDL 里没有 user_id（重建后由本方法补齐），先加列会被抹掉。
+    /// 全程加法、幂等：老库新库与重建库都收敛到同一形状，老数据自动获得空串 = 不按用户分区。
+    /// </summary>
+    private static async Task EnsureMemoryUserDimensionAsync(SqliteConnection conn)
     {
-        await using (var dropInsertTrigger = conn.CreateCommand())
+        var tableSql = await GetTableSqlAsync(conn, "memories");
+        if (string.IsNullOrWhiteSpace(tableSql))
+            return;
+
+        if (!ContainsColumn(tableSql!, "user_id"))
         {
-            dropInsertTrigger.CommandText = "DROP TRIGGER IF EXISTS memories_fts_insert";
-            await dropInsertTrigger.ExecuteNonQueryAsync();
+            await using var alter = conn.CreateCommand();
+            // NOT NULL DEFAULT '' 让已有行自动落到"未分区"，语义与引入用户维度前一致（召回时 user_id = '' 一律可见）。
+            alter.CommandText = "ALTER TABLE memories ADD COLUMN user_id TEXT NOT NULL DEFAULT ''";
+            await alter.ExecuteNonQueryAsync();
         }
 
-        await using (var dropDeleteTrigger = conn.CreateCommand())
-        {
-            dropDeleteTrigger.CommandText = "DROP TRIGGER IF EXISTS memories_fts_delete";
-            await dropDeleteTrigger.ExecuteNonQueryAsync();
-        }
-
-        await using (var dropUpdateTrigger = conn.CreateCommand())
-        {
-            dropUpdateTrigger.CommandText = "DROP TRIGGER IF EXISTS memories_fts_update";
-            await dropUpdateTrigger.ExecuteNonQueryAsync();
-        }
-
-        await using (var dropFts = conn.CreateCommand())
-        {
-            dropFts.CommandText = "DROP TABLE IF EXISTS memories_fts";
-            await dropFts.ExecuteNonQueryAsync();
-        }
-
-        await using (var createFts = conn.CreateCommand())
-        {
-            createFts.CommandText = """
-                CREATE VIRTUAL TABLE memories_fts USING fts5(
-                    summary,
-                    recall_text,
-                    source_text,
-                    tokenize='unicode61'
-                )
-                """;
-            await createFts.ExecuteNonQueryAsync();
-        }
-
-        await using (var seedFts = conn.CreateCommand())
-        {
-            seedFts.CommandText = """
-                INSERT INTO memories_fts(rowid, summary, recall_text, source_text)
-                SELECT rowid, summary, recall_text, source_text
-                FROM memories
-                """;
-            await seedFts.ExecuteNonQueryAsync();
-        }
-
-        await using (var createInsertTrigger = conn.CreateCommand())
-        {
-            createInsertTrigger.CommandText = """
-                CREATE TRIGGER memories_fts_insert AFTER INSERT ON memories BEGIN
-                    INSERT INTO memories_fts(rowid, summary, recall_text, source_text)
-                    VALUES (new.rowid, new.summary, new.recall_text, new.source_text);
-                END
-                """;
-            await createInsertTrigger.ExecuteNonQueryAsync();
-        }
-
-        await using (var createDeleteTrigger = conn.CreateCommand())
-        {
-            createDeleteTrigger.CommandText = """
-                CREATE TRIGGER memories_fts_delete AFTER DELETE ON memories BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, summary, recall_text, source_text)
-                    VALUES ('delete', old.rowid, old.summary, old.recall_text, old.source_text);
-                END
-                """;
-            await createDeleteTrigger.ExecuteNonQueryAsync();
-        }
-
-        await using (var createUpdateTrigger = conn.CreateCommand())
-        {
-            createUpdateTrigger.CommandText = """
-                CREATE TRIGGER memories_fts_update AFTER UPDATE ON memories BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, summary, recall_text, source_text)
-                    VALUES ('delete', old.rowid, old.summary, old.recall_text, old.source_text);
-                    INSERT INTO memories_fts(rowid, summary, recall_text, source_text)
-                    VALUES (new.rowid, new.summary, new.recall_text, new.source_text);
-                END
-                """;
-            await createUpdateTrigger.ExecuteNonQueryAsync();
-        }
+        await using var index = conn.CreateCommand();
+        // 召回 SQL 的形状是 (game_id, character_id) + user_id 过滤 + occurred_at 倒序，
+        // 故复合索引的列序与它对齐（沿用 idx_memories_game_character 的写法）。
+        index.CommandText = """
+            CREATE INDEX IF NOT EXISTS idx_memories_game_character_user
+                ON memories(game_id, character_id, user_id, occurred_at DESC)
+            """;
+        await index.ExecuteNonQueryAsync();
     }
 
     private static async Task CreateTablesAsync(SqliteConnection conn)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS game_state (
-                id TEXT PRIMARY KEY,
-                player_name TEXT NOT NULL,
-                archetype_id TEXT NOT NULL,
-                active_character_id TEXT DEFAULT '',
-                current_location TEXT DEFAULT '',
-                current_day INTEGER DEFAULT 1,
-                current_minute INTEGER DEFAULT 480,
-                last_interaction_day INTEGER DEFAULT 1,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS characters (
-                id TEXT PRIMARY KEY,
-                game_id TEXT NOT NULL DEFAULT '',
-                archetype_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                display_priority INTEGER NOT NULL DEFAULT 100,
-                is_enabled INTEGER NOT NULL DEFAULT 1,
-                role_profile_json TEXT NOT NULL DEFAULT '{}',
-                agent_policy_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS affection_events (
-                id TEXT PRIMARY KEY,
-                character_id TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                delta INTEGER NOT NULL,
-                occurred_at TEXT NOT NULL
-            );
-
+            -- 只创建真正被读写的表：memories（SqliteMemoryRepository / KeywordMemoryRetriever）、
+            -- state_defs / state_values / state_change_logs（WorldState 存储）。
+            -- vec_memories 由 InitializeSqliteVecAsync 单独创建。
+            -- 早先的单存档游戏状态 / 角色 / 背包与商店 / 日程与任务 / Agent 上下文 / 资产 / 关系等遗留表，
+            -- 全仓已无任何读写点（既无 SQL 也无 Dapper 映射）；它们的原始消费者是**已被删除的旧插件宿主**
+            -- （随之删除的 openLuo/data/plugins 里的 python 插件通过 plugin/* 的 call_host 访问这些表，
+            -- 而该宿主在本仓库已无任何实现），因此不再创建；旧库中已存在的这些表不主动删除，避免破坏性迁移。
             CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,
                 game_id TEXT NOT NULL DEFAULT '',
                 character_id TEXT NOT NULL,
+                -- 用户维度（D45）：空串 = 平台未提供 userId，记忆不按用户分区（= 改造前语义）。
+                -- 索引与老库补列都在 EnsureMemoryUserDimensionAsync（必须晚于整表重建）。
+                user_id TEXT NOT NULL DEFAULT '',
                 memory_format_version INTEGER NOT NULL DEFAULT 2,
                 scope INTEGER NOT NULL DEFAULT 0,
                 source_text TEXT NOT NULL DEFAULT '',
@@ -589,152 +420,10 @@ public class DatabaseInitializer(
                 is_compressed INTEGER DEFAULT 0
             );
 
-            CREATE TABLE IF NOT EXISTS inventory (
-                game_id TEXT NOT NULL DEFAULT '',
-                item_id TEXT NOT NULL,
-                quantity INTEGER DEFAULT 0,
-                PRIMARY KEY (game_id, item_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS shop_offers (
-                game_id TEXT NOT NULL,
-                category_id TEXT NOT NULL,
-                item_id TEXT NOT NULL,
-                price INTEGER NOT NULL,
-                sort_order INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (game_id, category_id, item_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS diaries (
-                id          TEXT PRIMARY KEY,
-                day         INTEGER NOT NULL,
-                content     TEXT NOT NULL,
-                created_at  TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS agent_state (
-                character_id   TEXT NOT NULL PRIMARY KEY,
-                intentions     TEXT NOT NULL DEFAULT '[]',
-                avoid_topics   TEXT NOT NULL DEFAULT '[]',
-                next_milestone TEXT,
-                planned_at     TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS timeline_events (
-                id               TEXT PRIMARY KEY,
-                game_id          TEXT NOT NULL,
-                event_type       TEXT NOT NULL,
-                title            TEXT NOT NULL,
-                due_at_epoch_ms  INTEGER NOT NULL,
-                end_at_epoch_ms  INTEGER,
-                recurrence_rule  TEXT,
-                status           TEXT NOT NULL DEFAULT 'pending',
-                action_json      TEXT,
-                context_json     TEXT,
-                created_at       TEXT NOT NULL,
-                updated_at       TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS character_schedules (
-                id              TEXT PRIMARY KEY,
-                game_id         TEXT NOT NULL,
-                character_id    TEXT NOT NULL,
-                active_days     TEXT NOT NULL DEFAULT '1,2,3,4,5,6,7',
-                start_minute    INTEGER NOT NULL DEFAULT 0,
-                end_minute      INTEGER NOT NULL DEFAULT 1439,
-                allow_parallel  INTEGER NOT NULL DEFAULT 1,
-                priority        INTEGER NOT NULL DEFAULT 100,
-                created_at      TEXT NOT NULL,
-                updated_at      TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS party_tasks (
-                id              TEXT PRIMARY KEY,
-                game_id         TEXT NOT NULL,
-                title           TEXT NOT NULL,
-                requested_by    TEXT NOT NULL,
-                status          TEXT NOT NULL DEFAULT 'pending',
-                context_json    TEXT NOT NULL DEFAULT '{}',
-                created_at      TEXT NOT NULL,
-                updated_at      TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS party_task_steps (
-                id                    TEXT PRIMARY KEY,
-                task_id               TEXT NOT NULL,
-                step_order            INTEGER NOT NULL,
-                assigned_character_id TEXT NOT NULL,
-                role                  TEXT NOT NULL DEFAULT 'support',
-                instruction           TEXT NOT NULL,
-                result_json           TEXT NOT NULL DEFAULT '{}',
-                status                TEXT NOT NULL DEFAULT 'pending',
-                started_at            TEXT,
-                finished_at           TEXT,
-                created_at            TEXT NOT NULL,
-                updated_at            TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS channel_bindings (
-                id                  TEXT PRIMARY KEY,
-                game_id             TEXT NOT NULL,
-                platform            TEXT NOT NULL,
-                channel_or_user_id  TEXT NOT NULL,
-                character_id        TEXT NOT NULL,
-                is_default          INTEGER NOT NULL DEFAULT 0,
-                created_at          TEXT NOT NULL,
-                updated_at          TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS agent_contexts (
-                game_id       TEXT NOT NULL,
-                character_id  TEXT NOT NULL,
-                summary       TEXT NOT NULL DEFAULT '',
-                created_at    TEXT NOT NULL,
-                updated_at    TEXT NOT NULL,
-                PRIMARY KEY (game_id, character_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS agent_context_turns (
-                id            TEXT PRIMARY KEY,
-                game_id       TEXT NOT NULL,
-                character_id  TEXT NOT NULL,
-                speaker_id    TEXT NOT NULL,
-                speaker_name  TEXT,
-                speaker_role  TEXT NOT NULL,
-                content       TEXT NOT NULL,
-                blocks        TEXT,
-                timestamp_utc TEXT NOT NULL,
-                game_day      INTEGER,
-                game_minute   INTEGER,
-                metadata      TEXT
-            );
-
             CREATE INDEX IF NOT EXISTS idx_memories_character
                 ON memories(character_id, occurred_at DESC);
             CREATE INDEX IF NOT EXISTS idx_memories_game_character
                 ON memories(game_id, character_id, occurred_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_shop_offers_category
-                ON shop_offers(game_id, category_id, sort_order);
-            CREATE INDEX IF NOT EXISTS idx_affection_events_character
-                ON affection_events(character_id, occurred_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_characters_game
-                ON characters(game_id, is_enabled, display_priority);
-            CREATE INDEX IF NOT EXISTS idx_characters_archetype
-                ON characters(archetype_id, updated_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_timeline_events_due
-                ON timeline_events(game_id, status, due_at_epoch_ms);
-            CREATE INDEX IF NOT EXISTS idx_timeline_events_type
-                ON timeline_events(game_id, event_type, status, due_at_epoch_ms);
-            CREATE INDEX IF NOT EXISTS idx_character_schedules_game
-                ON character_schedules(game_id, character_id, priority);
-            CREATE INDEX IF NOT EXISTS idx_party_tasks_game
-                ON party_tasks(game_id, status, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_party_task_steps_task
-                ON party_task_steps(task_id, step_order);
-            CREATE INDEX IF NOT EXISTS idx_channel_bindings_game
-                ON channel_bindings(game_id, platform, is_default DESC);
-            CREATE INDEX IF NOT EXISTS idx_agent_context_turns_lookup
-                ON agent_context_turns(game_id, character_id, timestamp_utc ASC);
 
             -- State System Tables
             CREATE TABLE IF NOT EXISTS state_defs (
@@ -792,163 +481,13 @@ public class DatabaseInitializer(
                 created_at  TEXT NOT NULL
             );
 
-            -- Asset System Tables
-            CREATE TABLE IF NOT EXISTS asset_defs (
-                id            TEXT PRIMARY KEY,
-                asset_type    TEXT NOT NULL,
-                namespace     TEXT NOT NULL,
-                mime_family   TEXT,
-                plugin_id     TEXT,
-                metadata_json TEXT,
-                created_at    TEXT NOT NULL,
-                updated_at    TEXT NOT NULL,
-                UNIQUE(asset_type, namespace)
-            );
-
-            CREATE TABLE IF NOT EXISTS asset_records (
-                id                TEXT PRIMARY KEY,
-                game_id           TEXT NOT NULL,
-                asset_type        TEXT NOT NULL,
-                namespace         TEXT NOT NULL,
-                owner_kind        TEXT NOT NULL,
-                owner_id          TEXT NOT NULL,
-                label             TEXT,
-                status            TEXT NOT NULL DEFAULT 'active',
-                source_type       TEXT NOT NULL DEFAULT 'manual',
-                primary_mime_type TEXT,
-                created_at        TEXT NOT NULL,
-                updated_at        TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS asset_blob_payloads (
-                id          TEXT PRIMARY KEY,
-                asset_id    TEXT NOT NULL,
-                mime_type   TEXT NOT NULL,
-                blob_role   TEXT NOT NULL DEFAULT 'primary',
-                blob_data   BLOB NOT NULL,
-                size_bytes  INTEGER NOT NULL,
-                sha256      TEXT,
-                is_primary  INTEGER NOT NULL DEFAULT 1,
-                created_at  TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS asset_meta_json (
-                id           TEXT PRIMARY KEY,
-                asset_id     TEXT NOT NULL,
-                meta_type    TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                created_at   TEXT NOT NULL
-            );
-
-            -- Relation System Tables
-            CREATE TABLE IF NOT EXISTS entity_links (
-                id                TEXT PRIMARY KEY,
-                game_id           TEXT NOT NULL,
-                from_entity_type  TEXT NOT NULL,
-                from_entity_id    TEXT NOT NULL,
-                to_entity_type    TEXT NOT NULL,
-                to_entity_id      TEXT NOT NULL,
-                link_type         TEXT NOT NULL,
-                metadata_json     TEXT,
-                created_at        TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS unlock_records (
-                id            TEXT PRIMARY KEY,
-                game_id       TEXT NOT NULL,
-                owner_kind    TEXT NOT NULL,
-                owner_id      TEXT NOT NULL,
-                entity_type   TEXT NOT NULL,
-                entity_id     TEXT NOT NULL,
-                unlock_type   TEXT NOT NULL,
-                metadata_json TEXT,
-                unlocked_at   TEXT NOT NULL
-            );
-
-            -- Indexes for new tables
             CREATE INDEX IF NOT EXISTS idx_state_values_lookup
                 ON state_values(game_id, owner_kind, owner_id);
             CREATE INDEX IF NOT EXISTS idx_state_values_namespace
                 ON state_values(game_id, namespace);
             CREATE INDEX IF NOT EXISTS idx_state_change_logs_owner
                 ON state_change_logs(game_id, owner_kind, owner_id);
-            CREATE INDEX IF NOT EXISTS idx_asset_records_type
-                ON asset_records(game_id, asset_type);
-            CREATE INDEX IF NOT EXISTS idx_asset_records_owner
-                ON asset_records(game_id, owner_kind, owner_id);
-            CREATE INDEX IF NOT EXISTS idx_entity_links_from
-                ON entity_links(game_id, from_entity_type, from_entity_id);
-            CREATE INDEX IF NOT EXISTS idx_entity_links_to
-                ON entity_links(game_id, to_entity_type, to_entity_id);
             """;
         await cmd.ExecuteNonQueryAsync();
-    }
-
-    private static async Task EnsureInventoryScopedByGameAsync(SqliteConnection conn)
-    {
-        var inventorySql = await GetTableSqlAsync(conn, "inventory");
-        if (string.IsNullOrWhiteSpace(inventorySql))
-            return;
-
-        if (ContainsColumn(inventorySql!, "game_id"))
-        {
-            await using var createIndex = conn.CreateCommand();
-            createIndex.CommandText = "CREATE INDEX IF NOT EXISTS idx_inventory_game ON inventory(game_id)";
-            await createIndex.ExecuteNonQueryAsync();
-            return;
-        }
-
-        await using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
-
-        await using (var create = conn.CreateCommand())
-        {
-            create.Transaction = tx;
-            create.CommandText = """
-                CREATE TABLE inventory_new (
-                    game_id TEXT NOT NULL DEFAULT '',
-                    item_id TEXT NOT NULL,
-                    quantity INTEGER DEFAULT 0,
-                    PRIMARY KEY (game_id, item_id)
-                )
-                """;
-            await create.ExecuteNonQueryAsync();
-        }
-
-        await using (var migrate = conn.CreateCommand())
-        {
-            migrate.Transaction = tx;
-            migrate.CommandText = """
-                INSERT INTO inventory_new (game_id, item_id, quantity)
-                SELECT
-                    COALESCE(NULLIF((SELECT id FROM game_state LIMIT 1), ''), ''),
-                    item_id,
-                    quantity
-                FROM inventory
-                """;
-            await migrate.ExecuteNonQueryAsync();
-        }
-
-        await using (var dropOld = conn.CreateCommand())
-        {
-            dropOld.Transaction = tx;
-            dropOld.CommandText = "DROP TABLE inventory";
-            await dropOld.ExecuteNonQueryAsync();
-        }
-
-        await using (var rename = conn.CreateCommand())
-        {
-            rename.Transaction = tx;
-            rename.CommandText = "ALTER TABLE inventory_new RENAME TO inventory";
-            await rename.ExecuteNonQueryAsync();
-        }
-
-        await using (var createIndex = conn.CreateCommand())
-        {
-            createIndex.Transaction = tx;
-            createIndex.CommandText = "CREATE INDEX IF NOT EXISTS idx_inventory_game ON inventory(game_id)";
-            await createIndex.ExecuteNonQueryAsync();
-        }
-
-        await tx.CommitAsync();
     }
 }

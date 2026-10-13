@@ -30,6 +30,10 @@ public sealed record SessionDto
 }
 
 /// <summary>决策预算覆盖（wire 镜像内核 <c>DecisionBudgets</c>；null 字段用服务端默认）。</summary>
+/// <remarks>
+/// 服务端会**夹取**所有值到安全区间（上限见 <c>openLuo.Server.TurnBudgetPolicy</c>）：
+/// 延迟与并发是资源控制，不能由单个客户端无限放宽。夹取后的真实值见回合轨迹。
+/// </remarks>
 public sealed record DecisionBudgetsDto
 {
     public int? MaxDecisions { get; init; }
@@ -38,15 +42,14 @@ public sealed record DecisionBudgetsDto
     public double? OverallDeadlineSec { get; init; }
     public double? StepIdleTimeoutSec { get; init; }
     public int? MaxToolRetries { get; init; }
-    public int? MaxSkillLoadsPerTurn { get; init; }
 }
 
 /// <summary>回合请求（wire 镜像内核 <c>TurnRequest</c>）。</summary>
 /// <remarks>
-/// **v1 只消费**：<c>TurnId/ActorId/SourceId/ChannelId/SenderName/Text/Blocks</c>
-/// （映射见 <c>HubServer.RunTurnStreamAsync</c>）。其余字段
-/// （<c>Meta/Budgets/UserId/Mentions/ThreadId/IdempotencyKey</c>）目前**只被反序列化、不被使用**：
-/// 客户端传入不报错但没有任何效果，也不得依赖其语义（详见 docs/architecture/hub-protocol.md §7.2）。
+/// **已消费**：<c>TurnId/ActorId/SourceId/ChannelId/SenderName/Text/Blocks/Budgets</c>
+/// （映射见 <c>HubServer.RunTurnStreamAsync</c>；Budgets 经服务端夹取）。
+/// **仍未实现**的字段（<c>Meta/UserId/Mentions/ThreadId/IdempotencyKey</c>）只被反序列化、
+/// 不产生任何效果，客户端不得依赖其语义（详见 docs/architecture/hub-protocol.md §7.2）。
 /// </remarks>
 public sealed record TurnRequestDto
 {
@@ -69,19 +72,26 @@ public sealed record TurnRequestDto
     /// <summary>多模态块（image/audio/file 等原始结构）。</summary>
     public IReadOnlyList<JsonNode>? Blocks { get; init; }
 
-    /// <summary>平台元数据（scene/sender/channel 等）。**v1 未实现**：不透传到内核上下文。</summary>
+    /// <summary>平台元数据（scene/sender/channel 等）：透传到内核 `TurnRequest.Meta` → 上下文构建的 `Extras`（贡献者可读）。</summary>
     public IReadOnlyDictionary<string, JsonNode?>? Meta { get; init; }
 
-    /// <summary>决策预算覆盖。**v1 未实现**：不映射到内核 <c>DecisionBudgets</c>。</summary>
+    /// <summary>决策预算覆盖（服务端夹取后转内核 <c>DecisionBudgets</c>；null 用服务端默认）。</summary>
     public DecisionBudgetsDto? Budgets { get; init; }
 
-    /// <summary>发送者稳定身份（平台用户 id）。**v1 未实现**：不参与身份/记忆隔离（隔离键是会话 <c>subjectId</c>）。</summary>
+    /// <summary>
+    /// 发送者稳定身份（平台用户 id，如 QQ 号）：映射到内核 <c>TurnRequest.UserId</c>，
+    /// 用于历史归因（<c>speaker_id</c>）与记忆的 User 域分区（<c>subjectId@userId</c>，跨会话）。
+    /// 为空时回退旧行为（归因到会话主体）。桌面三端可用 <c>OPENLUO_USER_ID</c> 提供。
+    /// </summary>
     public string? UserId { get; init; }
 
-    /// <summary>被 @ 的目标（userId 或角色 id）。**v1 未实现**：Hub 丢弃（@ 识别在 QQ 桥侧完成）。</summary>
+    /// <summary>被 @ 的目标（userId 或角色 id）：透传到内核 `TurnRequest.Mentions`（@ 识别仍在平台侧完成）。</summary>
     public IReadOnlyList<string>? Mentions { get; init; }
 
-    /// <summary>会话内线程 id。**v1 未实现**：不参与线程隔离。</summary>
+    /// <summary>
+    /// 会话内线程 id：映射到内核 <c>TurnRequest.ThreadId</c> 并随历史落库
+    /// （v1 只记录，**不**切分存储）。桌面三端可用 <c>OPENLUO_THREAD_ID</c> 提供。
+    /// </summary>
     public string? ThreadId { get; init; }
 
     /// <summary>幂等键。**v1 未实现**：无幂等表，重复提交会重复执行（见协议文档 §4.6）。</summary>

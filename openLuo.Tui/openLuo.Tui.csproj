@@ -15,6 +15,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- TUI 的回合构造（BuildTurnRequest）无终端依赖，交由客户端测试工程直接断言身份是否贯穿到 DTO -->
+    <InternalsVisibleTo Include="openLuo.Cli.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\openLuo.Client\openLuo.Client.csproj" />
     <ProjectReference Include="..\openLuo.Protocol\openLuo.Protocol.csproj" />
   </ItemGroup>

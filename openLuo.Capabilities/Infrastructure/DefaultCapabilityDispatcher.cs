@@ -80,7 +80,7 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
         {
             ct.ThrowIfCancellationRequested();
             var slice = parallel.Skip(i).Take(parallelLimit).ToList();
-            var tasks = slice.Select(call => InvokeSafelyAsync(call, snapshot, executionContext, ct, toolMaxRetries)).ToList();
+            var tasks = slice.Select(call => InvokeSafelyAsync(call, snapshot, executionContext, ct, toolMaxRetries, budget.StepIdleTimeout)).ToList();
             var results = await Task.WhenAll(tasks);
             for (var j = 0; j < slice.Count; j++)
                 orderedResults[orderIndex[slice[j].InvocationId]] = results[j];
@@ -91,7 +91,7 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
         {
             foreach (var call in validation.SerializedCalls)
             {
-                orderedResults[orderIndex[call.InvocationId]] = await InvokeSafelyAsync(call, snapshot, executionContext, ct, toolMaxRetries);
+                orderedResults[orderIndex[call.InvocationId]] = await InvokeSafelyAsync(call, snapshot, executionContext, ct, toolMaxRetries, budget.StepIdleTimeout);
             }
         }
 
@@ -151,7 +151,8 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
         CapabilityCatalogSnapshot snapshot,
         CapabilityExecutionContext baseContext,
         CancellationToken ct,
-        int maxRetries)
+        int maxRetries,
+        TimeSpan stepTimeout)
     {
         var descriptor = snapshot.ByCanonicalId.TryGetValue(call.CanonicalId, out var d) ? d : null;
 
@@ -199,9 +200,14 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
                 $"[tool] start {call.CanonicalId} inv={call.InvocationId} attempt={attempt} provider={provider}");
 
             CapabilityResult result;
+            var stepCts = stepTimeout > TimeSpan.Zero
+                ? CancellationTokenSource.CreateLinkedTokenSource(ct)
+                : null;
+            if (stepCts is not null)
+                stepCts.CancelAfter(stepTimeout);
             try
             {
-                result = await invoker.InvokeAsync(call, executionContext, ct);
+                result = await invoker.InvokeAsync(call, executionContext, stepCts?.Token ?? ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -213,6 +219,20 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
                     Status = CapabilityStatus.Cancelled,
                     Success = false,
                     Error = "cancelled"
+                };
+            }
+            catch (OperationCanceledException) when (stepCts is { IsCancellationRequested: true })
+            {
+                // 单步工具超时（StepIdleTimeout，D41 预算落地）：挂死的工具（MCP/HTTP 无响应）
+                // 不再吃掉整个回合。算 Failed 语义（进重试路径）——超时多为瞬时。
+                _logger?.Warn("agent/dispatch",
+                    $"[tool] {call.CanonicalId} step timeout ({stepTimeout.TotalSeconds:0}s)");
+                result = new CapabilityResult
+                {
+                    InvocationId = call.InvocationId,
+                    Status = CapabilityStatus.Timeout,
+                    Success = false,
+                    Error = $"tool step timed out after {stepTimeout.TotalSeconds:0}s"
                 };
             }
             catch (Exception ex)
@@ -227,15 +247,22 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
                     Error = ex.Message
                 };
             }
+            finally
+            {
+                stepCts?.Dispose();
+            }
 
             LogToolOutcome(call.CanonicalId, provider, result, sw.ElapsedMilliseconds);
 
             // 成功/取消/校验拒绝即返回：成功重置计数；Rejected 是参数/业务校验失败
             // （确定性错误，如缺 id），重放同样参数只会重复失败——立即回填让模型纠错，
-            // 不为"多轮逐个成功"触发重试。只有 Failed（执行期瞬时错误）才进入重试。
+            // 不为"多轮逐个成功"触发重试。Timeout 同理不进重试：单步超时多意味着工具卡住，
+            // 重放只会把等待放大（maxRetries+1 倍）；瞬时网络抖动由工具自身/LLM 层重试兜住。
+            // 只有 Failed（执行期瞬时错误）才进入重试。
             if (result.Status is CapabilityStatus.Ok
                 or CapabilityStatus.Cancelled
-                or CapabilityStatus.Rejected)
+                or CapabilityStatus.Rejected
+                or CapabilityStatus.Timeout)
                 return result;
 
             // 连续失败：attempt 从 0 起，允许最多 maxRetries 次重放（attempt 已用重放次数）。
@@ -258,6 +285,8 @@ public sealed class DefaultCapabilityDispatcher : ICapabilityDispatcher
             SessionId = baseContext.SessionId,
             TurnId = baseContext.TurnId,
             SubjectId = baseContext.SubjectId,
+            // 身份/线程/会话键随每次调用下传（D45）：能力 invoker 据此知道"谁在说、在哪个域"
+            UserId = baseContext.UserId, ThreadId = baseContext.ThreadId, ConversationId = baseContext.ConversationId,
             SnapshotVersion = baseContext.SnapshotVersion,
             InvocationId = call.InvocationId,
             IdempotencyKey = call.IdempotencyKey,

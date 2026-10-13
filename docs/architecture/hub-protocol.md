@@ -311,6 +311,13 @@ Hub 在**任何鉴权判断之前**先做一层入口治理（实现于 `openLuo
 | WS | 每条命令计入同一套速率窗口（`hello` 必须放行，否则客户端连不上） | `8001 rate.limited`（不断开） |
 | WS | `session.subscribe` / `session.resume` 的 `sessionId` 白名单 | `4003 session.invalid` |
 | WS | `turn.submit` 文本：**空文本放行**（支持"仅媒体块"回合）、含 NUL 或超长拒绝；严格模式下再过启发式 | `5004 turn.invalid` |
+| WS | `turn.submit` 的 `budgets`（客户端可覆盖回合预算）**夹取**到安全区间 | 静默夹取（不报错）；真值见回合轨迹 |
+
+**回合预算夹取**（`openLuo.Server/TurnBudgetPolicy`）：预算是资源控制，客户端可调小但不能放宽到无限——
+`maxDecisions ≤ 32`、`maxToolCallsPerDecision ≤ 20`、`maxConcurrentTools ≤ 8`、`overallDeadlineSec ≤ 3600`、
+`stepIdleTimeoutSec ≤ 900`（不给"关闭"档）、`maxToolRetries ≤ 5`；未传字段用配置/内核默认
+（`agent.chatRoundTimeoutSeconds` → `OverallDeadline`）。逐项含义见
+[`context-budget.md`](context-budget.md) §3–§4。
 
 **开关与默认值**（`security.jsonc`，模板见 `openLuo/data/config/security.example.jsonc`）：
 
@@ -356,7 +363,7 @@ Hub 在**任何鉴权判断之前**先做一层入口治理（实现于 `openLuo
 - 此类条目对客户端**不是可用契约**，不要据此实现；服务端行为：
   **已声明但未处理**的命令 → `2004 protocol.not_implemented`（`data`/`errorMsg` 说明 `type not handled: <type>`）；
   **规范里也没有**的 type → `2003 protocol.unknown_type`（`unknown type: <type>`）。
-- 客户端**不得**依赖标注为 `v1 未实现` 的字段（例如 `TurnRequest.budgets`、`presence.subscribe.sessionIds`），
+- 客户端**不得**依赖标注为 `v1 未实现` 的字段（例如 `TurnRequest.threadId`、`presence.subscribe.sessionIds`），
   服务端当前会静默忽略。
 - 反向要求：实现若先于规范落地，必须同步补本文档（禁止"只有代码知道"的行为）。
 
@@ -594,7 +601,7 @@ sequenceDiagram
 
 ### 6.4 扩展域语义
 
-**群聊 / 多用户**（**v1 未实现**：`userId`/`mentions`/`threadId` 均未接入内核，见 §7.2；`OutputDto.recipient` 与成员事件也无生产者）：`TurnRequestDto.userId` 是稳定身份（区别于平台显示名 `senderName`）；`mentions[]` 表被 @；`threadId` 在会话内切分线程（群内每用户 / 每话题独立上下文与记忆）。`OutputDto.recipient` 定向投递（`@某人`、私聊），`mentions[]` 随输出 @，`threadId` 回填所属线程。成员变更走 `member.joined` / `member.left`。
+**群聊 / 多用户**（D45 **已接入身份维度**：`userId`/`mentions`/`threadId` 均映射进内核，见 §7.2；仍缺 `OutputDto.recipient` 与成员事件的生产者）：`TurnRequestDto.userId` 是稳定身份（区别于平台显示名 `senderName`）——落库为 `speaker_id`（显示名单独存 `speaker_name`，渲染给模型仍用显示名），并作为记忆 User 域（`subjectId@userId`，**跨会话**）的分区键；`mentions[]` 表被 @；`threadId` 随历史落库（v1 只记录，**不**切分存储）。`OutputDto.recipient` 定向投递（`@某人`、私聊）与成员变更事件仍mber.joined` / `member.left`。
 
 **多客户端 / 在场**：一条连接可订阅多会话；Envelope `targetClientId` 把事件定向到某个客户端（null = 广播给订阅者）；`presence.subscribe` 后收 `presence.updated`。断线重连用 `session.resume{sinceSequence}` 补发未收输出（依赖 `output` 的 `sequence`，全局单调、不保证连续）。
 
@@ -677,17 +684,19 @@ Hub 侧：连接循环内的异常不再**静默**终止连接，而是打印 `[
   "senderName":"…",
   "text":"…",
   "blocks":[],                 // 多模态块（image/audio/file/card）
-  "meta":{ },                  // **v1 未实现**：不透传内核上下文（当前被丢弃）
-  "budgets":{ },               // **v1 未实现**：不映射到内核 DecisionBudgets（当前被丢弃）
-  "userId":"u_10001",          // **v1 未实现**：不参与身份/记忆隔离（隔离键是会话 `subjectId`）
-  "mentions":["rin"],          // **v1 未实现**：@ 识别目前在 QQ 桥侧完成，Hub 丢弃
-  "threadId":"t_…",            // **v1 未实现**：不参与线程隔离（当前被丢弃）
+  "meta":{ },                  // 已落地：透传内核 TurnRequest.Meta → 上下文 Extras
+  "budgets":{ },               // 已落地：转内核 DecisionBudgets，**服务端夹取**（上限见 §4.9 与 context-budget.md §3）
+  "userId":"u_10001",          // 已落地：稳定身份 → 历史归因（speaker_id）与记忆 User 域分区（D45）
+  "mentions":["rin"],          // 已落地：透传内核 TurnRequest.Mentions（@ 识别仍在 QQ 桥侧完成）
+  "threadId":"t_…",            // 已落地：随历史落库（v1 只记录，不切分存储）
   "idempotencyKey":"…"         // **v1 未实现**：无幂等表，见 §4.6
 }
 ```
 
-> **实现现状**：Hub 只把 `turnId / actorId / sourceId / channelId / senderName / text / blocks` 映射进内核
-> `TurnRequest`（`HubServer.RunTurnStreamAsync`）；上面六个字段**只被反序列化、不被使用**，传入不报错也无效果。
+> **实现现状**：Hub 把 `turnId / actorId / sourceId / channelId / senderName / text / blocks / budgets /
+> userId / threadId / mentions / meta` 映射进内核 `TurnRequest`（`HubServer.RunTurnStreamAsync`；
+> `budgets` 先经 `TurnBudgetPolicy.From` 夹取，身份字段见 `context-domains.md`）；
+> 仅 `idempotencyKey` 仍**只被反序列化、不被使用**（无幂等表）。
 
 ### 7.3 OutputItem（`output` 事件 / `turn.final.outputs[]`）
 
@@ -864,5 +873,7 @@ Hub 侧：连接循环内的异常不再**静默**终止连接，而是打印 `[
 | 14 | 收尾（2026-10-12） | ✅ **已实现**：世界状态**持久化**（端口 `IStatePersistence` → `hub.db.subject_state`，重启后版本与值保留）；四端上报投递回执（QQ 桥**在 OneBot 投递成功后**才 ack）；`openluo-tui`/`openluo-gui` 接入 `OPENLUO_CONVERSATION_ID`；架构检视产物 `docs/architecture/layers.md`（分层 / 依赖边 / 边界守卫 / 技术债） |
 | 15 | 入口治理（2026-10-12） | ✅ **已接线**：`RateLimiter`/`InputValidator` 由 `openLuo.Application` 移入 `openLuo.Server`（改为纯值构造，Server 不读配置），新增 `HubRequestGuard` + §4.9 —— HTTP/WS 限流（`8001`）、路径与 WS 会话 id 白名单（`4003`）、WS 帧上限（`2002`）、回合文本上限与严格模式（`5004`）；策略由 `security.jsonc` 的 `hub*` 键映射且热加载。测试 `HubSecurityGuardTests` 7 例 |
 | 16 | HTTP 面 REST 化 + 常量集中（2026-10-12） | ✅ **已实现**：路径只用**资源名词**、动作交给方法 —— `POST /v1/tokens` 取代动作式 `/v1/auth/token`；`PATCH /v1/config/{ns}` 取代 `POST`（部分更新）；`PATCH /v1/jobs/{id}`（`{status:"cancelled"}`）取代语义错位的 `DELETE`；上传改 `POST /v1/sessions/{id}/assets` + 标准 `Content-Disposition`，废弃 `?sessionId=` / `X-File-Name` / `?fileName=`。创建类回 **201 + `Location`**。路径 / 查询键 / 响应 `type` / id 白名单全部收敛到 `HttpPaths` / `HttpQueryKeys` / `HttpResponseTypes` / `HttpRules`（**禁止字面量**）；错误码 → HTTP 状态映射由 `ErrorCodes.HttpStatusOf` 单点持有；无生产者的 `DeliveryStates` 删除 |
+| 17 | 内核优化步 0：预算 + 真值轴（2026-10-13） | ✅ **已实现**：① **上下文预算成真** —— `ITokenCounter`（CJK 1 字 ≈ 1 token，不再 `Length/4` 低估 4 倍）、`IContextLimitsProvider`、`ContextRegionPolicies`（保底区域不裁 + 可裁按优先级**跳过式**填充，替代旧的区域序 `break` 级联丢弃）、`ContextBudgetSnapshot`（被裁明细 + `OverBudget`）；对话历史按剩余预算从最旧截断（至少保留最新一条）。② **配置真值** —— `agent.contextTokenBudget`/`contextConversationRetainCount`/`chatRoundTimeoutSeconds`/`pendingAbilityConfirmTimeoutSeconds` 全部接上（闭包 → 热加载）；六个零消费者配置段（`executors`/`timeouts`/`resilience`/`lifecycle`/`inter-agent`/`pluginRuntime`）与 `memoryRetrieval`/`memoryStore`/`security` 旧键删除。③ **回合预算上 wire** —— `turn.submit.budgets` 由 `TurnBudgetPolicy` 夹取后进内核；`maxToolCallsPerDecision`/`stepIdleTimeout` 从死字段变成真实执行点（后者给每个工具套 `CancelAfter`，默认 240s，超时不重试）。④ **LLM 参数真值** —— route 的 `temperature`/`maxTokens` 不再被硬编码默认顶掉。详见 [`context-budget.md`](context-budget.md) |
 
 仍开放：TLS 终结方式（Hub 直出 vs 反向代理）——实施 Server 时再定。
+

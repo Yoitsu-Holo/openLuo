@@ -13,17 +13,22 @@ public sealed class TuiApplication
     private readonly string _subjectId;
     private readonly string _agentId;
     private readonly string? _conversationId;
+    private readonly string? _userId;
+    private readonly string? _threadId;
 
     private HubClient? _client;
     private TextView _history = null!;
     private TextField _input = null!;
 
-    public TuiApplication(string hubUrl, string subjectId = "builtin-rin", string agentId = "companion", string? conversationId = null)
+    public TuiApplication(string hubUrl, string subjectId = "builtin-rin", string agentId = "companion",
+        string? conversationId = null, string? userId = null, string? threadId = null)
     {
         _hubUrl = hubUrl;
         _subjectId = subjectId;
         _agentId = agentId;
         _conversationId = conversationId;
+        _userId = userId;
+        _threadId = threadId;
     }
 
     public async Task RunAsync(CancellationToken ct = default)
@@ -58,6 +63,20 @@ public sealed class TuiApplication
         _client = null;
     }
 
+    /// <summary>
+    /// 构造回合请求：<c>UserId</c>（说话人稳定身份）与 <c>ThreadId</c>（会话内线程）随每一回合上送；
+    /// 为空即不序列化（协议 JSON 忽略 null）= 与从前逐字一致的旧行为。
+    /// 单独成方法是为了可测：TUI 的输入循环依赖 Terminal.Gui 初始化（无 TTY 的环境跑不起来），
+    /// 把"请求构造"这段纯逻辑抽出来，测试才能断言身份真的贯穿进了 DTO。
+    /// </summary>
+    internal TurnRequestDto BuildTurnRequest(string text) => new()
+    {
+        Text = text,
+        SourceId = "tui",
+        UserId = _userId,
+        ThreadId = _threadId,
+    };
+
     private async Task HandleAsync(string text, CancellationToken ct)
     {
         var client = _client;
@@ -66,7 +85,7 @@ public sealed class TuiApplication
 
         Append($"> {text}\n");
 
-        await foreach (var evt in client.StreamTurnAsync(new TurnRequestDto { Text = text, SourceId = "tui" }, ct))
+        await foreach (var evt in client.StreamTurnAsync(BuildTurnRequest(text), ct))
         {
             switch (evt.Type)
             {

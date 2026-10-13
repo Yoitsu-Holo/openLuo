@@ -47,7 +47,6 @@ public static class ConfigLoader
         }
 
         logger?.LogInformation("Config load complete");
-        merged.Normalize();
         return merged;
     }
 
@@ -104,26 +103,10 @@ public static class ConfigLoader
             result.Agent = overrideConfig.Agent.Clone();
         if (!AreEqual(overrideConfig.Security, defaultCfg.Security))
             result.Security = overrideConfig.Security.Clone();
-        if (!AreEqual(overrideConfig.Timeouts, defaultCfg.Timeouts))
-            result.Timeouts = overrideConfig.Timeouts.Clone();
-        if (!AreEqual(overrideConfig.Resilience, defaultCfg.Resilience))
-            result.Resilience = overrideConfig.Resilience.Clone();
-        if (!AreEqual(overrideConfig.Lifecycle, defaultCfg.Lifecycle))
-            result.Lifecycle = overrideConfig.Lifecycle.Clone();
         if (!AreEqual(overrideConfig.Log, defaultCfg.Log))
             result.Log = overrideConfig.Log.Clone();
-        if (!AreEqual(overrideConfig.MemoryRetrieval, defaultCfg.MemoryRetrieval))
-            result.MemoryRetrieval = overrideConfig.MemoryRetrieval.Clone();
-        if (!AreEqual(overrideConfig.MemoryStore, defaultCfg.MemoryStore))
-            result.MemoryStore = overrideConfig.MemoryStore.Clone();
-        if (!AreEqual(overrideConfig.InterAgent, defaultCfg.InterAgent))
-            result.InterAgent = overrideConfig.InterAgent.Clone();
-        if (!AreEqual(overrideConfig.PluginRuntime, defaultCfg.PluginRuntime))
-            result.PluginRuntime = overrideConfig.PluginRuntime.Clone();
         if (!AreEqual(overrideConfig.SqliteVec, defaultCfg.SqliteVec))
             result.SqliteVec = overrideConfig.SqliteVec.Clone();
-        if (!AreEqual(overrideConfig.Executors, defaultCfg.Executors))
-            result.Executors = overrideConfig.Executors.Clone();
 
         return result;
     }

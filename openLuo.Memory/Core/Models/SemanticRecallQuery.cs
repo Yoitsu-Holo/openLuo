@@ -9,6 +9,11 @@ public sealed class SemanticRecallQuery
     public string GameId { get; init; } = string.Empty;
     /// <summary>Current querying character.</summary>
     public string CharacterId { get; init; } = string.Empty;
+    /// <summary>
+    /// 本次召回归属的用户（说话人稳定身份）。非空时检索器只返回"该用户的私有记忆 + 未分区记忆"，
+    /// 空 = 不做用户过滤，行为与引入该维度之前逐字一致（老库、平台未提供 userId 的调用方）。
+    /// </summary>
+    public string? UserId { get; init; }
     /// <summary>Main natural language search text.</summary>
     public string SearchText { get; init; } = string.Empty;
     /// <summary>Auxiliary query tags extracted by upper layers.</summary>

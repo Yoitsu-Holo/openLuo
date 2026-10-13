@@ -5,6 +5,8 @@
 > 本文与测试不一致时，以测试为准并修本文。
 >
 > 检视时点：2026-10-12（`dfbc362`；§1 于同日的图拆分后同步）。规模数字为 `*.cs`（排除 `obj/`、`bin/`）实测。
+> 2026-10-13 内核优化步 0 追加：§5.1 的 T9–T11（配置假旋钮 / game.db 死 schema / 上下文预算失真），
+> 相关机制见 [`context-budget.md`](context-budget.md)。
 
 ---
 
@@ -54,24 +56,24 @@ graph TD
   end
   EXE --> APP
   APP --> SRV
-  APP --> L3
   APP --> L2
-  SRV --> CAP
+  APP --> L3
   SRV --> PRO
   EXT --> ABS
-  ABS --> CAP
   ABS --> CTX
   CTX --> CAP
   CTX --> FND
+  ABS --> CAP
   CAP --> FND
   BR --> CAP
+  SRV --> CAP
   AGT --> CAP
   AGT --> DOM
   MEM --> EMB
   MEM --> FND
+  DOM --> FND
   EMB --> FND
   LLM --> FND
-  DOM --> FND
   WS --> FND
 ```
 
@@ -98,15 +100,15 @@ graph TD
   TG["Terminal.Gui 1.19"]
   AV["Avalonia 11.3 + CommunityToolkit.Mvvm"]
   LLBOT["LLBot / OneBot 11（外部进程）"]
+  TUI --> TG
   CLI --> ANSI
   CLI --> CL
   TUI --> CL
   GUI --> CL
   QQ --> CL
   QQ --> OB
-  CL --> PRO
-  TUI --> TG
   GUI --> AV
+  CL --> PRO
   OB -->|WebSocket| LLBOT
 ```
 
@@ -116,15 +118,15 @@ graph TD
 
 ## 2. 硬性边界规则
 
-| #   | 规则                     | 内容                                                                                                                                                                               | 守护                                                                      |
-| --- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| B1  | **协议零依赖**           | `openLuo.Protocol` 只依赖 BCL：Envelope / 消息类型表 / DTO / 错误码是唯一跨边界契约                                                                                                | `Protocol_零本仓依赖`                                                     |
-| B2  | **客户端不含内核**       | 客户端只引用 `openLuo.Protocol` + `openLuo.Client`（+ 自有 UI 驱动、QQ 桥另加 `openLuo.OneBot`）；客户端之间不互相暴露                                                             | `Client_只依赖_Protocol`、`客户端不带内核且不互相暴露`                    |
-| B3  | **服务端不自带内核实现** | `openLuo.Server` 只依赖 `Protocol` + `Capabilities`（第二公理：把能力元数据/回合事件映射为 wire DTO 需要 `CapabilityKind`/`CapabilityResult` 等类型）；内核经 `IAgentRuntime` 注入 | `Server_不依赖宿主与内核其余部分`                                         |
-| B4  | **exe 只做入口**         | `openLuo`（服务端）只依赖 `openLuo.Application`（外加 `Protocol` 的编译期常量），不含内核代码、不含 UI 驱动                                                                        | `服务端exe只依赖Application_内核代码不得回流`、`服务端不含客户端与UI驱动` |
-| B5  | **扩展不引宿主 exe**     | `openLuo.Extension.*` 只经 `openLuo.Abstractions` + 模块工程交互                                                                                                                   | `扩展_不依赖宿主exe`                                                      |
-| B6 | **装配层不反向** | `openLuo.Application` 不依赖宿主 exe、不引客户端、不拉 UI 驱动 | `Application_是内核装配层_不反向依赖宿主与客户端` |
-| B7 | **常量集中在 Protocol；HTTP 面 REST** | HTTP 面的**路径 / 查询键 / 响应 `type` / 资源 id 白名单 / 标准头与媒体类型**全部取自 Protocol 的 `HttpPaths` / `HttpQueryKeys` / `HttpResponseTypes` / `HttpRules`，端点与客户端**不得**写字面量；错误码 → HTTP 状态码映射单点在 `ErrorCodes.HttpStatusOf`；语义遵循 REST：路径只放资源名词（动作交给方法）、创建回 `201 + Location`、查询串不承载资源身份 | `HttpSurfaceTests`（5 例） |
+| #   | 规则                                  | 内容                                                                                                                                                                                                                                                                                                                                                       | 守护                                                                      |
+| --- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| B1  | **协议零依赖**                        | `openLuo.Protocol` 只依赖 BCL：Envelope / 消息类型表 / DTO / 错误码是唯一跨边界契约                                                                                                                                                                                                                                                                        | `Protocol_零本仓依赖`                                                     |
+| B2  | **客户端不含内核**                    | 客户端只引用 `openLuo.Protocol` + `openLuo.Client`（+ 自有 UI 驱动、QQ 桥另加 `openLuo.OneBot`）；客户端之间不互相暴露                                                                                                                                                                                                                                     | `Client_只依赖_Protocol`、`客户端不带内核且不互相暴露`                    |
+| B3  | **服务端不自带内核实现**              | `openLuo.Server` 只依赖 `Protocol` + `Capabilities`（第二公理：把能力元数据/回合事件映射为 wire DTO 需要 `CapabilityKind`/`CapabilityResult` 等类型）；内核经 `IAgentRuntime` 注入                                                                                                                                                                         | `Server_不依赖宿主与内核其余部分`                                         |
+| B4  | **exe 只做入口**                      | `openLuo`（服务端）只依赖 `openLuo.Application`（外加 `Protocol` 的编译期常量），不含内核代码、不含 UI 驱动                                                                                                                                                                                                                                                | `服务端exe只依赖Application_内核代码不得回流`、`服务端不含客户端与UI驱动` |
+| B5  | **扩展不引宿主 exe**                  | `openLuo.Extension.*` 只经 `openLuo.Abstractions` + 模块工程交互                                                                                                                                                                                                                                                                                           | `扩展_不依赖宿主exe`                                                      |
+| B6  | **装配层不反向**                      | `openLuo.Application` 不依赖宿主 exe、不引客户端、不拉 UI 驱动                                                                                                                                                                                                                                                                                             | `Application_是内核装配层_不反向依赖宿主与客户端`                         |
+| B7  | **常量集中在 Protocol；HTTP 面 REST** | HTTP 面的**路径 / 查询键 / 响应 `type` / 资源 id 白名单 / 标准头与媒体类型**全部取自 Protocol 的 `HttpPaths` / `HttpQueryKeys` / `HttpResponseTypes` / `HttpRules`，端点与客户端**不得**写字面量；错误码 → HTTP 状态码映射单点在 `ErrorCodes.HttpStatusOf`；语义遵循 REST：路径只放资源名词（动作交给方法）、创建回 `201 + Location`、查询串不承载资源身份 | `HttpSurfaceTests`（5 例）                                                |
 
 ---
 
@@ -179,8 +181,17 @@ graph TD
 | T7  | 文档漂移                                                                                               | ✅ 本次修正（README / hub-protocol / log-store / context-scope-risk / 本文件）                                                                                                                                                                                 |
 | T8  | 空目录 `openLuo.Application/Infrastructure/Runtime/`                                                   | ✅ 已删（本地未跟踪项）；`IGameStreams` 仍留在 `Core/Interfaces`（在用，后续挪 `Hosting/` 更顺）                                                                                                                                                               |
 
-### 5.2 仍在的债（均未阻塞当前功能）
+### 5.1b 已解决（2026-10-13，内核优化步 0「预算 + 真值轴 + 清渣」）
 
+| #   | 债                           | 事实 → 处置                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T9  | **配置假旋钮**（改了不生效） | `executors`（7 槽）/`timeouts`/`resilience`/`lifecycle`/`inter-agent`/`pluginRuntime` 六段 + `memoryRetrieval`/`memoryStore`（8 键）+ `security` 段 9 个旧键 + `agent.taskDispatchTimeoutSeconds`/`invocationConfirmTimeoutSeconds` **零消费者** → 全部删除（含 6 个 `.example.jsonc` 与 `ConfigLoader` 合并/`Config` 门面）。**接上**真值：`agent.chatRoundTimeoutSeconds`→`DecisionBudgets.OverallDeadline`、`agent.pendingAbilityConfirmTimeoutSeconds`→`HubServerOptions.ConfirmTimeoutSeconds`（闭包→热加载）                                                                                          |
+| T10 | **game.db 死 schema**        | 26 张表里 20 张零读写（旧插件宿主遗骸：`agent_contexts`/`agent_context_turns`/`game_state`/`inventory`/`party_tasks`/`asset_*` 等）+ 15 条死索引 + 13 条启动期空跑 `ALTER`（全 try/catch 吞异常）+ `memories_fts`（触发器维护但零查询，且每次启动 DROP 重建全表 seed）→ `DatabaseInitializer` 954 → 459 行；**不做破坏性迁移**（旧库的表保留，新库不再创建）                                                                                                                                                                                                                                                |
+| T11 | **上下文预算失真**           | 硬编码 24000 + 贡献者自报 `Length/4`（中文低估约 4 倍）+ 按区域序 `break`（后面区域的平台规则/能力说明被整段丢弃且无信号）+ 对话历史不入预算 → `ITokenCounter`/`IContextLimitsProvider`/`ContextRegionPolicies`(Pinned/Droppable)/`ContextBudgetSnapshot`；裁剪改"保底 + 优先级贪心跳过"，历史按剩余预算从最旧截断。详见 [`context-budget.md`](context-budget.md)                                                                                                                                                                                                                                           |
+| T12 | **旧 python 插件宿主遗骸**   | `openLuo/data/plugins/**`（20 个 `builtin_*` 目录 + `shared` + 合并说明，73 文件 / 544K）自初始提交起未再演进；全仓**无任何宿主机实现**能加载它（`IPluginRuntime` 零引用），Makefile 只对它跑 `black` → 已删除（仓库与 `publish` 里的同份副本；后者 `data/` 不在 `KEEP_ENTRIES`，下次发布自然消失）。替代品：`extensions/`（C# 进程内扩展）+ `mcp/`（MCP server）；`format-python` 目标改指向 `mcp`                                                                                                                                                                                                         |
+| T13 | **data/ 树里的死资产目录**   | 逐目录做"读者核实"后发现 12 个子目录只有 4 个有真实读取路径（`archetypes` 角色卡 / `stickers` 表情库 / `tts` 音色库 / `config` 模板），其余 8 个（`capabilities`、`commands`、`item-packs`、`schedules`、`skills`、`state-defs`、`subagents`、`tools`，共 15 文件 / ~64K）零读取路径——全属已删的旧插件宿主与旧 agent shell 遗骸，其功能已由「扩展代码注册的能力/处理器」与「sqlite 表（hub.db `schedules`、game.db `state_defs`）」取代或彻底消失 → 已删除（仓库 + `publish` 副本）。注意 `data/**` 会被原样发布（`openLuo.csproj` 的 `Content` + `Makefile` 的 `cp -r`），所以"发布目录里有"不能当读者证据 |
+
+### 5.2 仍在的债（均未阻塞当前功能）
 | #   | 债                             | 事实                                                                                                                                                                                                                               | 建议                                                                                                    |
 | --- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | T1  | `openLuo.Application` 集中度高 | 5278 行 / 35 文件 / 14 条依赖边；`Infrastructure/Database`（954 行）、`Infrastructure/Logging`（727 行）、`Persistence/HubStore`（484 行）、`Modules/AppShell`（1332 行）同处一工程                                                | 等出现"内核多宿主复用/进程分工"需求时按 `Infrastructure → openLuo.Persistence` 之类再拆；现在拆只增噪音 |

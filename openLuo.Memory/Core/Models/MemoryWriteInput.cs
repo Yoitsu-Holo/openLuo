@@ -10,6 +10,11 @@ public sealed class MemoryWriteInput
     public string GameId { get; init; } = string.Empty;
     /// <summary>Owner character of the new memory.</summary>
     public string CharacterId { get; init; } = string.Empty;
+    /// <summary>
+    /// 这条记忆归属的用户（说话人稳定身份）。空串/null = 不按用户分区（老的调用方与老数据语义）。
+    /// 有值后，只有同一用户（或未分区的记忆）能召回它。
+    /// </summary>
+    public string? UserId { get; init; }
     /// <summary>Requested visibility scope.</summary>
     public MemoryScope Scope { get; init; } = MemoryScope.CharacterPrivate;
     /// <summary>Raw event content provided by the caller.</summary>

@@ -12,6 +12,12 @@ public sealed class MemoryRecord
     public string GameId { get; init; } = string.Empty;
     /// <summary>Owner character of this memory record.</summary>
     public string OwnerCharacterId { get; init; } = string.Empty;
+    /// <summary>
+    /// 说话人的稳定身份（平台用户 id，如 QQ 号）；空串 = 平台未提供，记忆不按用户分区。
+    /// 隔离轴因此是 (game_id, character_id, user_id 非空?)：同角色面对不同用户时，
+    /// 私有记忆互不可见，而未分区（空 user_id）的记忆对所有用户可见——这是老库/旧写入的语义。
+    /// </summary>
+    public string UserId { get; init; } = string.Empty;
     /// <summary>Visibility / ownership scope of the memory.</summary>
     public MemoryScope Scope { get; init; } = MemoryScope.CharacterPrivate;
     /// <summary>UTC occurrence time of the underlying event.</summary>

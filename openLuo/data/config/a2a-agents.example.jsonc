@@ -1,0 +1,26 @@
+{
+  // A2A（Agent-to-Agent）远端 Agent 集合配置
+  // 宿主启动时按本文件注册远端能力源（文件缺失则跳过）：每个 agent 的能力注册为
+  //   a2a:{id}:{capabilityId}
+  // 进 [Capabilities] 供模型调用；连接失败只标记该源不可用（结构化降级，不阻塞宿主）。
+  //
+  // 字段：
+  //   id            必填，agent 标识（用于能力命名空间与日志）
+  //   url           必填，A2A 端点基地址
+  //   agentCardUrl  可选，Agent Card 地址；缺省按 A2A 约定从 url 推导
+  //   tenant        可选，多租户部署时的租户标识
+  //
+  // 说明：早期本仓有一份 a2a-agents 的读取实现却没有随包模板（用户无从得知该文件的存在与字段），
+  // 本文件补齐。本文件不参与 config/ 的「段合并」（它是按路径直读的整份配置，不是 AppConfig 的一段）。
+
+  "agents": [
+    {
+      "id": "example-remote",
+      "url": "http://127.0.0.1:9999/",
+      // 可选：Agent Card 地址；null = 按 A2A 约定从 url 推导
+      "agentCardUrl": null,
+      // 可选：多租户部署时的租户标识
+      "tenant": null
+    }
+  ]
+}

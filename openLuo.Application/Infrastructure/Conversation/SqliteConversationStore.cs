@@ -22,11 +22,26 @@ public sealed class SqliteConversationStore : IConversationStore
                 speaker_name TEXT NOT NULL, speaker_role TEXT NOT NULL, content TEXT NOT NULL,
                 timestamp_utc TEXT NOT NULL, game_day INTEGER NULL, game_minute INTEGER NULL,
                 blocks_json TEXT NULL, metadata_json TEXT NULL,
+                thread_id TEXT NULL,
                 PRIMARY KEY (session_id, turn_id)
             );
             CREATE INDEX IF NOT EXISTS ix_conversation_turns_session_time
                 ON conversation_turns(session_id, timestamp_utc DESC);
             """, cancellationToken: ct));
+
+        // 老库补列（幂等、非破坏）：thread_id 是 D45 新增的线程维度。
+        // speaker_id 语义已修正为**稳定身份**（历史行里曾是显示名）——老行不迁移，语义偏差无害。
+        foreach (var ddl in new[] { "ALTER TABLE conversation_turns ADD COLUMN thread_id TEXT NULL" })
+        {
+            try
+            {
+                await connection.ExecuteAsync(new CommandDefinition(ddl, cancellationToken: ct));
+            }
+            catch (SqliteException)
+            {
+                // 列已存在（老库或重复执行）
+            }
+        }
     }
 
     public async Task<IReadOnlyList<ConversationTurn>> GetRecentAsync(string sessionId, int limit, CancellationToken ct = default)
@@ -37,7 +52,8 @@ public sealed class SqliteConversationStore : IConversationStore
         var rows = await connection.QueryAsync<ConversationRow>(new CommandDefinition("""
             SELECT session_id SessionId, turn_id TurnId, speaker_id SpeakerId, speaker_name SpeakerName,
                    speaker_role SpeakerRole, content Content, timestamp_utc TimestampUtc,
-                   game_day GameDay, game_minute GameMinute, blocks_json BlocksJson, metadata_json MetadataJson
+                   game_day GameDay, game_minute GameMinute, blocks_json BlocksJson, metadata_json MetadataJson,
+                   thread_id ThreadId
             FROM conversation_turns WHERE session_id = @SessionId
             ORDER BY timestamp_utc DESC LIMIT @Limit;
             """, new { SessionId = sessionId, Limit = Math.Max(1, limit) }, cancellationToken: ct));
@@ -51,13 +67,13 @@ public sealed class SqliteConversationStore : IConversationStore
         await connection.OpenAsync(ct);
         await connection.ExecuteAsync(new CommandDefinition("""
             INSERT INTO conversation_turns
-                (session_id, turn_id, speaker_id, speaker_name, speaker_role, content, timestamp_utc, game_day, game_minute, blocks_json, metadata_json)
-            VALUES (@SessionId, @TurnId, @SpeakerId, @SpeakerName, @SpeakerRole, @Content, @TimestampUtc, @GameDay, @GameMinute, @BlocksJson, @MetadataJson)
+                (session_id, turn_id, speaker_id, speaker_name, speaker_role, content, timestamp_utc, game_day, game_minute, blocks_json, metadata_json, thread_id)
+            VALUES (@SessionId, @TurnId, @SpeakerId, @SpeakerName, @SpeakerRole, @Content, @TimestampUtc, @GameDay, @GameMinute, @BlocksJson, @MetadataJson, @ThreadId)
             ON CONFLICT(session_id, turn_id) DO UPDATE SET content = excluded.content, metadata_json = excluded.metadata_json;
             """, new
         {
             turn.SessionId, turn.TurnId, turn.SpeakerId, turn.SpeakerName, turn.SpeakerRole, turn.Content,
-            TimestampUtc = turn.TimestampUtc.ToString("O"), turn.GameDay, turn.GameMinute,
+            TimestampUtc = turn.TimestampUtc.ToString("O"), turn.GameDay, turn.GameMinute, turn.ThreadId,
             BlocksJson = turn.Blocks is { Count: > 0 } ? JsonSerializer.Serialize(turn.Blocks) : null,
             MetadataJson = turn.Metadata.Count > 0 ? JsonSerializer.Serialize(turn.Metadata) : null
         }, cancellationToken: ct));
@@ -67,6 +83,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         SessionId = row.SessionId, TurnId = row.TurnId, SpeakerId = row.SpeakerId, SpeakerName = row.SpeakerName,
         SpeakerRole = row.SpeakerRole, Content = row.Content, TimestampUtc = DateTimeOffset.Parse(row.TimestampUtc),
+        ThreadId = row.ThreadId,
         GameDay = row.GameDay, GameMinute = row.GameMinute,
         Blocks = DeserializeBlocks(row.BlocksJson),
         Metadata = Deserialize<Dictionary<string, string>>(row.MetadataJson) ?? new(StringComparer.OrdinalIgnoreCase)
@@ -186,5 +203,6 @@ public sealed class SqliteConversationStore : IConversationStore
         public string SpeakerRole { get; init; } = string.Empty; public string Content { get; init; } = string.Empty;
         public string TimestampUtc { get; init; } = string.Empty; public int? GameDay { get; init; } public int? GameMinute { get; init; }
         public string? BlocksJson { get; init; } public string? MetadataJson { get; init; }
+        public string? ThreadId { get; init; }
     }
 }
