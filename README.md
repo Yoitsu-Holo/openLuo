@@ -31,6 +31,10 @@ CLI / TUI / GUI / QQ 桥都是**各自独立的程序**（`openluo-cli` / `openl
 | [`docs/architecture/runtime-modules.md`](docs/architecture/runtime-modules.md) | **运行时模块划分（设计稿，未实施）**：Transport / Context（**容器 + 判定门 + Builder**）/ **UAC** / Worker 四模块与依赖 DAG、UAC 五个子职责、一个策略源三个执行缝、容器模型（含设备/健康等非文本容器）与**提示词缓存稳定性规则**、今天代码→未来归属 |
 | [`docs/architecture/skills-workflows.md`](docs/architecture/skills-workflows.md) | **技能与工作流**：目录注入 + 按需使用（`core:load_skill` / `core:run_workflow`）、文件化技能格式、扩展作者指南 |
 | [`docs/architecture/context-scope-risk.md`](docs/architecture/context-scope-risk.md) | 上下文「全局 + 局部」改造的风险识别与建议 |
+| [`docs/motion/README.md`](docs/motion/README.md) | **动作与表情系统（方案索引）**：本目录边界纪律、术语与坐标系约定、关键决策 D1–D13、落地方向 M1–M8、未决问题、**许可与复用边界** |
+| [`docs/motion/training-design.md`](docs/motion/training-design.md) | **动作与表情训练方案（设计稿，未实施）**：`Δt` 条件化、旋转空间 exp-map 表示、监督过插值器、局部+整体、表情三驱动与枢轴表示、参数量与数据账、验收指标、反模式清单 |
+| [`docs/motion/data-pipeline.md`](docs/motion/data-pipeline.md) | **动作数据管线（设计稿，未实施）**：预处理顺序、谱熵伪影判据、抗混叠重采样与解析求值、逐链截止频率、质量门限与划分纪律、离线/运行时核一致性 |
+| [`docs/motion/reference-hast-sec.md`](docs/motion/reference-hast-sec.md) | **参考实现证据**：HAST-SEC v0.1 的「文本 → 动作」四段式管线、实测规模与训练事实、可复用性三分、作者自述的验证盲区 |
 | [`docs/todos.md`](docs/todos.md) | **待办项与缺陷项（登记表）**：已核实的缺陷、已存在但未接线/未实现的待办、待裁决问题——各带证据与关闭判据 |
 
 ## 2. 技术栈
