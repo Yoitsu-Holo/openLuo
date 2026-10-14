@@ -172,7 +172,7 @@ HTTP body 与 WS 帧**共用同一结构**：
 | WS 握手   | 连接后**首帧** `hello` 必须携带 `token`；未通过前服务端不处理其它消息，超时关闭     |
 
 - 角色：`admin`（管理/目录全量）、`user`（自有会话）、`edge`（平台桥，代表多用户）。
-- v1 允许 `auth.anonymous` 开关用于本机开发（配置项 `server.allowAnonymous`）。
+- v1 允许 `auth.anonymous` 开关用于本机开发（环境变量 `OPENLUO_HUB_ALLOW_ANONYMOUS`）。
 
 **实现状态（已落地）**
 
@@ -181,7 +181,7 @@ HTTP body 与 WS 帧**共用同一结构**：
 - HTTP **admin-only** 路径：`/v1/config*`、`/v1/logs*`、`/v1/metrics`、`/v1/schedules*`、`POST|PATCH /v1/jobs`。
   未鉴权 → **401 + `3001`**；角色不足 → **403 + `3002`**。
 - WS：`hello.token` 校验，失败回 `3001` 并以 `PolicyViolation` 关闭。
-- 配置经环境变量（后续迁 `server.jsonc`）：`OPENLUO_HUB_ALLOW_ANONYMOUS`（默认 `true`）、`OPENLUO_HUB_ANONYMOUS_ROLE`、
+- 配置经环境变量（真值 = `security.jsonc` + `OPENLUO_HUB_*` 环境变量；`server.jsonc` 从未落地——未来若需要独立策略配置面，见 [`runtime-modules.md`](runtime-modules.md) M4/M10 的 `uac.jsonc`）：`OPENLUO_HUB_ALLOW_ANONYMOUS`（默认 `true`）、`OPENLUO_HUB_ANONYMOUS_ROLE`、
   `OPENLUO_HUB_SECRET`、`OPENLUO_HUB_API_KEYS`（`k1:admin,k2:user`）、`OPENLUO_HUB_TOKEN_TTL_MINUTES`；
   客户端经 **`OPENLUO_HUB_TOKEN`** 携带 token（`HubClient` 自动读取）。
 - token 为不透明令牌（`olt_<ULID>`）；**已落 `hub.db` 的 `tokens` 表**（决策 #3）——重启后已签发 token 仍有效，
@@ -267,7 +267,7 @@ HTTP body 与 WS 帧**共用同一结构**：
 | --- | --- | --- | --- |
 | `clientId` | 连接 | 一个客户端实例 / 连接（设备、进程） | `hello` |
 | `clientType` | 连接 | 形态：`cli\|tui\|gui\|web\|qq\|hub` | `hello` |
-| `subjectId` | 会话 | 会话主体（用户 / 玩家）；**记忆与状态的 owner（隔离键）** | `session.open` |
+| `subjectId` | 会话 | 会话主体（用户 / 玩家）；**记忆与状态的 owner（隔离键）**（空间模型下 owner 为 `ownerSpace`，见 [`context-spaces.md`](context-spaces.md) §2.3/§3.2） | `session.open` |
 | `agentId` | 会话 | 角色 / Agent 身份 | `session.open` |
 | `userId` | 回合 | 频道 / 群内**说话人**稳定 id（平台用户 id） | `turn.submit` |
 | `actorId` | 回合 | 回合发起人（`player` 或角色 id）；表现层语义 | `turn.submit` |
@@ -278,7 +278,7 @@ HTTP body 与 WS 帧**共用同一结构**：
 - 一个 `clientId` 可开/订阅**多个**会话；一个会话可被**多个** `clientId` 订阅（多端同看）。
 - `subjectId` 是记忆 / 状态的**隔离键**；`userId` 是会话内的**说话人身份**（一个会话可有多个）。
 - `token.role`（§4.4）决定可访问范围，见 §4.8。
-- 群聊场景：`subjectId` = 角色（如 `builtin-rin`），`userId` = 群成员 —— 二者的笛卡尔积才是「用户 × 角色」维度（当前内核仅按 `subjectId` 键控，见 `context-scope-risk.md` R3）。
+- 群聊场景：`subjectId` = 角色（如 `builtin-rin`），`userId` = 群成员 —— 二者的笛卡尔积才是「用户 × 角色」维度（记忆已按 `user_id` 维度键控，见 [`context-domains.md`](context-domains.md) §2/§5；空间模型下 owner 为 `ownerSpace`，见 [`context-spaces.md`](context-spaces.md) §3.2）。
 
 ### 4.8 权限矩阵
 
@@ -331,9 +331,8 @@ Hub 在**任何鉴权判断之前**先做一层入口治理（实现于 `openLuo
 | `hubStrictInputValidation` | `false` | 严格模式：把启发式（SQL 关键字 / `{}<>` 计数）也用于回合文本 |
 
 > **默认值取舍**：必须"真实生效但不误伤"——启发式对正常聊天会误判（聊到 `SELECT`、贴一段代码即中招），
-> 故只在对抗性接入场景打开；限流默认值则足以拦住脚本级滥用。同段的 `rateLimitPerMinute`/`burstLimit`/`maxInputLength`
-> 仍是**插件总线**那套配额，与 Hub 入口互不影响。
-> **尚未纳入**：插件权限强制、按 subject/租户的细分配额（见 §10 与 README 路线图）。
+> 故只在对抗性接入场景打开；限流默认值则足以拦住脚本级滥用。（旧键 `rateLimitPerMinute`/`burstLimit`/`maxInputLength` 与插件总线均已删除，配额真值只在 `security.jsonc` 的 `hub*` 键。）
+> **尚未纳入**：插件权限强制、按 subject/租户的细分配额（见 [`runtime-modules.md`](runtime-modules.md) §3（UAC）/[`context-spaces.md`](context-spaces.md) §4；登记 [`../todos.md`](../todos.md) T14）。
 
 ---
 
@@ -363,7 +362,7 @@ Hub 在**任何鉴权判断之前**先做一层入口治理（实现于 `openLuo
 - 此类条目对客户端**不是可用契约**，不要据此实现；服务端行为：
   **已声明但未处理**的命令 → `2004 protocol.not_implemented`（`data`/`errorMsg` 说明 `type not handled: <type>`）；
   **规范里也没有**的 type → `2003 protocol.unknown_type`（`unknown type: <type>`）。
-- 客户端**不得**依赖标注为 `v1 未实现` 的字段（例如 `TurnRequest.threadId`、`presence.subscribe.sessionIds`），
+- 客户端**不得**依赖标注为 `v1 未实现` 的字段（例如 `device.report` / `avatar.command` / `idempotencyKey`），
   服务端当前会静默忽略。
 - 反向要求：实现若先于规范落地，必须同步补本文档（禁止"只有代码知道"的行为）。
 
@@ -568,8 +567,8 @@ Hub 在**任何鉴权判断之前**先做一层入口治理（实现于 `openLuo
 | `notification`                                                   | `NotificationEvent`                                                              | 非回合绑定的服务端通知（提醒 / 告警；**v1 未实现**）          |
 | `turn.started`                                                   | `TurnStartedEvent`                                                               | 服务端发起的回合（`origin: scheduled\|event\|presence\|hub`） |
 | `presence.updated`                                               | `PresenceUpdatedEvent`                                                           | 在线状态变化（多客户端）                                      |
-| `member.joined` / `member.left`                                  | `MemberJoinedEvent` / `MemberLeftEvent`                                          | 群成员变更（**v1 未实现**）                                   |
-| `device.state`                                                   | `DeviceStateEvent`                                                               | 设备状态变化（**v1 未实现**）                                 |
+| `member.joined` / `member.left`                                  | `MemberJoinedEvent` / `MemberLeftEvent`                                          | 群成员变更（**v1 未实现**；见 [`context-spaces.md`](context-spaces.md) §5.7/M0 与 [`runtime-modules.md`](runtime-modules.md) §2.1，登记 [`../todos.md`](../todos.md) T2/T15）                                   |
+| `device.state`                                                   | `DeviceStateEvent`                                                               | 设备状态变化（**v1 未实现**；见 [`context-spaces.md`](context-spaces.md) §5.7/M0 与 [`runtime-modules.md`](runtime-modules.md) §2.1，登记 [`../todos.md`](../todos.md) T2/T15）                                 |
 | `job.accepted` / `job.progress` / `job.completed` / `job.failed` | `JobAcceptedEvent` / `JobProgressEvent` / `JobCompletedEvent` / `JobFailedEvent` | 长任务生命周期                                                |
 | `avatar.state` / `avatar.motion` / `avatar.lipsync`              | `AvatarStateEvent` / `AvatarMotionEvent` / `AvatarLipsyncEvent`                  | 角色表现（Live2D / 3D；**v1 未实现**）                        |
 | `audit.event`                                                    | `AuditEventDto`                                                                  | 审计事件（admin 订阅）                                        |
@@ -597,7 +596,7 @@ sequenceDiagram
 ```
 
 > 注意：`output` 事件在回合进行中**即发**（对应现有"音频生成即入队"），不等 `turn.final`。
-> **v1 未实现**：`output.ack` 回执（§6.1）——故上图不画回执；客户端收到 `output` 即视为已投递。
+> **`output.ack` 回执（§6.1）已落地**：四端（CLI / TUI / GUI / QQ 桥）均上报，QQ 桥**在 OneBot 投递成功后**才 ack；本图有意不画回执帧。
 
 ### 6.4 扩展域语义
 
@@ -605,7 +604,7 @@ sequenceDiagram
 
 **多客户端 / 在场**：一条连接可订阅多会话；Envelope `targetClientId` 把事件定向到某个客户端（null = 广播给订阅者）；`presence.subscribe` 后收 `presence.updated`。断线重连用 `session.resume{sinceSequence}` 补发未收输出（依赖 `output` 的 `sequence`，全局单调、不保证连续）。
 
-**多端共享同一段对话（会话寻址）**：以同一 `(subjectId, agentId, conversationId)` 调 `session.open` 即**复用同一会话**（§5.4 / §6.1）——PC 客户端与手机 QQ 私聊配同一 `conversationId` 就落在同一段对话里（两端都能看到彼此的消息，回合按会话串行）；不同 `conversationId` 仍各自独立。会话是**寻址单位**，记忆/世界状态的所有者仍是 `subjectId`（后续的用户认证与公共/私有记忆划分挂在 subjectId/actor 这一层，不需要改 client/hub）。
+**多端共享同一段对话（会话寻址）**：以同一 `(subjectId, agentId, conversationId)` 调 `session.open` 即**复用同一会话**（§5.4 / §6.1）——PC 客户端与手机 QQ 私聊配同一 `conversationId` 就落在同一段对话里（两端都能看到彼此的消息，回合按会话串行）；不同 `conversationId` 仍各自独立。会话是**寻址单位**，记忆/世界状态的所有者仍是 `subjectId`（后续的用户认证与公共/私有记忆划分挂在 subjectId/actor 这一层；主键换为空间，wire 增量见 [`context-spaces.md`](context-spaces.md) §5.2/§6）。
 
 **多端看到的状态**：世界状态按 `subjectId` 分区（与会话解耦，端点/事件都按会话解析出 subject）。回合结束后，Hub 只在该 subject 的状态**版本推进**时向「发起连接 + 该会话订阅者」推送 `state.updated`（`patch` 为相对上次广播变化的键）；新接入的一端用 `GET /v1/sessions/{id}/state` 取一次全量快照对齐即可（协议没有"订阅即快照"语义，也不每回合推全量）。
 
@@ -613,8 +612,7 @@ sequenceDiagram
 
 > **投递与 ack（多客户端关键语义）**：`output` 事件由 Hub **广播给该会话的所有订阅客户端**；`output.ack` 记录「**某一端**已成功投递」，**不因个别端未 ack 而阻塞**（内核队列已解耦，`Enqueue` 永不等待 ack，见 §11）。需「确保某端收到」用 `session.resume{sinceSequence}` 补读。
 >
-> **客户端现状**：内置客户端（CLI / QQ 桥）**尚未**主动上报 ack，因此 `session.resume` 会按"未确认投递"补发；
-> 是否接上 ack（例如 QQ 桥在 OneBot 投递成功后 ack）是后续的小项，协议与 Hub 侧已就绪。
+> **客户端现状**：四个内置客户端（CLI / TUI / GUI / QQ 桥）**均已**上报 ack；QQ 桥**在 OneBot 投递成功后**才 ack（"已成功投递"才名副其实，见决策 #14）。
 
 **实现状态（已落地）**
 
@@ -770,6 +768,7 @@ Hub 侧：连接循环内的异常不再**静默**终止连接，而是打印 `[
 >
 > **仍无触发者**：现有 6 个扩展的能力全部 `RiskLevel.Low` / `requiresConfirmation=false`，需能力侧
 > （插件 / MCP / 内建）声明 `RequiresConfirmation=true` 后走此流程。
+> （M2 将启用：群里默认拒绝 `Mutation`/`External`/`Delegation`，见 [`context-spaces.md`](context-spaces.md) M2 / [`runtime-modules.md`](runtime-modules.md) §3.1）
 
 ---
 
@@ -784,7 +783,7 @@ Hub 侧：连接循环内的异常不再**静默**终止连接，而是打印 `[
 
 - asset store：`{ assetId, mime, size, checksum(sha256), createdAt, ttl }`；**SQLite 持久化**（决策 #3）。
 - **访问控制**：`GET/DELETE /v1/assets/{id}` 需 Bearer token 并校验资产归属会话（越权 → `3002 auth.forbidden`）；`ttl` 到期清理。
-- **上传上限**：单资产大小由 `server.jsonc` 的 `assetMaxBytes` 控制，超限回 `7002 asset.too_large`。
+- **上传上限**：单资产大小由 `HubServerOptions.AssetMaxBytes` 控制（默认 16 MiB，代码常量），超限回 `7002 asset.too_large`。
 - 好处：WS 帧恒定小、支持断点/重试、多客户端共享同一资产、便于缓存、Hub 重启资产不丢。
 
 **实现状态（已落地）**
@@ -824,7 +823,7 @@ Hub 侧：连接循环内的异常不再**静默**终止连接，而是打印 `[
 | `IOutputQueue`(Enqueue/Read/Ack/Fail)              | ✅ **已解耦**：每会话日志 + `Enqueue` 永不阻塞 + `ReadSince` 续传；`Read` 循环 → 推 `output` 事件；`Ack/Fail` ← `output.ack/fail` 命令             |
 | `StreamTurnAsync`                                  | ✅ **已还原真流式**：`ICapabilityDecisionLoop.RunStreamAsync` 逐事件（`decision`/`tool_call`/`tool_result`/`output`）；回合以 per-session 闸串行化 |
 | `CapabilityCatalogSnapshot`/`CapabilityDescriptor` | ✅ `GET /v1/capabilities`（含 `CapabilityKind` / `SideEffectClass` 映射）                                                                        |
-| `SessionStore`（内存）                             | ✅ **已落 SQLite**（`hub.db.sessions`，`openLuo.Application/Composition/SessionStore.cs`）：含 `(subjectId, agentId, conversationId)` 反向索引 → **多端共享同一段对话** |
+| `SessionStore`（内存）                             | ✅ **已落 SQLite**（`hub.db.sessions`，`openLuo.Application/Composition/SessionStore.cs`）：含 `(subjectId, agentId, conversationId)` 反向索引 → **多端共享同一段对话**（`sessions` 无 `(subjectId, agentId, conversationId)` 唯一约束，见 [`../todos.md`](../todos.md) D4） |
 | `IStateTransaction` / `IStateReader`（内核状态）    | ✅ **已投影并持久化**：`GET /v1/sessions/{id}/state` + `state.updated`（按 subject 分区）；快照落 `hub.db.subject_state`（端口 `IStatePersistence`） |
 | `openLuo.Cli/Tui/Gui/Qqbot`（进程内直连）          | ✅ 改为 `openLuo.Client`（经 protocol 连 Hub）；QQ 桥另加 `openLuo.OneBot`                                                                        |
 | 宿主 `openLuo`（多入口 exe）                       | ✅ 拆为 `--serve`（Hub 服务端）与四个客户端可执行（`openluo-cli/tui/gui/qq`）；宿主不再聚合 UI 框架（`Program.cs` 50 行、零包依赖）                |
@@ -849,7 +848,7 @@ Hub 侧：连接循环内的异常不再**静默**终止连接，而是打印 `[
 | 中心服务式 | 单 Hub 多用户/多角色/多会话；客户端仅 I/O                                                    |
 | 联邦       | 多 Hub 互连，各自持有本地内核与状态                                                          |
 
-**端口/配置**（`server.jsonc`）：`listen`（`host:port`）、`tls`（cert/key 或反代）、`allowAnonymous`、`maxSessionsPerClient`、`heartbeatSec`、`assetTtlSec`、`assetMaxBytes`。
+**端口/配置**（真值 = `security.jsonc` + `OPENLUO_HUB_*` 环境变量；`server.jsonc` 从未落地）：`OPENLUO_HUB_LISTEN`（默认 `http://127.0.0.1:8674`）、鉴权键（`OPENLUO_HUB_ALLOW_ANONYMOUS` / `_ANONYMOUS_ROLE` / `_SECRET` / `_API_KEYS` / `_TOKEN_TTL_MINUTES`，§4.4）、`OPENLUO_ASSET_TTL_MINUTES`；心跳固定 `ProtocolInfo.DefaultHeartbeatSec`（20s）、单资产上限 `HubServerOptions.AssetMaxBytes`（16 MiB）；TLS 终结方式仍未定（见 §13 末）。
 
 ---
 

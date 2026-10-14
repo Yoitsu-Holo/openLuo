@@ -3,6 +3,7 @@
 > **状态**：步 1a（正确性）与步 1b（全局块缓存）**均已落地**：scope 契约 + 域键 + 身份落地 + 说话人稳定归因
 > + 记忆的用户维度 + 全局块缓存与失效（§8）。
 > **上游文档**：[`context-scope-risk.md`](context-scope-risk.md)（R1–R8 风险清单）、[`context-budget.md`](context-budget.md)（预算与裁剪）。
+> **演进设计**：[`context-spaces.md`](context-spaces.md)（空间模型：agent/user/group 与方向性可见性；**设计稿，未实施**）——本文记录的是**已落地**的四域。
 > 相关代码：`openLuo.AgentContext/Core/{ContextScope,ContextDomainKey,IContextContributor}.cs`、
 > `openLuo.Application/Composition/ComposedAgentRuntime.cs`、`openLuo.Server/HubServer.cs`、`openLuo.Memory/**`。
 
@@ -36,6 +37,8 @@ flowchart TD
 
 `ContextDomainKey`（`Scope` + `Key`）是唯一载体：谁要按域存取，就取对应 scope 的键。
 
+> 注（2026-10-14 审计）：空间模型下 `Session` 降级为**连接/绑定层**的 id（不再当主键），见 [`context-spaces.md`](context-spaces.md) §3.2。
+
 ## 3. 内容归属（谁属于哪个域）
 
 | 内容 | 域 | 说明 |
@@ -53,6 +56,10 @@ flowchart TD
 2. `IContextContributor.Scope` 用**接口默认实现**给出 `ContextScope.Session` → 既有扩展不用改也能编译（并在需要时显式声明 Global）。
 3. `speaker_id` 语义修正为"稳定 id"：**老行不迁移**（它们是历史文本，语义偏差无害），新行写入稳定 id；`SpeakerName` 单独保留显示名。
 4. 记忆表的用户维度是**新增列**（`user_id TEXT NOT NULL DEFAULT ''`），老库自动补列；老数据 `user_id=''` 视为"未分区"。
+
+> 注（2026-10-14 审计）：第 4 条的 `user_id=''` = "未分区（对**所有空间**可见）"这一语义**方向是错的**——
+> 它让记忆只剩"全局可见 / 不可见"两档。隐私后果与替代方案（三档 `sensitivity` + 方向性可见性）见
+> [`context-spaces.md`](context-spaces.md) X3 / §2.3 / §2.4；登记见 [`../todos.md`](../todos.md) T16。
 
 ## 5. 落地清单（步 1a）
 
@@ -78,9 +85,9 @@ flowchart TD
 | 项 | 为什么 |
 | --- | --- |
 | ~~**1b：全局贡献版本化快照**~~ | ✅ **已落地**，见 §8 |
-| Thread 的独立历史 | 群内线程语义（每用户/每话题独立历史 vs 共享历史+线程标签）还没定；当前只**记录** `threadId`，不切分存储。 |
-| 记忆的可见性细粒度（`MemoryScope` 扩维） | 与"公共/私有记忆"设计一起做（步 2），当前 `MemoryScope` 保持 `CharacterPrivate | Shared` 两档 |
-| 域键纳入 `hub.db` 索引与调度键 | 调度/作业当前按 sessionId 寻址；等有真实需求（"给某个用户定时提醒"）再扩。 |
+| Thread 的独立历史 | 群内线程语义（每用户/每话题独立历史 vs 共享历史+线程标签）还没定；当前只**记录** `threadId`，不切分存储。登记与关闭判据见 [`../todos.md`](../todos.md) T7；空间模型下的线程键（`(spaceId, threadId, 时间)`）见 [`context-spaces.md`](context-spaces.md) §3.2 |
+| 记忆的可见性细粒度（`MemoryScope` 扩维） | **已被空间模型接管**：三档 `sensitivity`（`Public`/`Protected`/`Private`）与方向性可见性见 [`context-spaces.md`](context-spaces.md) §2.3/§2.4，权限矩阵见 [`runtime-modules.md`](runtime-modules.md) §3.1；登记见 [`../todos.md`](../todos.md) T16（现状：`MemoryScope` 写入恒 0、不参与语义） |
+| 域键纳入 `hub.db` 索引与调度键 | **寻址改 `spaceId` 已定案**（需求已确认，不再是"等有真实需求"）：见 [`workers-and-hooks.md`](workers-and-hooks.md) §2.3（并需**真正消费 `Kind`/`Payload`**，今天被丢弃）与 [`../todos.md`](../todos.md) T11 |
 
 ## 8. 全局块缓存（步 1b）
 

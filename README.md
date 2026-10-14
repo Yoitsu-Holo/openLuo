@@ -21,13 +21,17 @@ CLI / TUI / GUI / QQ 桥都是**各自独立的程序**（`openluo-cli` / `openl
 | 文档 | 内容 |
 | --- | --- |
 | [`README.md`](README.md) | 总览：技术栈、分层、配置、日志、构建发布、测试、路线图 |
-| [`docs/architecture/layers.md`](docs/architecture/layers.md) | **架构检视**：分层图、实测依赖边、6 条边界规则、技术债清单 |
+| [`docs/architecture/layers.md`](docs/architecture/layers.md) | **架构检视**：分层图、实测依赖边、7 条边界规则（B1–B7）、技术债清单 |
 | [`docs/architecture/hub-protocol.md`](docs/architecture/hub-protocol.md) | 中心 Hub 架构 + **Wire 协议 v1**（唯一跨边界契约，含实现状态标注） |
 | [`docs/architecture/log-store.md`](docs/architecture/log-store.md) | 日志存储：热库（SQLite + FTS5）+ 冷文件 + 保留策略 |
 | [`docs/architecture/context-budget.md`](docs/architecture/context-budget.md) | **上下文预算**：token 计数口径、保底/可裁区域、裁剪算法、被裁明细、配置真值表 |
 | [`docs/architecture/context-domains.md`](docs/architecture/context-domains.md) | **上下文域键**：Global/Session/Thread/User 四个域的语义、键形状、内容归属与身份（userId）落地 |
+| [`docs/architecture/context-spaces.md`](docs/architecture/context-spaces.md) | **上下文空间（设计稿，未实施）**：agent/user/group 三类空间、制品归属与方向性可见性、发布（写时派生）与 detail/summary、权限分层与主体确认、推理任务下发与迁移路径 |
+| [`docs/architecture/workers-and-hooks.md`](docs/architecture/workers-and-hooks.md) | **Worker 与 Hook（设计稿，未实施）**：执行面边界——worker 声明/Run/统一触发源（事件·定时·随机）/上下文读写契约、hook 挂点与三种语义（观察·拦截·反应）、多 worker 并发约束 |
+| [`docs/architecture/runtime-modules.md`](docs/architecture/runtime-modules.md) | **运行时模块划分（设计稿，未实施）**：Transport / Context（**容器 + 判定门 + Builder**）/ **UAC** / Worker 四模块与依赖 DAG、UAC 五个子职责、一个策略源三个执行缝、容器模型（含设备/健康等非文本容器）与**提示词缓存稳定性规则**、今天代码→未来归属 |
 | [`docs/architecture/skills-workflows.md`](docs/architecture/skills-workflows.md) | **技能与工作流**：目录注入 + 按需使用（`core:load_skill` / `core:run_workflow`）、文件化技能格式、扩展作者指南 |
 | [`docs/architecture/context-scope-risk.md`](docs/architecture/context-scope-risk.md) | 上下文「全局 + 局部」改造的风险识别与建议 |
+| [`docs/todos.md`](docs/todos.md) | **待办项与缺陷项（登记表）**：已核实的缺陷、已存在但未接线/未实现的待办、待裁决问题——各带证据与关闭判据 |
 
 ## 2. 技术栈
 
@@ -92,7 +96,7 @@ CLI / TUI / GUI / QQ 桥都是**各自独立的程序**（`openluo-cli` / `openl
 - **多端上下文**：会话按 `(subjectId, agentId, conversationId)` **复用** → PC 客户端与手机 QQ 私聊共享同一段对话；世界状态只读投影（`GET /v1/sessions/{id}/state` + `state.updated`，按 subject 分区、只推变化键、**快照持久化**）；`output.ack` / `output.fail` 投递回执（QQ 桥在 OneBot 真正发出后才 ack）；`turn.cancel` 取消进行中回合；`presence.subscribe{sessionIds}` 按会话过滤在场。详见 hub-protocol §5.4 / §6.1 / §6.2 / §6.4。
 - **Hub 持久化**：`hub.db`（SQLite WAL，独立于业务 `game.db`）承载会话 / 作业 / 调度 / 令牌 / 轨迹 / 世界状态快照；重启**保守恢复**（会话恢复、进行中作业标记 failed、令牌仍有效）。
 - **入口治理**：Hub 在**鉴权之前**限流 + 输入校验（`security.jsonc` 的 `hub*` 键，可热加载）：HTTP/WS 每 key 速率（`429 + 8001`）、路径与 WS 会话 id 白名单（`4003`）、单帧上限（`2002`）、回合文本上限与严格模式（`5004`）——详见 hub-protocol §4.9。
-- **技能与工作流**：每轮上下文注入**摘要目录**（`[Skills]` / `[Workflows]` / `[RemoteAgents]`）；技能用 `core:load_skill` 按 id **登记引用**，正文随后以 `[LoadedSkills]` 系统块注入（**引用展开**：上下文里永远是最新版本、正文不算对话内容、走可裁的系统块预算），用完可用 `core:unload_skill` 卸载；工作流用 `core:run_workflow` 黑盒执行多步编排。技能有两个来源：扩展 `AddSkill(...)`（代码侧）与 **`data/skills/*.md`**（文件侧，**加/改技能不用重编译**，**重启即更新**——有意不做热加载）；工作流与它的节点处理器必须成对注册。详见 [`docs/architecture/skills-workflows.md`](docs/architecture/skills-workflows.md)。
+- **技能与工作流**：每轮上下文注入**摘要目录**（`[Skills]` / `[Workflows]` / `[RemoteAgents]`）；技能用 `core:load_skill` 按 id **登记引用**，正文随后以 `[LoadedSkills]` 系统块注入（**引用展开**：上下文里永远是最新版本、正文不算对话内容、走可裁的系统块预算），用完可用 `core:unload_skill` 卸载；工作流用 `core:run_workflow` 黑盒执行多步编排。技能有两个来源：扩展 `AddSkill(...)`（代码侧）与 **`data/skills/*.md`**（文件侧，**加/改技能不用重编译**，**重启即更新**——有意不做热加载）；工作流与它的节点处理器必须成对注册。详见 [`docs/architecture/skills-workflows.md`](docs/architecture/skills-workflows.md)。（目录与登记已接线；**调用未绑定 invoker**，端到端尚不可用，见 [`docs/todos.md`](docs/todos.md) D1）
 - **协议域**：会话、回合流式、输出与资产、能力目录、配置（`GET` / `PATCH` / `DELETE`）、作业（`/v1/jobs`）、调度（`/v1/schedules`）、观测（`/v1/metrics` / `/v1/traces`）、日志（`/v1/logs`、`/v1/logs/archive`）、状态投影、鉴权（`POST /v1/tokens`）——详见 `docs/architecture/hub-protocol.md`。
   **HTTP 面遵循 REST**：路径只用资源名词（动作交给方法）、创建回 `201 + Location`、查询串只承载过滤/分页/视图；
   路径、查询键、响应 `type`、资源 id 白名单全部是 Protocol 常量（`HttpPaths` / `HttpQueryKeys` / `HttpResponseTypes` / `HttpRules`），
@@ -256,25 +260,25 @@ cd publish/linux-x64 && ./openluo-qq             # 另开终端启动 QQ bot（�
 - [x] QQ bot 生产入口（消息收发、多模态分段、`[recv]`/`[send]` 日志、断线自愈）
 - [x] Inter-Agent 最小协议（`ask_character`）
 - [x] 日志（双格式 + 热库/冷文件 + 检索端点 + 14 天/20 万保留）、观测（`/v1/metrics` / `/v1/traces`）、审计事件
-- [x] **中心 Hub + 瘦客户端**：Wire 协议 v1、鉴权（token/角色/admin 前缀）、会话持久化、资产（assetRef）、作业与调度（cron）、高危能力确认握手
+- [x] **中心 Hub + 瘦客户端**：Wire 协议 v1、鉴权（token/角色/admin 前缀）、会话持久化、资产（assetRef）、调度（cron）已落地、**作业无处理器**（零 `IJobHandler`，见 [`docs/todos.md`](docs/todos.md) T6）、高危能力确认握手
 - [x] **多端上下文**：会话复用（多端共享同一段对话）、世界状态投影与持久化、投递回执、回合取消、presence 过滤
 - [x] **入口治理**：鉴权前限流 + 输入校验（HTTP/WS 同一套策略，`security.jsonc` 热加载，错误码 `8001` / `4003` / `5004` / `2002`）
 - [x] **工程结构**：服务端/客户端拆分（n+1 独立程序）、抽 `openLuo.Application`、依赖收敛、`ArchitectureBoundaryTests` 守边界、测试归位 `tests/`、playground 清瘦且不再依赖宿主 exe
 - [x] **内核优化步 0（预算 + 真值轴）**：上下文预算成真（token 计数口径、保底区域不裁 + 被裁逐条记账、历史纳入预算）、配置真值化（删除 6 个零消费配置段与 8 个假键、接上 4 个真键、LLM route 的 temperature/maxTokens 不再被硬编码顶掉）、回合预算上 wire 并由服务端夹取、game.db 死 schema 清渣（`DatabaseInitializer` 954 → 459 行）、**旧 python 插件宿主遗骸删除**（`openLuo/data/plugins`，73 文件；其能力已由 `extensions/` 的 C# 扩展与 `mcp/` 的 MCP server 取代）
-- [x] **技能与工作流接线**：目录注入（`[Skills]`/`[Workflows]`/`[RemoteAgents]`）+ 按需使用（`core:load_skill` 取正文、`core:run_workflow` 黑盒编排）+ 文件化技能（`data/skills/*.md`，加技能不用重编译）+ 工作流节点处理器注册入口
+- [x] **技能与工作流接线**：目录注入（`[Skills]`/`[Workflows]`/`[RemoteAgents]`）+ 按需使用（`core:load_skill` 取正文、`core:run_workflow` 黑盒编排）+ 文件化技能（`data/skills/*.md`，加技能不用重编译）+ 工作流节点处理器注册入口（目录与登记已接线；**调用未绑定 invoker**，端到端尚不可用，见 [`docs/todos.md`](docs/todos.md) D1）
 - [x] 构建与发布（`make publish` 平铺 n+1 份 + 白名单保护 + 构建加速）
 
 ### 未完成
 
 - [ ] Hub ↔ Hub 联邦（协议已定，见 hub-protocol §10）
-- [ ] 上下文「全局 + 局部」分层（风险清单见 `docs/architecture/context-scope-risk.md`）
-- [ ] 插件视角世界状态与内核状态事务的键控统一（建议与「公共/私有记忆」一并设计）
-- [ ] 玩家主对话 / 角色间 backchannel 线程隔离
-- [ ] 角色自主多 Agent 协作增强（`delegate_character_task` / `consult_party`）
+- [ ] 上下文**空间模型**（四域已落地，剩余空间/可见性一半；交接见 [`context-scope-risk.md`](docs/architecture/context-scope-risk.md) L10–L11 与 **完整设计稿** [`docs/architecture/context-spaces.md`](docs/architecture/context-spaces.md)——agent/user/group 三类空间、制品归属与方向性可见性、发布与摘要、权限分层与主体确认、推理任务下发）
+- [ ] 插件视角世界状态与内核状态事务的键控统一（唯一登记：[`docs/todos.md`](docs/todos.md) T3；归属 [`runtime-modules.md`](docs/architecture/runtime-modules.md) §3）
+- [ ] 玩家主对话 / 角色间 backchannel 线程隔离（空间模型下 `Thread` 是空间内的子隔离，见 [`context-spaces.md`](docs/architecture/context-spaces.md) §3.2；登记 [`docs/todos.md`](docs/todos.md) T7）
+- [ ] 角色自主多 Agent 协作增强（`delegate_character_task` / `consult_party`；委托的**继承受限视角**与递归上限见 [`context-spaces.md`](docs/architecture/context-spaces.md) §5.2/§5.6；登记 [`docs/todos.md`](docs/todos.md) T9 与 [`workers-and-hooks.md`](docs/architecture/workers-and-hooks.md) W4）
 - [ ] 语音与多模态：TTS 已以 **MCP 工具外挂**（Qwen-TTS）；客户端侧语音播放、Live2D 驱动、VL 视觉记忆未做
 - [ ] ComfyUI CG 生成管线
-- [ ] 安全治理（**Hub 入口限流/输入校验已做 ✅**；仍缺：扩展权限强制、按 subject/租户的细分配额、审计覆盖面）
-- [ ] 观测回放前端（轨迹已入库，回放可视化未做）
+- [ ] 安全治理（限流/输入校验见 hub-protocol，此处不重复；仍缺扩展权限强制、按 subject/租户的细分配额、审计覆盖面——唯一登记 [`docs/todos.md`](docs/todos.md) T14，设计见 [`runtime-modules.md`](docs/architecture/runtime-modules.md) §3/§3.1/§4）
+- [ ] 观测回放前端（轨迹已入库，回放可视化未做；与 [`log-store.md`](docs/architecture/log-store.md) §9 相关，**未在 [`docs/todos.md`](docs/todos.md) 登记**）
 
 ## 11. 贡献规范
 

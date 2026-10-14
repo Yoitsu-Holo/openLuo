@@ -7,6 +7,8 @@
 > R7（协议映射）随 `userId`/`threadId` 落地解决。
 > **已确认的范围决定（2026-10-13）**：**多用户 / 多线程维度一次到位**——即 `userId` / `threadId` 不是"先留字段"，
 > 域键设计要把 Global / Session / Thread / User 四个维度一次定完，避免二次迁移。
+> **后续（本文范围之外）**：R4（会话边界单一）剩下的"空间"一半、R8（跨会话聚合 / 是否引入全局层服务）
+> 由 [`context-spaces.md`](context-spaces.md) 接管（空间模型设计稿，未实施）。
 > **结论**：当前上下文装配是「**单会话扁平管线**」，未区分 **全局**（所有局部推理共用的身份 / 规则 / 时间）
 > 与 **局部**（好友 / 群聊 / 线程）。迁移到「全局 + 局部」是**结构性改动**，牵动内核契约、缓存、
 > 记忆键控与协议层；下面先固化风险与建议，避免后续边改边乱。
@@ -31,6 +33,10 @@
 - **全局**：所有局部推理都需要 —— 身份 / persona、时间、运行时规则、长期人格设定、全局世界状态。
 - **局部**：每个「对话域」独立 —— 好友、群聊、线程；各自的对话历史 / 记忆 / 在场状态。
 
+> 注（2026-10-14 审计）：本节是历史记录。目标形态已由**空间模型**取代/细化——四类空间
+> （`agent` / `user` / `group` / `system`）与方向性可见性见 [`context-spaces.md`](context-spaces.md) §2（唯一来源），
+> 权限与模块边界见 [`runtime-modules.md`](runtime-modules.md)。
+
 ## 3. 风险清单
 
 | # | 风险 | 说明 |
@@ -39,22 +45,22 @@
 | **R2** | 全局内容重复 | per-session 快照各自持有全局块（身份 / persona / 时间）→ N 会话放大 N 份；全局变更（改 persona）需失效所有会话快照。 |
 | **R3** | 键控维度不足 | 记忆 / 历史按 `(SessionId, SubjectId)` → 群聊下「用户×角色」不可表达；引入 `threadId` 后再加一维。需统一「上下文域键」。 |
 | **R4** | 会话边界单一 | `ConversationId ≡ SessionId`，无「会话内会话」轴；好友 / 群 / 线程需要不同隔离级别（共享历史 vs 独立历史）。 |
-| **R5** | 缓存粒度 | 全局贡献里「稳定」（persona）与「易变」（时间）混在一起，每回合全量重建；稳定部分应缓存，局部每回合组装。 |
-| **R6** | 并发 | 本轮已加 per-session 回合闸；全局快照共享后，全局失效 / 重建需与局部回合协调（读多写少 → 版本化不可变快照）。 |
-| **R7** | 协议映射 | wire 侧已有 `threadId` / `userId`（本轮补），但内核与会话模型未落地 → 需与「上下文域键」对齐。 |
-| **R8** | 装配方向 | `IContextAssembler` 在内核（`openLuo.AgentContext`）；全局域可能需跨会话聚合（如「我的所有群」）→ 需明确是否引入全局层服务。 |
+| **R5** | 缓存粒度 | 全局贡献里「稳定」（persona）与「易变」（时间）混在一起，每回合全量重建；稳定部分应缓存，局部每回合组装。**已解**（版本探针 + 全局块缓存）；**但"块序"问题另立**：易变块落在提示词前缀 ⇒ KV cache 不可命中，见 [`../todos.md`](../todos.md) D5 / [`runtime-modules.md`](runtime-modules.md) §2.5（M8）。 |
+| **R6** | 并发 | 本轮已加 per-session 回合闸；全局快照共享后，全局失效 / 重建需与局部回合协调（读多写少 → 版本化不可变快照）。**2026-10-14：空间/worker 化后改为 per-(worker, space) 闸**，见 [`context-spaces.md`](context-spaces.md) §5.6 / [`workers-and-hooks.md`](workers-and-hooks.md) §6。 |
+| **R7** | 协议映射 | ~~wire 侧已有 `threadId` / `userId`（本轮补），但内核与会话模型未落地~~ → **已落地**（`turn.request` 的 `userId`/`threadId`/`mentions` 已映射进内核 `TurnRequest`），见 [`context-domains.md`](context-domains.md) §5。 |
+| **R8** | 装配方向 | `IContextAssembler` 在内核（`openLuo.AgentContext`）；全局域可能需跨会话聚合（如「我的所有群」）→ 需明确是否引入全局层服务。**已移交**：跨容器聚合只在 Builder（[`runtime-modules.md`](runtime-modules.md) §2.4），按需扩窗 `core:recall`（[`context-spaces.md`](context-spaces.md) §5.4）。 |
 
-## 4. 建议（后续，非本轮）
+## 4. 建议（后续，非本轮）——**均已落地或已移交**（2026-10-14 更新）
 
-1. 引入 `ContextScope { Global, Session, Thread, User }` + `IContextContributor.Scope`（先加字段，默认 `Session`，向后兼容）。
-2. 全局贡献缓存为**不可变快照**（带版本）；会话快照 = 全局（**引用**）+ 局部（组装）。
-3. 统一「上下文域键」`{scope, key}`；记忆 / 历史 / 在场按该键存取。
-4. 会话模型升级：`sessionKey`（平台目标）+ `threadId`（会话内线程）+ `userId`（说话人）。
-5. 迁移顺序：先引入 scope → 缓存全局 → 键控扩维 → 协议落地。
+1. ~~引入 `ContextScope { Global, Session, Thread, User }` + `IContextContributor.Scope`（先加字段，默认 `Session`，向后兼容）。~~ ✅ **已落地**，见 [`context-domains.md`](context-domains.md) §5。
+2. ~~全局贡献缓存为**不可变快照**（带版本）；会话快照 = 全局（**引用**）+ 局部（组装）。~~ ✅ **已落地**，且实现改为**版本探针优先**（比 TTL 更准），见同上 §8。
+3. ~~统一「上下文域键」`{scope, key}`；记忆 / 历史 / 在场按该键存取。~~ ✅ **已落地**（键形状与工厂集中），见同上 §2/§5。
+4. ~~会话模型升级：`sessionKey`（平台目标）+ `threadId`（会话内线程）+ `userId`（说话人）。~~ ✅ **已落地**：`userId`/`threadId`/`mentions` 已上 wire 并进内核；`sessionKey` 由 `(subjectId, agentId, conversationId)` 复用寻址实现。
+5. ~~迁移顺序：先引入 scope → 缓存全局 → 键控扩维 → 协议落地。~~ ✅ **已完成**（步 0 / 1a / 1b）；**下一步移交空间模型**：见 [`context-spaces.md`](context-spaces.md) 的 M0–M4 与 [`workers-and-hooks.md`](workers-and-hooks.md) 的 W0–W4。
 
 ## 5. 与本次内核改动的交互
 
 - 本轮已加 **per-session 回合闸**（`ComposedAgentRuntime._turnGates`）：这是上下文并发安全的基础；
   全局化后需扩展为「全局读快照 + 会话写」的并发模型（R6）。
 - 本轮 **输出队列解耦**（`InMemoryOutputQueue` 每会话日志 + `sequence` + `ReadSince`）已按「会话」分区，
-  天然贴合「局部」边界；全局事件（如全局提醒）可走空会话键（`conversationId = null`）。
+  天然贴合「局部」边界；全局事件（如全局提醒）**不由空会话键承载**，改由 `system` 空间（键 = `agentId ⊕ (job/schedule id)`）承载——见 [`context-spaces.md`](context-spaces.md) §2.2 / Q8。

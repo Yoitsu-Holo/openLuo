@@ -3,6 +3,14 @@
 > **状态**：**已接线**（此前机制齐全但从未接线：`LoadedExtension` 里一直带着 `Skills`/`Workflows`，
 > `ISkillService` 的注释写着"完整内容按需加载（core:load_skill）"，`IWorkflowNodeHandler` 的注释写着
 > "由扩展注册"，但三条目录列表恒空、模型看不到、没有能力入口、也没有处理器注册入口）。
+> ⚠ **端到端仍不可用**（2026-10-14 核实）：`core:load_skill` / `core:unload_skill` / `core:run_workflow` 三个能力的
+> **invoker 在生产路径未绑定**（DI 组装 `canonicalInvokers` 时 `switch` 只匹配 `McpCapabilitySource`/`A2ACapabilitySource`，
+> 其余 `_ => null`；三条源的 `CreateInvoker()` 从未被调用）⇒ 调用落到兜底 `UnboundCapabilityInvoker` 并返回
+> `capability '<id>' is not bound to an invoker`。**目录注入与引用登记是好的，调用是坏的**；
+> 登记与关闭判据见 [`../todos.md`](../todos.md) D1。
+> **相关设计**：执行面（worker / hook / 触发）见 [`workers-and-hooks.md`](workers-and-hooks.md)（§7 把 Skill/Workflow 列为 worker 手段）；
+> 「目录常驻、正文按需」这一模式的推广见 [`context-spaces.md`](context-spaces.md) §5.4；
+> 技能/工具的权限承载位见 [`runtime-modules.md`](runtime-modules.md) §3.1 与 §2.2。
 > **两条已确认的设计决定**（见 §9）：① 技能**只在启动期装载**，不做热加载；② 技能正文在上下文里以
 > **引用**保存、在构造请求时展开（不把正文当成对话内容）。
 > 相关代码：`openLuo.Application/Composition/{CoreContextCapabilitySources,TurnCatalog,ExtensionRegistry}.cs`、
@@ -125,7 +133,7 @@ builder
 
 | 项 | 现状 |
 | --- | --- |
-| 技能的权限/可见性 | 没有单独的技能权限模型；能否调用受**能力权限**（`Capabilities` 过滤）约束 |
+| 技能的权限/可见性 | 没有单独的技能权限模型；能否调用受**能力权限**（`Capabilities` 过滤）约束——**承载位已定**：权限矩阵（role × `<容器>.<级别>` × `rwx`）见 [`runtime-modules.md`](runtime-modules.md) §3.1、worker 的 `capabilityGrant` 见 [`workers-and-hooks.md`](workers-and-hooks.md) §2.1、策略表填充见 [`context-spaces.md`](context-spaces.md) §4.2 |
 | 工作流的输入 | 只有扁平标量；结构化输入要 handler 自己解析字符串 |
 | 工作流的中间步骤 | 对模型不可见（黑盒）；要在界面展示进度需另做事件通路 |
 | 技能正文的预算 | 正文进的是**系统块**（`[LoadedSkills]`，可裁）；单对话同时最多加载 3 个技能（LRU），模型可主动卸载 |

@@ -73,7 +73,7 @@ Hub 端点（`openLuo.Server`）：
 - `GET /v1/logs/archive?date=&category=&keyword=&level=` → 冷文件（`logs/core/{yyyyMMdd}/`）目录扫描检索 → `LogsResponse{items[], nextBeforeId}`
 - `GET /v1/logs/stats?from=&to=&bucket=1m` → `LogStatsResponse{buckets[]}`（`bucket` 支持 `s/m/h/d`）
 
-> **权限**：✅ **admin-only 已落地**（日志可能含敏感内容）：`/v1/logs*` 属 Hub 的 admin 前缀，未鉴权 → `401 + 3001`，角色不足 → `403 + 3002`（详见 hub-protocol §4.4 / §4.8）。
+> **权限**：✅ **admin-only 已落地**（日志可能含敏感内容）：`/v1/logs*` 属 Hub 的 admin 前缀，未鉴权 → `401 + 3001`，角色不足 → `403 + 3002`（详见 hub-protocol §4.4 / §4.8）。（该 admin 前缀守卫属 Transport 边界层，按 `runtime-modules.md` §3 将迁 UAC；登记 `../todos.md` T14）
 
 ## 6. 配置（`log.jsonc`）
 
@@ -101,7 +101,7 @@ Hub 端点（`openLuo.Server`）：
 | 日志阻塞业务 | 有界队列 + DropWrite + 丢弃计数 |
 | SQLite 写放大 | 单写者 + 批量事务 + WAL + 独立库文件 |
 | 磁盘增长 | 热库双阈值裁剪 + `incremental_vacuum`；冷文件按你要求**不删**（需自行规划磁盘/归档） |
-| 敏感信息 | 设计 admin-only；`data` 入库前可扩展掩码 |
+| 敏感信息 | 设计 admin-only；`data` 入库前可扩展掩码；**审计**与权限判定归 `runtime-modules.md` §3 |
 | 崩溃丢尾 | 队列中未落盘条目在崩溃时丢失（可接受；关键事件可用 `Error` 级别并缩短 `flushMs`） |
 | 热配置变更 | `hot/archive` 在构造时读取，改后需重启（`level/categories` 仍热加载） |
 
@@ -109,4 +109,4 @@ Hub 端点（`openLuo.Server`）：
 
 - `logs_fts` 索引体积可观 → ✅ 已做：裁剪后 `optimize`（本轮加固）。
 - 冷文件检索：✅ 已做（`GET /v1/logs/archive`，按归档目录扫描 + `keyword`/`level`/`category`/`date` 过滤）。
-- 指标派生：由 `StatsAsync` 驱动错误率/回合曲线，接入 `/v1/metrics` 或前端面板。
+- 指标派生：由 `StatsAsync` 驱动错误率/回合曲线，接入 `/v1/metrics` 或前端面板（前端面板即 [`README.md`](../../README.md) 路线图「观测回放前端」，与本文互指；**未在 [`../todos.md`](../todos.md) 登记**）。

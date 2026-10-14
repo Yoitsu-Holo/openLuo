@@ -44,13 +44,21 @@ flowchart TD
 未表态的新区域按 **Pinned** 处理（失败方向选"宁可超预算也不无声丢弃"），并由 `ContextRegionPolicyTests`
 强制"每个 `ContextRegion` 成员都必须显式表态"。
 
+> 两条注记（2026-10-14 文档审计）：① 本表中 `WorldContext` / `GoalContext` / `ConversationHistory` /
+> `CurrentUserInput` / `ToolResults` 五个区域 **v1 无产出者**（枚举与协议面保留，`ContextModels` 有标注）——
+> 本表是**策略表态**，不代表这些块真的会出现；② `TimeContext` 保持 Pinned（不裁），但**位置须移到后缀**
+> （见 [`runtime-modules.md`](runtime-modules.md) §2.5）。
+
 ### 2.2 裁剪算法
 
 1. 全部 **Pinned** 入列（累加占用；若已超上限则置 `OverBudget = true`，并**不再**接收任何可裁块）；
 2. **Droppable** 按 `Priority` 降序贪心填充，放不下的**跳过并继续**（不再级联丢弃）——所以一个
    体积大但优先级低的历史块不会饿死后面体积小的高价值块；
 3. 被裁条目逐条记入 `Budget.DroppedContributions`（id / 贡献者 / 区域 / 优先级 / token）；
-4. 呈现顺序仍是 `Region` 枚举序 → 区域内 `Priority` 降序（系统块前缀稳定，利于模型侧前缀缓存）。
+4. 呈现顺序仍是 `Region` 枚举序 → 区域内 `Priority` 降序。**注意：这条对缓存不友好**——易变块（`TimeContext` 在第 2 位）
+   落在提示词前缀里、而大而稳定的工具目录块反而在全部 SystemBlocks 之后，加上第 2 步的"放不下就跳过"可能裁掉中间块，
+   ⇒ provider 侧 KV cache 基本不可能命中。重排规则见 [`runtime-modules.md`](runtime-modules.md) §2.5 / M8，
+   缺陷登记见 [`../todos.md`](../todos.md) D5。
 
 对话历史：先按 `retainCount` 抓取，再按 `剩余 = MaxTokens − SystemTokens` **从最新往前**累积，
 最旧一侧截断（`Budget.ConversationTurnsDropped` 记账）；**至少保留最新一条**——"只剩人设、忘了刚才说了什么"
